@@ -1739,7 +1739,7 @@ export type GameUiRangeTarget = "analysis" | "replay";
 /**
  * Shared source for frame-varying readouts, independent of element identity.
  */
-export type GameUiReadoutSource = "static" | "countdown" | "playback_time" | "playback_summary" | "analysis_cursor";
+export type GameUiReadoutSource = "static" | "playback_time" | "playback_summary" | "analysis_cursor";
 /**
  * Independent channels belonging to one touch flight device.
  */
@@ -3525,6 +3525,10 @@ export interface GameUiView {
      */
     readonly back_action?: GameUiAction | null;
     /**
+     * Game-side countdown display, present only while a countdown runs.
+     */
+    readonly countdown?: GameUiCountdown | null;
+    /**
      * Shared explanatory text.
      */
     readonly description: string;
@@ -3606,6 +3610,26 @@ export interface DisplaySettings {
      * Saturation mix from linear luminance; 1.0 keeps the existing saturation.
      */
     readonly saturation: number;
+}
+/**
+ * Game-side countdown display. Unlike a menu readout it has no panel and
+ * does not use menu emphasis; the shared derivation owns its size so every
+ * adapter renders the same digits.
+ */
+export interface GameUiCountdown {
+    /**
+     * Remaining whole seconds, shown as the large digits.
+     */
+    readonly digits: string;
+    /**
+     * Digit font size in logical pixels, derived from the viewport so the
+     * digit width or height is about half the viewport width or height.
+     */
+    readonly font_size_px: number;
+    /**
+     * Unit label rendered small beside the digits.
+     */
+    readonly unit: string;
 }
 /**
  * Shared Web-baseline HUD model; no adapter rederives flight values or labels.
@@ -3849,10 +3873,6 @@ export interface GameUiHudLayout {
      */
     readonly height_px: number;
     /**
-     * Completed logical readout line advance.
-     */
-    readonly line_height_px: number;
-    /**
      * Left and bottom viewport insets; the bottom edge is the viewport anchor.
      *
      * @minItems 2
@@ -3981,10 +4001,6 @@ export interface GameUiControl {
      */
     readonly content: GameUiControlContent;
     /**
-     * Completed visible caption, including selection and readout decoration.
-     */
-    readonly display_label: string;
-    /**
      * Shared admission flag.
      */
     readonly enabled: boolean;
@@ -3993,7 +4009,7 @@ export interface GameUiControl {
      */
     readonly id: string;
     /**
-     * Semantic label used by accessibility and input APIs.
+     * Shared visible label.
      */
     readonly label: string;
     /**
@@ -4469,13 +4485,9 @@ export interface GameUiSection {
     readonly layout: GameUiSectionLayout;
 }
 /**
- * Engine-independent colors, typography, spacing and minimum hit dimensions.
+ * Engine-independent colors, opacity and minimum hit dimensions.
  */
 export interface GameUiTheme {
-    /**
-     * Ordinary control text.
-     */
-    readonly body_text: GameUiTextStyle;
     /**
      * Ordinary button minimum height.
      */
@@ -4485,20 +4497,6 @@ export interface GameUiTheme {
      */
     readonly choice_background: string;
     /**
-     * Gap within a control.
-     */
-    readonly control_gap_px: number;
-    /**
-     * Horizontal and vertical control padding.
-     *
-     * @minItems 2
-     * @maxItems 2
-     */
-    readonly control_padding_px: readonly [
-        number,
-        number
-    ];
-    /**
      * Flight-path marker color.
      */
     readonly flight_path_marker: string;
@@ -4506,32 +4504,6 @@ export interface GameUiTheme {
      * Keyboard focus outline.
      */
     readonly focus_outline: string;
-    /**
-     * Frame-rate badge background.
-     */
-    readonly frame_rate_background: string;
-    /**
-     * Badge inset before platform safe-area adjustment.
-     */
-    readonly frame_rate_inset_px: number;
-    /**
-     * Frame-rate badge background opacity.
-     */
-    readonly frame_rate_opacity: number;
-    /**
-     * Frame-rate badge horizontal and vertical padding.
-     *
-     * @minItems 2
-     * @maxItems 2
-     */
-    readonly frame_rate_padding_px: readonly [
-        number,
-        number
-    ];
-    /**
-     * Auxiliary frame-rate text.
-     */
-    readonly frame_rate_text: GameUiTextStyle;
     /**
      * Head-relative HUD background opacity, preserving forward visibility.
      */
@@ -4561,60 +4533,13 @@ export interface GameUiTheme {
      */
     readonly primary_min_height_px: number;
     /**
-     * Principal readout text, including the countdown.
-     */
-    readonly primary_status_text: GameUiTextStyle;
-    /**
-     * Secondary descriptive text.
-     */
-    readonly secondary_text: GameUiTextStyle;
-    /**
-     * Section headings.
-     */
-    readonly section_text: GameUiTextStyle;
-    /**
      * Main text color.
      */
     readonly text: string;
     /**
-     * Completed hard-edged foreground shadow color.
-     */
-    readonly text_shadow_color: string;
-    /**
-     * Shadow displacement in logical pixels, with no blur.
-     *
-     * @minItems 2
-     * @maxItems 2
-     */
-    readonly text_shadow_offset_px: readonly [
-        number,
-        number
-    ];
-    /**
-     * Completed document heading typography.
-     */
-    readonly title_text: GameUiTextStyle;
-    /**
      * Mandatory warning text color.
      */
     readonly warning_text: string;
-}
-/**
- * Completed logical-pixel typography; adapters retain their observed font resource.
- */
-export interface GameUiTextStyle {
-    /**
-     * Completed logical-pixel font size.
-     */
-    readonly font_size_px: number;
-    /**
-     * Requested font weight, in the range 1 through 1000.
-     */
-    readonly font_weight: number;
-    /**
-     * Completed line advance in logical pixels.
-     */
-    readonly line_height_px: number;
 }
 /**
  * Lightweight per-frame UI observation associated with one published structural view.
@@ -4628,6 +4553,10 @@ export interface GameUiFrame {
      * Cursor-only chart observation; plotted series and bounds remain in the view.
      */
     readonly chart_cursor?: GameUiChartCursor | null;
+    /**
+     * Game-side countdown display, advancing once per second.
+     */
+    readonly countdown?: GameUiCountdown | null;
     /**
      * Numeric readouts that advance with the retained record cursor.
      */
@@ -4734,7 +4663,7 @@ export interface GameUiFlightTouchValue {
  */
 export interface GameUiRangeValue {
     /**
-     * Completed visible range caption.
+     * Shared one-decimal display text.
      */
     readonly display_value: string;
     /**
@@ -4755,7 +4684,7 @@ export interface GameUiReadoutValue {
      */
     readonly id: string;
     /**
-     * Completed visible record or clock caption.
+     * Shared formatted record or clock observation.
      */
     readonly value: string;
 }

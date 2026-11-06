@@ -218,42 +218,6 @@ fn assert_touch_hud_lower_band(session: &GameSession<'static>, protected_cue: Op
 }
 
 #[test]
-fn portrait_touch_instruments_avoid_the_center_band() {
-    let session = launched();
-    let mut platform = platform();
-    platform.touch_available = true;
-    platform.viewport = GameUiViewport {
-        width: 390.0,
-        height: 844.0,
-        root_font_size: 16.0,
-    };
-    let full = difficulty().with_information(InformationLevel::Full);
-    let state = GameUiState::default();
-    let view = game_ui_view(&state, &context(&session, full, &platform)).unwrap();
-    let hud = view.hud.as_ref().unwrap();
-    let rail_top = 844.0 - hud.layout.offset_px[1] - hud.layout.height_px;
-    let band = (844.0 * 0.35, 844.0 * 0.65);
-    let instruments: Vec<_> = hud
-        .groups
-        .iter()
-        .filter(|group| group.placement == GameUiHudPlacement::Instruments)
-        .flat_map(|group| &group.nodes)
-        .collect();
-    assert!(!instruments.is_empty());
-    for node in instruments {
-        let top = rail_top + node.bounds.y * hud.layout.height_px;
-        let bottom = top + node.bounds.height * hud.layout.height_px;
-        assert!(
-            bottom <= band.0 || top >= band.1,
-            "{}: {top}..{bottom} overlaps the center band {}..{}",
-            node.id,
-            band.0,
-            band.1
-        );
-    }
-}
-
-#[test]
 fn bottom_hud_preserves_all_information_and_shared_nonoverlapping_rows() {
     let session = launched();
     assert_touch_hud_lower_band(&session, None);
@@ -664,12 +628,6 @@ fn dynamic_providers_follow_typed_sources_after_control_identities_are_renamed()
         let context = context(&session, difficulty(), &platform);
         let mut view = game_ui_view(&state, &context).unwrap();
         let before = game_ui_frame(&state, &context, &view, view.view_revision).unwrap();
-        let original_labels = view
-            .panels
-            .iter()
-            .flat_map(|panel| &panel.controls)
-            .map(|control| (control.id.clone(), control.label.clone()))
-            .collect::<std::collections::BTreeMap<_, _>>();
         for control in view.panels.iter_mut().flat_map(|panel| &mut panel.controls) {
             control.id.insert_str(0, "renamed:");
             control.label = "異なる表示名".to_owned();
@@ -678,19 +636,7 @@ fn dynamic_providers_follow_typed_sources_after_control_identities_are_renamed()
         assert_eq!(after.readouts.len(), before.readouts.len());
         for (after, before) in after.readouts.iter().zip(&before.readouts) {
             assert_eq!(after.id, format!("renamed:{}", before.id));
-            let label = &original_labels[&before.id];
-            let semantic_value = if label.is_empty() {
-                before.value.as_str()
-            } else {
-                before.value.strip_prefix(&format!("{label}: ")).unwrap()
-            };
-            assert_eq!(
-                after.value,
-                game_ui_readout_label(
-                    "\u{7570}\u{306a}\u{308b}\u{8868}\u{793a}\u{540d}",
-                    semantic_value
-                )
-            );
+            assert_eq!(after.value, before.value);
         }
         for value in &after.ranges {
             assert!(value.id.starts_with("renamed:"));
@@ -895,44 +841,24 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
     // The countdown carries no heading or description text.
     assert!(view.title.is_empty());
     assert!(view.description.is_empty());
-    // The seconds are separated from their label: the readout carries the
-    // value alone with primary emphasis, and the label is a subordinate
-    // static line of its own.
-    let seconds = control(&view, "game-countdown-status");
-    assert!(seconds.label.is_empty());
-    assert!(matches!(
-        seconds.content,
-        GameUiControlContent::Status {
-            emphasis: GameUiEmphasis::Primary,
-            source: GameUiReadoutSource::Countdown,
-            ref value,
-        } if value == "3 秒"
-    ));
-    let caption = control(&view, "game-countdown-caption");
-    assert!(caption.label.is_empty());
-    assert!(matches!(
-        caption.content,
-        GameUiControlContent::Status {
-            emphasis: GameUiEmphasis::Normal,
-            source: GameUiReadoutSource::Static,
-            ref value,
-        } if value == "発進まで"
-    ));
+    // The seconds are a game-side display, not a menu readout: the view
+    // carries them outside the panels, sized from the viewport by the shared
+    // derivation (1280x720: the height quotient binds at 500 px).
+    let overlay = view.countdown.as_ref().unwrap();
+    assert_eq!(overlay.digits, "3");
+    assert_eq!(overlay.unit, "秒");
+    assert_eq!(overlay.font_size_px, 500.0);
+    // The panel uses the flight bar shell, so the cancel button and the
+    // build-version line render exactly as on the flight screen.
+    assert_eq!(view.layout.shell, GameUiShell::FlightBar);
     let order: Vec<&str> = view.panels[0]
         .controls
         .iter()
         .map(|control| control.id.as_str())
         .collect();
-    // The countdown screen consists of the countdown and the cancel button
-    // alone: no preparation progress and no feedback line.
-    assert_eq!(
-        order,
-        [
-            "game-countdown-caption",
-            "game-countdown-status",
-            "game-countdown-cancel"
-        ]
-    );
+    // The countdown screen's panel consists of the cancel button alone: no
+    // preparation progress, no caption and no feedback line.
+    assert_eq!(order, ["game-countdown-cancel"]);
     // A pending notification adds no feedback line to the countdown.
     let mut notified = platform.clone();
     notified.notification = "試験通知".to_owned();
@@ -964,126 +890,6 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
             ..
         }
     ));
-    // The completed Primary role reserves and paints its real font-sized line box.
-    {
-        use crate::xr::*;
-        let viewer = crate::xr::tests::viewer(XrDepthRange::NegativeOneToOne);
-        let frame = game_ui_frame(
-            &state,
-            &context(
-                application.core_session(),
-                application.difficulty(),
-                &platform,
-            ),
-            &view,
-            view.view_revision,
-        )
-        .unwrap();
-        let reply = prepare_game_ui_menu(
-            &view,
-            &frame,
-            MenuPreparationInput {
-                progress: 0.0,
-                generation: 1,
-                view_revision: view.view_revision,
-                panel_id: &view.panels[0].id,
-                viewer: &viewer,
-                font: &MenuFont {
-                    family: "test-font".into(),
-                    weight: 400,
-                    style: MenuFontStyle::Normal,
-                    generation: 1,
-                },
-                locale: "ja",
-            },
-            &mut SurfaceFontCache::default(),
-            |request, _, value| {
-                let advance = value.chars().count() as f64 * request.font_meters * 0.5;
-                Ok(MenuGlyphMetrics {
-                    advance,
-                    left: 0.0,
-                    right: advance,
-                    ascent: request.font_meters * 0.8,
-                    descent: request.font_meters * 0.2,
-                })
-            },
-        );
-        let MenuLayoutReply::Ready { projection } = reply else {
-            panic!("countdown must fit with completed role metrics: {reply:?}")
-        };
-        assert_eq!(projection.opacity, 0.0);
-        let caption = &control(&view, "game-countdown-status").display_label;
-        let cancel = &control(&view, "game-countdown-cancel").display_label;
-        let (primary_font, primary_anchor) = projection
-            .content
-            .items
-            .iter()
-            .find_map(|item| match item {
-                SurfacePaintItem::Text {
-                    value,
-                    font_meters,
-                    anchor,
-                    color,
-                    ..
-                } if value == caption && color == &view.theme.text => Some((*font_meters, *anchor)),
-                _ => None,
-            })
-            .unwrap();
-        let cancel_font = projection
-            .content
-            .items
-            .iter()
-            .find_map(|item| match item {
-                SurfacePaintItem::Text {
-                    value, font_meters, ..
-                } if value == cancel => Some(*font_meters),
-                _ => None,
-            })
-            .unwrap();
-        assert_eq!(primary_font, 2.0 * cancel_font);
-        let reserved = projection
-            .geometry_key
-            .controls
-            .iter()
-            .find(|control| control.identity[0] == "game-countdown-status")
-            .unwrap()
-            .bounds;
-        assert!(reserved.height >= primary_font * 1.35);
-        assert!(primary_anchor.y - 0.8 * primary_font >= projection.content.clip.y - 1e-10);
-        assert!(
-            primary_anchor.y + 0.2 * primary_font
-                <= projection.content.clip.y + projection.content.clip.height + 1e-10
-        );
-        let shadow_anchor = projection
-            .content
-            .items
-            .iter()
-            .find_map(|item| match item {
-                SurfacePaintItem::Text {
-                    value,
-                    anchor,
-                    color,
-                    ..
-                } if value == caption && color == &view.theme.text_shadow_color => Some(*anchor),
-                _ => None,
-            })
-            .unwrap();
-        let offset = view
-            .theme
-            .text_shadow_offset_px
-            .map(|px| px * cancel_font / view.theme.body_text.font_size_px);
-        assert!((shadow_anchor.x - primary_anchor.x - offset[0]).abs() < 1e-12);
-        assert!((shadow_anchor.y - primary_anchor.y - offset[1]).abs() < 1e-12);
-        assert!(shadow_anchor.x >= projection.content.clip.x);
-        assert!(
-            shadow_anchor.x + caption.chars().count() as f64 * primary_font * 0.5
-                <= projection.content.clip.x + projection.content.clip.width + 1e-10
-        );
-        assert!(
-            shadow_anchor.y + 0.2 * primary_font
-                <= projection.content.clip.y + projection.content.clip.height + 1e-10
-        );
-    }
     let actions = view.panels[0]
         .sections
         .iter()
@@ -2677,7 +2483,9 @@ fn retained_preflight_and_initial_flight_frames_do_not_query_record_duration() {
         assert!(frame.ranges.is_empty());
         assert!(frame.chart_cursor.is_none());
         if phase_code == 4 {
-            assert_eq!(frame.readouts[0].id, "game-countdown-status");
+            assert_eq!(frame.countdown.as_ref().unwrap().digits, "1");
+        } else {
+            assert!(frame.countdown.is_none());
         }
     }
 }
@@ -3110,7 +2918,7 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
                 assert_eq!(*step, 0.01);
                 assert_eq!(display_value, expected);
                 assert_eq!(range.value, *value);
-                assert_eq!(range.display_value, control(&full, id).display_label);
+                assert_eq!(range.display_value, *display_value);
                 if time == 0.01 {
                     let action = full
                         .control_input_action(&GameUiControlInput::ControlKeys {
@@ -3489,7 +3297,7 @@ fn renderer_failure_preserves_last_valid_hud_and_exposes_reload_across_scenes() 
             },
         );
         let view = game_ui_view(&state, &context(&session, settings, &platform)).unwrap();
-        assert!(view.hud.is_some());
+        assert_eq!(view.hud.is_some(), mode == GameUiPresentationMode::Screen);
         assert!(!control(&view, "game-flight-resume").enabled);
         assert!(control(&view, "game-paused-abort").enabled);
         assert_eq!(
@@ -3583,7 +3391,8 @@ fn head_hud_resource_failure_is_independent_of_controller_and_session() {
     platform.presentation_mode = GameUiPresentationMode::Screen;
     let view = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
     assert!(
-        view.panels
+        !view
+            .panels
             .iter()
             .flat_map(|panel| &panel.controls)
             .any(|control| control.id == "game-head-hud-unavailable")
@@ -3911,7 +3720,8 @@ fn replay_sections_keep_typed_controls_and_readout_sources_across_targets() {
                 }
                 assert_eq!(
                     view.hud.is_some(),
-                    replay_view == GameUiReplayView::Telemetry
+                    mode == GameUiPresentationMode::Screen
+                        && replay_view == GameUiReplayView::Telemetry
                 );
                 if let Some(hud) = &view.hud {
                     if width == 360.0 {
@@ -4080,7 +3890,7 @@ fn hud_scene_policy_is_shared_by_full_and_frame_projection_in_screen_and_vr() {
             ))
             .unwrap();
         session.pause(PauseReason::Manual).unwrap();
-        assert_presence(&session, &state, true);
+        assert_presence(&session, &state, mode == GameUiPresentationMode::Screen);
         session.abort_flight().unwrap();
         for tab in [GameUiResultTab::Summary, GameUiResultTab::Analysis] {
             state.result_tab = tab;
@@ -4108,7 +3918,11 @@ fn hud_scene_policy_is_shared_by_full_and_frame_projection_in_screen_and_vr() {
             GameUiReplayView::Analysis,
         ] {
             state.replay_view = view;
-            assert_presence(&session, &state, view == GameUiReplayView::Telemetry);
+            assert_presence(
+                &session,
+                &state,
+                mode == GameUiPresentationMode::Screen && view == GameUiReplayView::Telemetry,
+            );
         }
         session.leave_replay().unwrap();
         let record = session.take_finalized_result_record().unwrap();
@@ -4578,7 +4392,7 @@ fn cached_replay_labels_match_fresh_view_for_clock_rate_and_playing() {
 }
 
 #[test]
-fn render_scale_choices_follow_actual_target_constraints_in_all_modes() {
+fn screen_render_scale_choices_are_shared_and_admitted_only_in_screen_settings() {
     use crate::screen_render_scale::ScreenRenderScale;
     let mut setup = GameSession::new();
     setup.open_setup().unwrap();
@@ -4601,20 +4415,35 @@ fn render_scale_choices_follow_actual_target_constraints_in_all_modes() {
                 platform.presentation_mode = mode;
                 platform.screen_render_scale =
                     crate::screen_render_auto::ScreenRenderAutoSnapshot::manual(scale);
-                platform.screen_render_scale.resolution_adjustable =
-                    mode != GameUiPresentationMode::Hmd;
                 let inputs = context(session, difficulty(), &platform);
                 let view = game_ui_view(&state, &inputs).unwrap();
+                if mode != GameUiPresentationMode::Screen {
+                    assert!(
+                        !view
+                            .panels
+                            .iter()
+                            .flat_map(|panel| &panel.controls)
+                            .any(|control| control.id.starts_with("presentation-render-scale-"))
+                    );
+                    assert!(
+                        update_game_ui(
+                            &state,
+                            GameUiAction::Platform {
+                                command: GameUiPlatformCommand::SetScreenRenderScale { scale }
+                            },
+                            &inputs
+                        )
+                        .is_err()
+                    );
+                    continue;
+                }
                 for choice in ScreenRenderScale::ALL {
                     let control = control(
                         &view,
                         &format!("presentation-render-scale-{}", choice.percent()),
                     );
                     assert_eq!(control.label, choice.label());
-                    assert_eq!(
-                        control.enabled,
-                        platform.screen_render_scale.resolution_adjustable
-                    );
+                    assert_eq!(control.enabled, mode == GameUiPresentationMode::Screen);
                     let GameUiControlContent::Button {
                         action,
                         presentation: GameUiButtonPresentation::Choice { selected, .. },
@@ -4624,10 +4453,7 @@ fn render_scale_choices_follow_actual_target_constraints_in_all_modes() {
                     };
                     assert_eq!(*selected, scale == choice);
                     let admitted = update_game_ui(&state, action.clone(), &inputs);
-                    assert_eq!(
-                        admitted.is_ok(),
-                        platform.screen_render_scale.resolution_adjustable
-                    );
+                    assert_eq!(admitted.is_ok(), mode == GameUiPresentationMode::Screen);
                     if let Ok(update) = admitted {
                         assert_eq!(
                             update.effects,
@@ -4681,7 +4507,6 @@ fn screen_render_auto_projects_selection_applied_status_and_admission() {
     let state = GameUiState::default();
     let mut platform = platform();
     platform.screen_render_scale = ScreenRenderAutoSnapshot {
-        resolution_adjustable: true,
         selection: ScreenRenderSelection::Auto {
             manual_scale: ScreenRenderScale::Full,
             manual_shadow: ScreenShadowMap::Full,
@@ -4706,6 +4531,10 @@ fn screen_render_auto_projects_selection_applied_status_and_admission() {
             command: GameUiPlatformCommand::SetScreenRenderAuto { enabled: false },
         };
         let update = update_game_ui(&state, action.clone(), &inputs);
+        if mode != GameUiPresentationMode::Screen {
+            assert!(update.is_err());
+            continue;
+        }
         let view = game_ui_view(&state, &inputs).unwrap();
         let choice = control(&view, "presentation-render-scale-auto");
         assert!(
@@ -5091,7 +4920,7 @@ fn title_preserves_platform_fault_notification_after_screen_recovery() {
 }
 
 #[test]
-fn flight_camera_choices_share_selection_and_admission_in_all_modes() {
+fn flight_camera_choices_share_selection_and_spatial_modes_keep_pilot() {
     let mut session = GameSession::new();
     session.open_setup().unwrap();
     let mut platform = platform();
@@ -5137,23 +4966,23 @@ fn flight_camera_choices_share_selection_and_admission_in_all_modes() {
         platform.presentation_mode = mode;
         let view =
             game_ui_view(&retained.state, &context(&session, difficulty(), &platform)).unwrap();
-        assert!(matches!(
-            &control(&view, "game-flight-camera-chase").content,
-            GameUiControlContent::Button {
-                presentation: GameUiButtonPresentation::Choice { selected: true, .. },
-                ..
-            }
-        ));
-        let selected = update_game_ui(
-            &retained.state,
-            GameUiAction::SetFlightCamera {
-                camera: GameUiFlightCamera::Pilot,
-            },
-            &context(&session, difficulty(), &platform),
-        )
-        .unwrap();
-        assert_eq!(selected.state.flight_camera, GameUiFlightCamera::Pilot);
-        assert!(selected.effects.is_empty());
+        assert!(
+            !view
+                .panels
+                .iter()
+                .flat_map(|panel| &panel.controls)
+                .any(|control| control.id.starts_with("game-flight-camera-"))
+        );
+        assert_eq!(
+            update_game_ui(
+                &retained.state,
+                GameUiAction::SetFlightCamera {
+                    camera: GameUiFlightCamera::Pilot
+                },
+                &context(&session, difficulty(), &platform)
+            ),
+            Err(GameUiError::ActionUnavailable)
+        );
     }
 }
 

@@ -6,8 +6,6 @@ use unicode_width::UnicodeWidthStr;
 
 use super::types::*;
 
-pub(super) const HUD_OPACITY: f64 = 0.48;
-
 #[derive(Clone, Copy)]
 struct GameUiHudAttitude {
     roll_degrees: f64,
@@ -18,6 +16,23 @@ struct GameUiHudGeometry {
     adi: Option<GameUiHudAdiGeometry>,
     heading_ticks: Vec<GameUiHudHeadingTick>,
     angle_of_attack_marker: Option<[GameUiChartPoint; 3]>,
+}
+
+/// Game-side countdown display, derived only while a countdown runs. The
+/// digit size follows the viewport: lining digits advance about 0.56 em and
+/// their cap height is about 0.72 em, so the smaller of the two quotients
+/// makes the digit width or height about half the viewport width or height.
+pub(super) fn game_ui_countdown(context: &GameUiContext<'_, '_>) -> Option<GameUiCountdown> {
+    let SessionPhase::Countdown { remaining_seconds } = context.session.snapshot().phase() else {
+        return None;
+    };
+    let viewport = context.platform.viewport;
+    let font_size_px = (0.5 * viewport.height / 0.72).min(0.5 * viewport.width / 0.56);
+    Some(GameUiCountdown {
+        digits: format!("{remaining_seconds}"),
+        unit: "秒".to_owned(),
+        font_size_px,
+    })
 }
 
 pub(super) fn game_ui_hud(
@@ -31,7 +46,10 @@ pub(super) fn game_ui_hud(
     }
     let (sample, distance, target, incidence_rates, pilot_protection) = match snapshot {
         SessionSnapshot::TailFlightRunning { state, .. }
-        | SessionSnapshot::TailFlightPaused { state, .. } => {
+        | SessionSnapshot::TailFlightPaused { state, .. }
+            if context.platform.presentation_mode == GameUiPresentationMode::Screen
+                || phase == SessionPhase::FlightRunning =>
+        {
             let telemetry = context
                 .session
                 .telemetry()
@@ -79,7 +97,10 @@ pub(super) fn game_ui_hud(
                 ),
             )
         }
-        SessionSnapshot::Replay { .. } if state.replay_view == GameUiReplayView::Telemetry => {
+        SessionSnapshot::Replay { .. }
+            if context.platform.presentation_mode == GameUiPresentationMode::Screen
+                && state.replay_view == GameUiReplayView::Telemetry =>
+        {
             let record = context.record.ok_or(GameUiError::ActionUnavailable)?;
             let clock = context
                 .session
@@ -370,25 +391,7 @@ pub(super) fn game_ui_hud(
             },
         ));
     }
-    let portrait_touch = super::touch::available(context.platform, phase)
-        && context.platform.viewport.width < context.platform.viewport.height;
-    let groups = position_hud(
-        &mut layout,
-        primary,
-        instruments,
-        true,
-        0.55,
-        portrait_touch,
-    );
-    if portrait_touch {
-        // Portrait touch controls reserve the lower screen and their top edge
-        // sits inside the vertical center band, so a rail stacked above them
-        // occupies the forward view. Anchor the rail to the top edge instead
-        // and place the instruments first, so the instruments stay inside the
-        // top band, which is otherwise unused while flying.
-        let gap = 0.75 * context.platform.viewport.root_font_size;
-        layout.offset_px[1] = (context.platform.viewport.height - gap - layout.height_px).max(0.0);
-    }
+    let groups = position_hud(&mut layout, primary, instruments, true, 0.55);
     Ok(Some(GameUiHud { layout, groups }))
 }
 
@@ -746,8 +749,11 @@ fn hud_layout(
             [5.6 * font, 3.6 * font]
         },
         font_size_px: (0.875 * font).max(14.0),
-        line_height_px: (0.875 * font).max(14.0) * 1.5,
-        opacity: HUD_OPACITY,
+        opacity: if platform.presentation_mode == GameUiPresentationMode::Screen {
+            0.48
+        } else {
+            0.28
+        },
     }
 }
 
@@ -757,7 +763,6 @@ pub(super) fn position_hud(
     instruments: Vec<GameUiHudNode>,
     allow_side_by_side: bool,
     text_width_ratio: f64,
-    instruments_first: bool,
 ) -> Vec<GameUiHudGroup> {
     let [padding_x, padding_y] = layout.padding_px;
     let content_width = (layout.width_px - 2.0 * padding_x).max(1.0);
@@ -784,6 +789,14 @@ pub(super) fn position_hud(
         layout,
         text_width_ratio,
     );
+    let readout_height = position_rows(
+        &mut groups,
+        padding_x,
+        padding_y,
+        readout_width,
+        layout,
+        text_width_ratio,
+    );
     let instrument_width = if side_by_side {
         content_width - readout_width - layout.gap_px[0]
     } else {
@@ -797,56 +810,22 @@ pub(super) fn position_hud(
         layout,
         text_width_ratio,
     );
-    let stack_instruments_first = instruments_first && !side_by_side;
-    let (readout_height, instrument_height) = if stack_instruments_first {
-        let instrument_height = position_rows(
-            &mut instrument_rows,
-            padding_x,
-            padding_y,
-            instrument_width,
-            layout,
-            text_width_ratio,
-        );
-        let readout_height = position_rows(
-            &mut groups,
-            padding_x,
-            if instrument_rows.is_empty() {
-                padding_y
-            } else {
-                padding_y + instrument_height + layout.gap_px[1]
-            },
-            readout_width,
-            layout,
-            text_width_ratio,
-        );
-        (readout_height, instrument_height)
-    } else {
-        let readout_height = position_rows(
-            &mut groups,
-            padding_x,
-            padding_y,
-            readout_width,
-            layout,
-            text_width_ratio,
-        );
-        let instrument_height = position_rows(
-            &mut instrument_rows,
-            if side_by_side {
-                padding_x + readout_width + layout.gap_px[0]
-            } else {
-                padding_x
-            },
-            if side_by_side || groups.is_empty() {
-                padding_y
-            } else {
-                padding_y + readout_height + layout.gap_px[1]
-            },
-            instrument_width,
-            layout,
-            text_width_ratio,
-        );
-        (readout_height, instrument_height)
-    };
+    let instrument_height = position_rows(
+        &mut instrument_rows,
+        if side_by_side {
+            padding_x + readout_width + layout.gap_px[0]
+        } else {
+            padding_x
+        },
+        if side_by_side || groups.is_empty() {
+            padding_y
+        } else {
+            padding_y + readout_height + layout.gap_px[1]
+        },
+        instrument_width,
+        layout,
+        text_width_ratio,
+    );
     layout.height_px = 2.0 * padding_y
         + if side_by_side {
             readout_height.max(instrument_height)
@@ -859,8 +838,6 @@ pub(super) fn position_hud(
                     layout.gap_px[1]
                 }
         };
-    // Group order stays readouts-then-instruments in every mode; only the
-    // positions inside the rail change when instruments are stacked first.
     groups.extend(instrument_rows);
     for node in groups.iter_mut().flat_map(|group| &mut group.nodes) {
         node.bounds.x /= layout.width_px;
@@ -1009,7 +986,8 @@ fn hud_node_height(
         node.label,
         if node.label.is_empty() { "" } else { " " },
         node.content.value()
-    )) * layout.line_height_px;
+    )) * font
+        * 1.5;
     node.instrument_height_em = match node.content {
         GameUiHudNodeContent::Text { .. } => 0.0,
         GameUiHudNodeContent::Attitude { .. } => {

@@ -3,6 +3,7 @@ import type { ApplicationDrawingOutput, ApplicationInput, ApplicationOutput, App
 import { BrowserFlightLogDownload } from "./app/browser-flight-log-download.js";
 import { BrowserFlightRecordStore } from "./game/flight-record-store.js";
 import { browserSurfaceContext } from "./presentation/browser-canvas.js";
+import { CountdownAdapter } from "./presentation/countdown.js";
 import { FlightHudAdapter } from "./presentation/flight-hud.js";
 import { ScreenUiAdapter } from "./presentation/screen-ui.js";
 import { ThreeApplicationRenderer } from "./render/engines/three/application-renderer.js";
@@ -14,6 +15,7 @@ export class BrowserApplication {
   private readonly stage: HTMLDivElement;
   private readonly screen: ScreenUiAdapter;
   private readonly hud: FlightHudAdapter;
+  private readonly countdown: CountdownAdapter;
   private readonly frameRate: HTMLOutputElement;
   private readonly download: BrowserFlightLogDownload;
   private readonly records: BrowserFlightRecordStore;
@@ -36,16 +38,18 @@ export class BrowserApplication {
     const uiRoot = documentRef.createElement("div");
     uiRoot.className = "screen-ui-root";
     const hudRoot = documentRef.createElement("section");
+    const countdownRoot = documentRef.createElement("section");
     this.frameRate = documentRef.createElement("output");
     this.frameRate.className = "render-frame-rate";
     this.frameRate.setAttribute("aria-label", "描画フレームレート");
-    this.stage.append(uiRoot, hudRoot, this.frameRate);
+    this.stage.append(uiRoot, hudRoot, countdownRoot, this.frameRate);
     mount.replaceChildren(this.stage);
     const measurement = documentRef.createElement("canvas").getContext("2d");
     if (measurement === null) throw new Error("Canvas text measurement is unavailable");
     this.measurement = measurement;
     this.screen = new ScreenUiAdapter(uiRoot, input => { this.observe(input); });
     this.hud = new FlightHudAdapter(hudRoot);
+    this.countdown = new CountdownAdapter(countdownRoot);
     this.download = new BrowserFlightLogDownload(documentRef);
     this.records = new BrowserFlightRecordStore(window.indexedDB, input => { this.observe(input); });
     this.documentStyle = new MutationObserver(this.onPlatform);
@@ -114,24 +118,16 @@ export class BrowserApplication {
         try {
           if (drawing.ui.kind === "view") {
             this.view = drawing.ui.view;
-            const theme = drawing.ui.view.theme;
-            Object.assign(this.frameRate.style, {
-              fontSize: `${String(theme.frame_rate_text.font_size_px)}px`,
-              fontWeight: String(theme.frame_rate_text.font_weight),
-              lineHeight: `${String(theme.frame_rate_text.line_height_px)}px`,
-              color: theme.text,
-              backgroundColor: `color-mix(in srgb, ${theme.frame_rate_background} calc(${String(theme.frame_rate_opacity)} * 100%), transparent)`,
-              padding: `${String(theme.frame_rate_padding_px[1])}px ${String(theme.frame_rate_padding_px[0])}px`,
-              top: `max(${String(theme.frame_rate_inset_px)}px, env(safe-area-inset-top))`,
-              right: `max(${String(theme.frame_rate_inset_px)}px, env(safe-area-inset-right))`,
-            });
             this.screen.render(drawing.ui.view, drawing.presentation.screen_ui_visible);
           } else this.screen.renderFrame(drawing.ui.frame, drawing.presentation.screen_ui_visible);
         } catch (cause) { failed(drawing.graphics.renderer_resource_id, cause); }
         const hud = drawing.ui.kind === "view" ? drawing.ui.view.hud : drawing.ui.frame.hud;
+        const countdown = drawing.ui.kind === "view" ? drawing.ui.view.countdown : drawing.ui.frame.countdown;
         try {
           if (this.view !== null) this.hud.render(hud ?? null, this.view.theme);
           this.hud.setVisible(drawing.presentation.screen_hud_visible && hud != null);
+          if (this.view !== null) this.countdown.render(countdown ?? null, this.view.theme);
+          this.countdown.setVisible(countdown != null);
           this.frameRate.hidden = !drawing.presentation.screen_ui_visible;
           if (this.frameRate.textContent !== drawing.presentation.frame_rate_label) {
             this.frameRate.textContent = drawing.presentation.frame_rate_label;

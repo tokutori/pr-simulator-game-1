@@ -38,7 +38,7 @@ pub fn game_ui_view(
         && state.pause_overlay == GameUiPauseOverlay::Menu
         && (context.flight_failure.is_some() || context.platform.notification.is_empty());
     if matches!(phase, SessionPhase::FlightPaused { .. }) && !credits_open {
-        flight_camera_choices(&mut menu, state);
+        flight_camera_choices(&mut menu, state, context);
     }
     match phase {
         SessionPhase::Title | SessionPhase::FlightPaused { .. } if credits_open => {
@@ -170,7 +170,7 @@ pub fn game_ui_view(
             );
             menu.automatic_sections();
             setup(&mut menu, context);
-            flight_camera_choices(&mut menu, state);
+            flight_camera_choices(&mut menu, state, context);
             feedback(&mut menu, context);
         }
         SessionPhase::BriefingPreparing
@@ -221,14 +221,7 @@ pub fn game_ui_view(
                 feedback(&mut menu, context);
             }
         }
-        SessionPhase::Countdown { remaining_seconds } => {
-            menu.status("game-countdown-caption", "", "発進まで");
-            menu.live_status(
-                "game-countdown-status",
-                "",
-                &format!("{remaining_seconds} 秒"),
-                GameUiReadoutSource::Countdown,
-            );
+        SessionPhase::Countdown { .. } => {
             menu.section("flight-actions", "", GameUiSectionLayout::Row);
             menu.session(
                 "game-countdown-cancel",
@@ -247,14 +240,16 @@ pub fn game_ui_view(
                 )?);
             }
             menu.section("flight-actions", "", GameUiSectionLayout::Row);
-            menu.action(
-                "game-flight-camera-toggle",
-                &format!("視点: {}", state.flight_camera.label()),
-                GameUiAction::SetFlightCamera {
-                    camera: state.flight_camera.toggled(),
-                },
-                true,
-            );
+            if context.platform.presentation_mode == GameUiPresentationMode::Screen {
+                menu.action(
+                    "game-flight-camera-toggle",
+                    &format!("視点: {}", state.flight_camera.label()),
+                    GameUiAction::SetFlightCamera {
+                        camera: state.flight_camera.toggled(),
+                    },
+                    true,
+                );
+            }
             if context.platform.renderer_failure.is_none() {
                 menu.session(
                     "game-flight-pause",
@@ -264,13 +259,17 @@ pub fn game_ui_view(
                     true,
                 );
             }
-            menu.session(
-                "game-flight-abort",
-                "飛行を終了",
-                SessionCommand::Abort {},
-                GameUiEmphasis::Normal,
-                true,
-            );
+            if context.platform.presentation_mode == GameUiPresentationMode::Screen
+                || context.platform.renderer_failure.is_some()
+            {
+                menu.session(
+                    "game-flight-abort",
+                    "飛行を終了",
+                    SessionCommand::Abort {},
+                    GameUiEmphasis::Normal,
+                    true,
+                );
+            }
         }
         SessionPhase::FlightPaused { .. } => match state.pause_overlay {
             GameUiPauseOverlay::Menu => {
@@ -426,7 +425,9 @@ pub fn game_ui_view(
                 driver_failure_reason(failure),
             );
         }
-        if let Some(cause) = &context.platform.head_hud_failure {
+        if context.platform.presentation_mode != GameUiPresentationMode::Screen
+            && let Some(cause) = &context.platform.head_hud_failure
+        {
             menu.status(
                 "game-head-hud-unavailable",
                 "Head HUDを表示できない",
@@ -470,9 +471,10 @@ pub fn game_ui_view(
             }
         }
     }
-    let flight_panel = phase == SessionPhase::FlightRunning;
-    let expanded_head_failure = flight_panel && context.platform.head_hud_failure.is_some();
-    let expanded_renderer_failure = flight_panel && context.platform.renderer_failure.is_some();
+    let spatial_flight = phase == SessionPhase::FlightRunning
+        && context.platform.presentation_mode != GameUiPresentationMode::Screen;
+    let expanded_head_failure = spatial_flight && context.platform.head_hud_failure.is_some();
+    let expanded_renderer_failure = spatial_flight && context.platform.renderer_failure.is_some();
     let spatial_height = match (expanded_head_failure, expanded_renderer_failure) {
         (true, true) => 0.80,
         (false, true) => 0.65,
@@ -515,12 +517,12 @@ pub fn game_ui_view(
             id: "game-flow".to_owned(),
             title: String::new(),
             anchor: GameUiAnchor::Menu,
-            local_position: if flight_panel {
+            local_position: if spatial_flight {
                 [0.0, -0.995 - spatial_height / 2.0, 0.0]
             } else {
                 [0.0; 3]
             },
-            size: if flight_panel {
+            size: if spatial_flight {
                 [0.62, spatial_height]
             } else {
                 [2.4, 1.8]
@@ -535,6 +537,7 @@ pub fn game_ui_view(
         } else {
             super::hud::game_ui_hud(state, context)?
         },
+        countdown: super::hud::game_ui_countdown(context),
     };
     view.back_action = view.back_action();
     view.interaction_scope = match scene {
@@ -600,7 +603,6 @@ impl Menu {
         self.controls.push(GameUiControl {
             id: id.to_owned(),
             label: label.to_owned(),
-            display_label: game_ui_display_label(label, &content),
             enabled,
             section: section.to_owned(),
             content,
@@ -617,11 +619,7 @@ impl Menu {
             false,
             id,
             GameUiControlContent::Status {
-                emphasis: if source == GameUiReadoutSource::Countdown {
-                    GameUiEmphasis::Primary
-                } else {
-                    GameUiEmphasis::Normal
-                },
+                emphasis: GameUiEmphasis::Normal,
                 source,
                 value: value.to_owned(),
             },
@@ -706,7 +704,10 @@ impl Menu {
     }
 }
 
-fn flight_camera_choices(menu: &mut Menu, state: &GameUiState) {
+fn flight_camera_choices(menu: &mut Menu, state: &GameUiState, context: &GameUiContext<'_, '_>) {
+    if context.platform.presentation_mode != GameUiPresentationMode::Screen {
+        return;
+    }
     menu.section("flight-camera", "視点", GameUiSectionLayout::ChoiceGrid);
     for (id, camera) in [
         ("pilot", GameUiFlightCamera::Pilot),
@@ -1160,10 +1161,11 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
             ..
         } => manual_water_quality,
     };
-    let automatic = matches!(
-        context.platform.screen_render_scale.selection,
-        ScreenRenderSelection::Auto { .. }
-    );
+    let automatic = context.platform.presentation_mode == GameUiPresentationMode::Screen
+        && matches!(
+            context.platform.screen_render_scale.selection,
+            ScreenRenderSelection::Auto { .. }
+        );
     menu.status(
         "presentation-water-quality-status",
         "水面画質",
@@ -1251,6 +1253,9 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         ScreenRenderAutoStatus, ScreenRenderSelection, ScreenShadowMap,
     };
     use crate::screen_render_scale::ScreenRenderScale;
+    if context.platform.presentation_mode != GameUiPresentationMode::Screen {
+        return;
+    }
     let render = &context.platform.screen_render_scale;
     let automatic = matches!(render.selection, ScreenRenderSelection::Auto { .. });
     let confirmed = context.platform.render_quality_confirmed;
@@ -1277,11 +1282,6 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
             )
         }
         ScreenRenderAutoStatus::Failed { cause } => format!("描画資源処理失敗: {cause}"),
-    };
-    let status = if render.resolution_adjustable {
-        status
-    } else {
-        format!("{status} · 解像度は出力機器の寸法を使用")
     };
     menu.status(
         "presentation-render-scale-status",
@@ -1335,7 +1335,7 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         menu.push(
             &format!("presentation-render-scale-{}", scale.percent()),
             scale.label(),
-            enabled && render.resolution_adjustable,
+            enabled,
             "render-scale",
             GameUiControlContent::Button {
                 action: GameUiAction::Platform {
@@ -1910,11 +1910,15 @@ pub(super) fn layout(
             GameUiShell::Center
         }
         SessionPhase::FlightRunning => GameUiShell::FlightBar,
+        SessionPhase::Countdown { .. } => GameUiShell::FlightBar,
         SessionPhase::FlightPaused { .. }
             if (state.pause_overlay == GameUiPauseOverlay::Settings
                 || context.platform.renderer_failure.is_some())
-                && viewport.width
-                    >= super::hud::minimum_hud_width(font) + pause_settings_width + 2.25 * font =>
+                && (context.platform.presentation_mode != GameUiPresentationMode::Screen
+                    || viewport.width
+                        >= super::hud::minimum_hud_width(font)
+                            + pause_settings_width
+                            + 2.25 * font) =>
         {
             GameUiShell::PauseSettings
         }
@@ -1927,6 +1931,7 @@ pub(super) fn layout(
         }
         SessionPhase::Replay
             if state.replay_view == GameUiReplayView::Telemetry
+                && context.platform.presentation_mode == GameUiPresentationMode::Screen
                 && viewport.width
                     < super::hud::minimum_hud_width(font) + cinematic_width + 2.25 * font =>
         {
@@ -1940,9 +1945,13 @@ pub(super) fn layout(
     let width = match shell {
         GameUiShell::Center => available_width.min(42.0 * font),
         GameUiShell::Analysis => available_width.min(72.0 * font),
-        GameUiShell::FlightBar if phase == SessionPhase::FlightRunning => {
-            available_width.min(26.0 * font)
-        }
+        GameUiShell::FlightBar if phase == SessionPhase::FlightRunning => available_width.min(
+            if context.platform.presentation_mode == GameUiPresentationMode::Screen {
+                26.0
+            } else {
+                15.5
+            } * font,
+        ),
         GameUiShell::FlightBar => viewport.width,
         GameUiShell::PauseSettings => pause_settings_width,
         GameUiShell::Cinematic => cinematic_width,
@@ -1971,7 +1980,8 @@ pub(super) fn layout(
             (viewport.height - 2.0 * font).max(1.0).min(8.0 * font)
         } else if shell == GameUiShell::Analysis {
             (viewport.height - 2.0 * font).max(1.0)
-        } else if shell == GameUiShell::FlightBar
+        } else if context.platform.presentation_mode == GameUiPresentationMode::Screen
+            && shell == GameUiShell::FlightBar
             && matches!(
                 phase,
                 SessionPhase::FlightPaused { .. } | SessionPhase::Replay
@@ -1991,66 +2001,32 @@ pub(super) fn layout(
             .floor()
             .max(1.0) as u32,
         compact,
-        scroll_y: !(shell == GameUiShell::FlightBar
-            && phase == SessionPhase::FlightRunning
-            && !flight_bar_renderer_recovery),
+        scroll_y: (shell != GameUiShell::Analysis
+            || context.platform.presentation_mode == GameUiPresentationMode::Screen)
+            && !(shell == GameUiShell::FlightBar
+                && phase == SessionPhase::FlightRunning
+                && !flight_bar_renderer_recovery),
         clip_x: true,
-        passthrough: (shell == GameUiShell::FlightBar && phase == SessionPhase::FlightRunning)
+        passthrough: shell == GameUiShell::FlightBar && phase == SessionPhase::FlightRunning
+            || (shell == GameUiShell::Analysis
+                && context.platform.presentation_mode != GameUiPresentationMode::Screen)
             || matches!(phase, SessionPhase::Countdown { .. }),
     })
 }
 
 fn theme(font: f64) -> GameUiTheme {
     GameUiTheme {
-        title_text: GameUiTextStyle {
-            font_size_px: 1.75 * font,
-            line_height_px: (1.75 * font) * 1.35,
-            font_weight: 700,
-        },
-        body_text: GameUiTextStyle {
-            font_size_px: font,
-            line_height_px: (font) * 1.35,
-            font_weight: 400,
-        },
-        primary_status_text: GameUiTextStyle {
-            font_size_px: 2.0 * font,
-            line_height_px: (2.0 * font) * 1.35,
-            font_weight: 700,
-        },
-        secondary_text: GameUiTextStyle {
-            font_size_px: 0.9 * font,
-            line_height_px: (0.9 * font) * 1.35,
-            font_weight: 400,
-        },
-        section_text: GameUiTextStyle {
-            font_size_px: font,
-            line_height_px: (font) * 1.35,
-            font_weight: 700,
-        },
-        frame_rate_text: GameUiTextStyle {
-            font_size_px: 0.875 * font,
-            line_height_px: (0.875 * font) * 1.35,
-            font_weight: 600,
-        },
-        frame_rate_background: "#020a12".into(),
-        frame_rate_opacity: 0.75,
-        frame_rate_padding_px: [0.5 * font, 0.25 * font],
-        frame_rate_inset_px: 0.5 * font,
-        control_padding_px: [0.5 * font; 2],
-        control_gap_px: 0.35 * font,
         text: "#f3f4e8".to_owned(),
         muted_text: "#c7d7d1".to_owned(),
         warning_text: "#ff9b73".to_owned(),
         flight_path_marker: "#7df4c5".to_owned(),
         panel_background: "#10242b".to_owned(),
         panel_opacity: 0.92,
-        hud_opacity: super::hud::HUD_OPACITY,
+        hud_opacity: 0.28,
         normal_background: "#31555a".to_owned(),
         primary_background: "#356d68".to_owned(),
         choice_background: "#183139".to_owned(),
         focus_outline: "#f0d382".to_owned(),
-        text_shadow_color: "#10242b".to_owned(),
-        text_shadow_offset_px: [1.0, 1.0],
         button_min_height_px: 2.75 * font,
         primary_min_height_px: 3.25 * font,
     }
