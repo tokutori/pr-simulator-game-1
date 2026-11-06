@@ -3,9 +3,8 @@ use birdman_game_core::{
     ActuatorError, BodyVector, CompositeCgLaunchConditions, ControlMode, CourseAxis,
     DistanceScoreError, DynamicsError, GameSessionConfiguration, GameSessionError, Gravity,
     HybridAerodynamicLoad, HybridError, HybridModel, MathError, NedPoint, NedVector,
-    SessionScenarioIdentity, SteadyGlideTrim, TailAngleOfAttackGuard, TailControlProfile,
-    TailFlightScenario, TailFlightScenarioError, TailFlightScenarioParameters, TailIncidence,
-    WindField,
+    SessionScenarioIdentity, SteadyGlideTrim, TailControlProfile, TailFlightScenario,
+    TailFlightScenarioError, TailFlightScenarioParameters, TailIncidence, WindField,
 };
 use birdman_game_format::{
     ConfigurationError, EnvironmentFormatError, FlightRecordTailIdentityDocument, ScenarioCatalog,
@@ -20,8 +19,6 @@ use crate::{
     launch_venue,
 };
 
-const CONTROLLER_PROFILE_ID: &str = "bpg040-tail-rate-feedback";
-const CONTROLLER_PROFILE_VERSION: u32 = 4;
 const CATALOG_VERSION: u32 = 10;
 const SCENARIO_VERSION: u32 = 11;
 const SCENARIOS: [(u32, WeatherClass); 5] = [
@@ -54,6 +51,8 @@ pub enum HybridSessionPreparationError {
     Hybrid(HybridError),
     /// The software control profile failed validation.
     Control(ActuatorError),
+    /// Controller source or the current aircraft/controller pair was rejected.
+    Controller(crate::ControllerPreparationError),
     /// The sealed scenario rejected its initial physical or load state.
     Scenario(TailFlightScenarioError),
     /// The session tick limit or versioned identity failed validation.
@@ -75,6 +74,7 @@ impl core::fmt::Display for HybridSessionPreparationError {
             Self::Course(_) => f.write_str("Scoring course validation failed"),
             Self::Hybrid(_) => f.write_str("Hybrid load model preparation failed"),
             Self::Control(_) => f.write_str("Software controller preparation failed"),
+            Self::Controller(cause) => write!(f, "{cause}"),
             Self::Scenario(_) => f.write_str("Sealed flight scenario validation failed"),
             Self::Session(_) => f.write_str("Versioned session configuration failed"),
             Self::AllocationFailed => f.write_str("Flight structural storage allocation failed"),
@@ -120,9 +120,20 @@ impl HybridSessionPreparation {
     pub fn try_default() -> Result<Self, HybridSessionPreparationError> {
         let aircraft =
             crate::SelectedAircraft::bundled().map_err(HybridSessionPreparationError::Aircraft)?;
+        let controller = crate::SelectedController::bundled().map_err(|cause| {
+            HybridSessionPreparationError::Controller(crate::ControllerPreparationError::Document(
+                cause,
+            ))
+        })?;
+        let mode = crate::application::commands::control_mode(
+            crate::DEFAULT_ASSISTANCE,
+            controller.document().shared_authority,
+        )
+        .map_err(HybridSessionPreparationError::Control)?;
         Self::try_new(
             &aircraft,
-            crate::default_control_mode(),
+            &controller,
+            mode,
             DEFAULT_MAXIMUM_FLIGHT_TICKS,
             DEFAULT_SESSION_SEED,
         )
@@ -149,12 +160,14 @@ impl HybridSessionPreparation {
     /// ```
     pub fn try_new(
         aircraft: &crate::SelectedAircraft,
+        controller: &crate::SelectedController,
         control_mode: ControlMode,
         maximum_flight_ticks: u64,
         seed: u64,
     ) -> Result<Self, HybridSessionPreparationError> {
         Self::try_new_for_weather(
             aircraft,
+            controller,
             control_mode,
             maximum_flight_ticks,
             seed,
@@ -165,6 +178,7 @@ impl HybridSessionPreparation {
     /// Resolves Weather against the current catalog and its registered wind provider.
     pub fn try_new_for_weather(
         aircraft: &crate::SelectedAircraft,
+        controller: &crate::SelectedController,
         control_mode: ControlMode,
         maximum_flight_ticks: u64,
         seed: u64,
@@ -233,16 +247,14 @@ impl HybridSessionPreparation {
             wind,
         )
         .map_err(HybridSessionPreparationError::Hybrid)?;
-        let angle_guard =
-            TailAngleOfAttackGuard::try_new([-0.09, 0.09], trim.alpha_rad(), 1.0, 1.6)
-                .map_err(HybridSessionPreparationError::Control)?;
-        let controller_profile = TailControlProfile::try_new(0.2, 0.2, 1.0)
-            .map_err(HybridSessionPreparationError::Control)?
-            .with_angle_of_attack_guard(angle_guard);
+        let controller_profile = controller
+            .prepare(definition)
+            .map_err(HybridSessionPreparationError::Controller)?;
         let scenario = TailFlightScenario::try_new(parameters, load, controller_profile)
             .map_err(HybridSessionPreparationError::Scenario)?;
         let mut identity = identity_for_selection(selection);
         identity.aircraft_identity = aircraft.identity();
+        identity.controller_identity = Some(controller.identity());
         let configuration = GameSessionConfiguration::try_new_tail(
             scenario,
             control_mode,
@@ -253,7 +265,8 @@ impl HybridSessionPreparation {
         let record_identity = FlightRecordTailIdentityDocument {
             aircraft_sha256: Some(aircraft.raw_sha256().to_owned()),
             aircraft_configuration_id: definition.document().configuration_id.clone(),
-            controller_profile_id: CONTROLLER_PROFILE_ID.to_owned(),
+            controller_profile_id: controller.document().controller_id.clone(),
+            controller_sha256: Some(controller.raw_sha256().to_owned()),
         };
         Ok(Self {
             configuration,
@@ -351,7 +364,7 @@ pub fn identity_for_selection(selection: ScenarioSelection) -> SessionScenarioId
         aircraft_model_version: selection.aircraft_model_version,
         aircraft_identity: [0; 32],
         environment_version: selection.environment_version,
-        controller_profile_version: CONTROLLER_PROFILE_VERSION,
+        controller_identity: None,
         seed: selection.seed,
     }
 }

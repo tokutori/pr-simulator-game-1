@@ -190,19 +190,27 @@ impl ApplicationSession {
                     GameSessionError::InvalidTransition,
                 ))?;
                 let demand = input
-                    .tick_input(gamepads, held.value(), prepared.keyboard_controls, |step| {
-                        let position = birdman_game_core::PilotPositionTarget::try_new(
-                            &prepared.aircraft,
-                            (previous.pilot_position_demand().position_m() + step).clamp(
-                                prepared.aircraft.pilot_position_bounds_m()[0],
-                                prepared.aircraft.pilot_position_bounds_m()[1],
-                            ),
-                        )
-                        .map_err(|_| TailControlError::InvalidPilotIntent)?;
-                        mapping
-                            .normalized_target(position)
-                            .map_err(|_| TailControlError::InvalidPilotIntent)
-                    })
+                    .tick_input(
+                        prepared
+                            .controller_profile
+                            .body_rate_bounds_rad_per_second(),
+                        gamepads,
+                        held.value(),
+                        prepared.keyboard_controls,
+                        |step| {
+                            let position = birdman_game_core::PilotPositionTarget::try_new(
+                                &prepared.aircraft,
+                                (previous.pilot_position_demand().position_m() + step).clamp(
+                                    prepared.aircraft.pilot_position_bounds_m()[0],
+                                    prepared.aircraft.pilot_position_bounds_m()[1],
+                                ),
+                            )
+                            .map_err(|_| TailControlError::InvalidPilotIntent)?;
+                            mapping
+                                .normalized_target(position)
+                                .map_err(|_| TailControlError::InvalidPilotIntent)
+                        },
+                    )
                     .map_err(FlightFrameError::Input)?;
                 let result = prepared
                     .advance(

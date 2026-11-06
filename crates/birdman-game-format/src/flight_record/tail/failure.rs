@@ -32,6 +32,8 @@ pub enum TailControlFailureDocument {
     InvalidPilotIntent,
     /// Invalid desired q/r rate.
     InvalidRateTarget,
+    /// Invalid finite controller settings or stage observation.
+    InvalidController,
     /// Software actuator failure.
     Actuator(ActuatorFailureDocument),
     /// Effective incidence failure.
@@ -411,6 +413,7 @@ impl TailControlFailureDocument {
             TailControlError::NonFinite => Self::NonFinite,
             TailControlError::InvalidPilotIntent => Self::InvalidPilotIntent,
             TailControlError::InvalidRateTarget => Self::InvalidRateTarget,
+            TailControlError::InvalidController => Self::InvalidController,
             TailControlError::Actuator(cause) => Self::Actuator(cause.into()),
             TailControlError::Incidence(cause) => {
                 validate_control_incidence(cause)?;
@@ -424,6 +427,7 @@ impl TailControlFailureDocument {
             Self::NonFinite => TailControlError::NonFinite,
             Self::InvalidPilotIntent => TailControlError::InvalidPilotIntent,
             Self::InvalidRateTarget => TailControlError::InvalidRateTarget,
+            Self::InvalidController => TailControlError::InvalidController,
             Self::Actuator(cause) => TailControlError::Actuator(cause.into()),
             Self::Incidence(cause) => {
                 let cause = cause.to_core()?;

@@ -214,18 +214,16 @@ impl PreparedFlight {
     }
 }
 
-/// Resolves the existing four Assistance choices identically for every adapter.
-pub(crate) fn control_mode(assistance: AssistanceLevel) -> Result<ControlMode, ActuatorError> {
+/// Resolves three live modes with the selected controller's Shared authority.
+pub(crate) fn control_mode(
+    assistance: AssistanceLevel,
+    shared_authority: f64,
+) -> Result<ControlMode, ActuatorError> {
     match assistance {
         AssistanceLevel::Strong => Ok(ControlMode::Automatic),
         AssistanceLevel::Manual => Ok(ControlMode::Manual),
         AssistanceLevel::Assisted | AssistanceLevel::Light => {
-            FbwAuthority::try_new(if assistance == AssistanceLevel::Assisted {
-                0.5
-            } else {
-                0.2
-            })
-            .map(ControlMode::Shared)
+            FbwAuthority::try_new(shared_authority).map(ControlMode::Shared)
         }
     }
 }
@@ -254,21 +252,30 @@ pub(crate) fn resolve_difficulty(
     };
     HybridSessionPreparation::environment_identity(selected.weather(), seed)
         .map_err(ApplicationError::Preparation)?;
-    control_mode(selected.assistance()).map_err(ApplicationError::Control)?;
-    Ok(selected)
+    Ok(if selected.assistance() == AssistanceLevel::Light {
+        selected.with_assistance(AssistanceLevel::Assisted)
+    } else {
+        selected
+    })
 }
 
 /// Seals the same model, weather, controller and metadata into the existing session owner.
 pub(crate) fn prepare_flight(
     session: &mut GameSession,
     selected: &crate::SelectedAircraft,
+    controller: &crate::SelectedController,
     difficulty: DifficultySettings,
     maximum_ticks: u64,
     seed: u64,
 ) -> Result<PreparedFlight, ApplicationError> {
-    let control_mode = control_mode(difficulty.assistance()).map_err(ApplicationError::Control)?;
+    let control_mode = control_mode(
+        difficulty.assistance(),
+        controller.document().shared_authority,
+    )
+    .map_err(ApplicationError::Control)?;
     let preparation = HybridSessionPreparation::try_new_for_weather(
         selected,
+        controller,
         control_mode,
         maximum_ticks,
         seed,
@@ -301,6 +308,7 @@ pub(crate) fn prepare_flight(
         .map_err(HybridSessionPreparationError::Scenario)
         .map_err(ApplicationError::Preparation)?;
     let aircraft = configuration.aircraft();
+    let control_mode = configuration.control_mode();
     session
         .prepare_flight(configuration)
         .map_err(ApplicationError::Session)?;

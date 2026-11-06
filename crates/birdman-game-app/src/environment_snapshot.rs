@@ -594,7 +594,7 @@ mod tests {
         use crate::application::{BackendReadiness, SessionCommand};
         use birdman_game_format::WeatherClass;
         let mut session = crate::application::ApplicationSession::new(
-            crate::default_control_mode(),
+            birdman_game_core::ControlMode::Manual,
             4000,
             u64::MAX,
         );

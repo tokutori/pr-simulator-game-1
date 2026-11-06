@@ -141,6 +141,7 @@ pub(super) fn encode(
     let version_seven = document.schema_version >= 7;
     let version_eight = document.schema_version >= 8;
     let version_nine = document.schema_version >= 9;
+    let version_ten = document.schema_version >= 10;
     let mut columns = COLUMNS.to_vec();
     if version_seven {
         columns.extend(["row_kind", "wing_bending_factor"]);
@@ -164,9 +165,19 @@ pub(super) fn encode(
     if version_nine {
         columns.push("aircraft_source_sha256");
     }
+    if version_ten {
+        columns.extend([
+            "controller_source_sha256",
+            "control_mode",
+            "effective_feedback_authority",
+        ]);
+        columns.retain(|column| *column != "controller_profile_version");
+    }
     let header = &document.header;
     let mut metadata = vec![
-        if version_nine {
+        if version_ten {
+            "7"
+        } else if version_nine {
             "6"
         } else if version_eight {
             "5"
@@ -183,7 +194,10 @@ pub(super) fn encode(
         header.scenario_version.to_string(),
         header.aircraft_model_version.to_string(),
         header.environment_version.to_string(),
-        header.controller_profile_version.to_string(),
+        header
+            .controller_profile_version
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
         header.seed.to_string(),
         header.maximum_flight_ticks.to_string(),
         header.physics_hz.to_string(),
@@ -261,6 +275,13 @@ pub(super) fn encode(
         ]);
     } else {
         metadata.extend(core::iter::repeat_n(String::new(), 9));
+    }
+    if version_ten {
+        let index = COLUMNS
+            .iter()
+            .position(|column| *column == "controller_profile_version")
+            .ok_or(FlightRecordFormatError::EncodingFailed)?;
+        metadata.remove(index);
     }
     let finalization = &document.finalization;
     let mut terminal = vec![
@@ -416,6 +437,27 @@ pub(super) fn encode(
                     .clone()
                     .unwrap_or_default(),
             );
+        }
+        if version_ten {
+            let mode = header
+                .control_mode
+                .ok_or(FlightRecordFormatError::InvalidRecord)?;
+            row.push(
+                document
+                    .control_identity
+                    .controller_sha256
+                    .clone()
+                    .ok_or(FlightRecordFormatError::InvalidRecord)?,
+            );
+            row.push(
+                match mode {
+                    crate::FlightRecordControlMode::Manual => "manual",
+                    crate::FlightRecordControlMode::Shared { .. } => "shared",
+                    crate::FlightRecordControlMode::Automatic => "automatic",
+                }
+                .to_string(),
+            );
+            row.push(match mode.to_core()? { birdman_game_core::ControlMode::Manual => 0.0, birdman_game_core::ControlMode::Shared(authority) => authority.value(), birdman_game_core::ControlMode::Automatic => 1.0 }.to_string());
         }
         if row.len() != columns.len() {
             return Err(FlightRecordFormatError::EncodingFailed);

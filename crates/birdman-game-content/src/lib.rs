@@ -19,3 +19,6 @@ pub const VENUE_FEATURES_JSON: &[u8] = include_bytes!("../../../assets/biwa-venu
 
 /// Original registered Analysis map and fixed-camera source metadata.
 pub const VENUE_ANALYSIS_JSON: &[u8] = include_bytes!("../../../assets/biwa-analysis-map.json");
+
+/// Original default controller, decoded through the same contract as selected files.
+pub const DEFAULT_CONTROLLER_JSON: &[u8] = include_bytes!("../../../assets/controllers/default-rate-v1.json");

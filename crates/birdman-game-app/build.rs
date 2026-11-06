@@ -64,6 +64,9 @@ fn main() {
         shared_venue_asset,
         workspace_dir.join("crates/birdman-game-app/src/application.rs"),
         workspace_dir.join("crates/birdman-game-app/src/application/commands.rs"),
+        workspace_dir.join("crates/birdman-game-app/src/controller.rs"),
+        workspace_dir.join("crates/birdman-game-format/src/controller.rs"),
+        workspace_dir.join("assets/controllers/default-rate-v1.json"),
         aircraft_asset,
     ];
     scenario_files.extend(rust_sources(&workspace_dir, &content_source));
