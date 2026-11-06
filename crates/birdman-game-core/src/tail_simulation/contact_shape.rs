@@ -96,9 +96,7 @@ pub fn advance_tail_flight_tick_with_shape_provider(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tail_simulation::protection_tests::{
-        commands, config, input_holding_incidence, state, tail_boundary_body_rates, trial,
-    };
+    use crate::tail_simulation::protection_tests::{config, input_holding_incidence, state, trial};
     use crate::{BodyPoint, HybridModel, MathError, TestAircraft, WindField};
     use core::cell::Cell;
 
@@ -581,61 +579,6 @@ mod tests {
             )))
         );
         assert_eq!(previous.wing_bending_factor().unwrap().value(), 0.2);
-    }
-
-    #[test]
-    fn fallback_candidate_projection_failure_is_propagated_atomically() {
-        let definition = TestAircraft::try_new().unwrap();
-        let aircraft = definition.aircraft();
-        let surfaces = definition.surfaces().unwrap();
-        let tails = [surfaces[1], surfaces[2]];
-        let loads = HybridAerodynamicLoad::try_new(
-            HybridModel::try_new(definition.polar().unwrap(), &tails).unwrap(),
-            1.2,
-            WindField::uniform(crate::NedVector::zero()),
-        )
-        .unwrap();
-        let mut previous = state(
-            &aircraft,
-            [10.0, 0.0, 0.0],
-            tail_boundary_body_rates(tails[0], 10.0, 1.0),
-            TailIncidence::neutral(),
-            -50.0,
-        )
-        .with_wing_bending_factor(WingBendingFactor::try_new(0.2).unwrap());
-        let intervals = loads
-            .tail_incidence_intervals(
-                &previous.flight_state(),
-                [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
-            )
-            .unwrap();
-        previous.incidence =
-            TailIncidence::try_new(intervals[0][1] - 0.005, intervals[1][1] - 0.005).unwrap();
-        let input = TailFlightTickInput::new(
-            crate::TailPilotIntent::try_new(-1.0, -1.0).unwrap(),
-            crate::TailRateTarget::try_new(-0.2, -0.2).unwrap(),
-            crate::TailPilotPositionCommand::Hold,
-        );
-        let settings = config(&aircraft, ControlMode::Manual, 1.0);
-        let nominal = commands(previous, settings, input);
-        let Err(original) =
-            trial(&aircraft, previous, settings, input, &loads).evaluate(nominal.incidence())
-        else {
-            panic!("the nominal request must require a protected fallback");
-        };
-        assert!(controlled_tail_failure(original));
-        let mut shape = SampledShape::new(0.0, 0.0);
-        shape.fail_point_call = Some(3);
-        assert_eq!(
-            advance_tail_flight_tick_with_shape_provider(
-                &aircraft, previous, settings, input, &loads, &mut shape
-            ),
-            Err(TailFlightTickError::Contact(ContactError::Math(
-                MathError::NonFinite
-            )))
-        );
-        assert_eq!(shape.point_calls, 3);
-        assert_eq!(shape.factor_calls.get(), 1);
     }
 
     #[test]

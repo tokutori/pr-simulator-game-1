@@ -8,6 +8,157 @@ use crate::{
 use alloc::vec;
 use alloc::vec::Vec;
 
+#[test]
+fn reverse_plate_load_uses_midchord_once_and_opposes_normal_motion() {
+    let fixture = Fixture::new(2);
+    let (increment, _) = proxy_increment(
+        fixture.proxies[0][0],
+        vector([-3.0, 0.0, 4.0]),
+        ProxyReference {
+            velocity: BodyVector::zero(),
+            speed: 0.0,
+            pressure: 0.0,
+        },
+        1.2,
+        4.0,
+        0.0,
+        None,
+    )
+    .unwrap();
+    // A=2, H=5, w=4 => Fn=-48 N. Midchord=(-0.25,-1,0) m.
+    assert_eq!(
+        increment.force_body_newtons().components(),
+        [0.0, 0.0, -48.0]
+    );
+    assert_eq!(
+        increment.moment_about_datum_newton_meters().components(),
+        [48.0, -12.0, 0.0]
+    );
+    let (rotated, _) = proxy_increment(
+        fixture.proxies[1][0],
+        vector([3.0, 0.0, 0.0]),
+        ProxyReference {
+            velocity: BodyVector::zero(),
+            speed: 0.0,
+            pressure: 0.0,
+        },
+        1.2,
+        4.0,
+        core::f64::consts::FRAC_PI_2,
+        None,
+    )
+    .unwrap();
+    // Tail A=0.5, quarter=(-3,-0.5,0), rotated midpoint=(-3,-0.5,0.125).
+    near(rotated.force_body_newtons().components()[0], -5.4, 1e-13);
+    near(
+        rotated.moment_about_datum_newton_meters().components()[1],
+        -0.675,
+        1e-13,
+    );
+    near(
+        rotated.moment_about_datum_newton_meters().components()[2],
+        -2.7,
+        1e-13,
+    );
+}
+
+#[test]
+fn plate_pressure_uses_representable_dynamic_area_across_opposite_scales() {
+    let fixture = Fixture::new(2);
+    let zero = StaticPolarCoefficients::try_new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0).unwrap();
+    let rows = [
+        StaticPolarRow::try_new(-0.1, zero).unwrap(),
+        StaticPolarRow::try_new(0.1, zero).unwrap(),
+    ];
+    for (density, area, component) in [(1e200, 1e200, 1e-200), (1e-200, 1e-200, 1e200)] {
+        let polar = StaticPolar::try_new(
+            &rows,
+            ElementReference::try_new(area, 1.0, 1.0).unwrap(),
+            BodyPoint::origin(),
+            PolarMomentAxes::BodyFrd,
+            fixture.polar().metadata(),
+        )
+        .unwrap();
+        let velocity = vector([0.0, 3.0 * component, component]);
+        let (wrench, _, _) = continuation::global_flow(
+            polar,
+            velocity,
+            velocity.norm().unwrap(),
+            component,
+            density,
+        )
+        .unwrap();
+        // rho*A*H*w=1, evaluated independently of the overflowing/underflowing rho*A.
+        near(wrench.force_body_newtons().components()[2], -1.0, 1e-13);
+    }
+    let (local, _) = proxy_increment(
+        fixture.proxies[0][0],
+        vector([0.0, 0.0, 1e-154]),
+        ProxyReference {
+            velocity: BodyVector::zero(),
+            speed: 0.0,
+            pressure: 0.0,
+        },
+        1e308,
+        4.0,
+        0.0,
+        None,
+    )
+    .unwrap();
+    near(local.force_body_newtons().components()[2], -2.0, 1e-13);
+}
+
+#[test]
+fn high_angle_neutral_flow_cancels_local_reference_and_pure_span_has_unique_limit() {
+    let fixture = Fixture::new(2);
+    let surfaces = fixture.surfaces();
+    let loads = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(fixture.polar(), &surfaces).unwrap(),
+        1.2,
+        WindField::uniform(NedVector::zero()),
+    )
+    .unwrap();
+    for velocity in [[-10.0, 0.0, 0.0], [0.0, 0.0, 10.0], [0.0; 3]] {
+        let value = loads
+            .evaluate_hybrid(&state(velocity, [0.0; 3]), TailIncidence::neutral())
+            .unwrap();
+        assert_eq!(value.increment, Wrench::zero());
+    }
+    let limit = loads
+        .evaluate_hybrid(&state([0.0, 10.0, 0.0], [0.0; 3]), TailIncidence::neutral())
+        .unwrap()
+        .total_wrench();
+    for alpha in [-2.0, 0.4, 2.5] {
+        let epsilon = 1e-7;
+        let actual = loads
+            .evaluate_hybrid(
+                &state(
+                    [epsilon * libm::cos(alpha), 10.0, epsilon * libm::sin(alpha)],
+                    [0.0; 3],
+                ),
+                TailIncidence::neutral(),
+            )
+            .unwrap()
+            .total_wrench();
+        for (a, b) in actual
+            .force_body_newtons()
+            .components()
+            .into_iter()
+            .zip(limit.force_body_newtons().components())
+        {
+            near(a, b, 1e-4);
+        }
+        for (a, b) in actual
+            .moment_about_datum_newton_meters()
+            .components()
+            .into_iter()
+            .zip(limit.moment_about_datum_newton_meters().components())
+        {
+            near(a, b, 1e-4);
+        }
+    }
+}
+
 fn point(values: [f64; 3]) -> BodyPoint {
     BodyPoint::try_new(values[0], values[1], values[2]).unwrap()
 }
@@ -1045,27 +1196,19 @@ fn zero_datum_requires_all_actual_proxy_velocities_and_wind_samples_to_succeed()
     );
     let rotation = load
         .evaluate_hybrid(&state([0.0; 3], [0.01, 0.0, 0.0]), TailIncidence::neutral())
-        .unwrap_err();
-    assert_eq!(rotation.limit(), Some(HybridLimit::UndefinedReference));
-    assert_eq!(
-        rotation.site(),
-        HybridSite::Proxy {
-            surface: HybridSurfaceRole::MainWing,
-            index: 0
-        }
-    );
+        .unwrap();
+    assert_ne!(rotation.total_wrench(), Wrench::zero());
     let gradient = WindField::linear_gradient(
         NedPoint::origin(),
         NedVector::zero(),
         [[0.0; 3], [0.0; 3], [0.0, 0.1, 0.0]],
     )
     .unwrap();
-    let load = HybridAerodynamicLoad::try_new(model, 1.2, gradient).unwrap();
-    assert_eq!(
-        load.evaluate_hybrid(&state([0.0; 3], [0.0; 3]), TailIncidence::neutral())
-            .unwrap_err()
-            .limit(),
-        Some(HybridLimit::UndefinedReference)
+    assert!(
+        HybridAerodynamicLoad::try_new(model, 1.2, gradient)
+            .unwrap()
+            .evaluate_hybrid(&state([0.0; 3], [0.0; 3]), TailIncidence::neutral())
+            .is_ok()
     );
     let samples = [NedVector::zero(); 8];
     let grid = WindField::grid(

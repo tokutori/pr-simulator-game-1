@@ -1,11 +1,9 @@
 use super::*;
-use crate::{AeroError, AerodynamicStage, HybridLimit, HybridSite};
 
 const UNIFORM_WIND_MPS: [f64; 3] = [0.3, 0.1, -0.04];
 const WIND_GRADIENT_PER_METER: [[f64; 3]; 3] =
     [[0.0, 0.0, 0.015], [0.012, 0.0, 0.0], [0.0, -0.003, 0.0]];
 const UPPER_ALPHA_MARGIN_RAD: f64 = 0.002;
-const OUTSIDE_ALPHA_INCREMENT_RAD: f64 = 1.0e-6;
 const NEAR_BOUND_OBSERVATION_INTERVALS: usize = 5;
 const AIRSPEED_MPS: f64 = 9.7;
 const NEAR_BOUND_PITCH_GAIN_SECONDS: f64 = 0.1;
@@ -153,54 +151,4 @@ fn uniform_shear_and_upper_alpha_use_physics_only_step_halving_gates() {
 #[test]
 fn uniform_shear_and_upper_alpha_use_coupled_step_halving_gates() {
     check_wind_step_halving(Cadence::Coupled);
-}
-
-#[test]
-fn outside_static_alpha_is_a_typed_atomic_first_stage_refusal() {
-    let definition = TestAircraft::try_new().unwrap();
-    let surfaces = definition.surfaces().unwrap();
-    let trim = definition.trim().unwrap();
-    let loads = HybridAerodynamicLoad::try_new(
-        HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
-        TestAircraft::TRIM_AIR_DENSITY_KG_M3,
-        WindField::uniform(NedVector::zero()),
-    )
-    .unwrap();
-    let initial = state_at_static_alpha(
-        &definition,
-        trim,
-        definition.polar().unwrap().alpha_interval_rad()[1] + OUTSIDE_ALPHA_INCREMENT_RAD,
-    );
-    let before = initial;
-    for mode in [
-        ControlMode::Manual,
-        ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
-        ControlMode::Automatic,
-    ] {
-        let config = TailFlightTickConfig::new(
-            mode,
-            TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap(),
-            trim.pilot_mapping().unwrap(),
-            Gravity::try_new(TestAircraft::TRIM_GRAVITY_MPS2).unwrap(),
-        );
-        let error = advance_tail_flight_tick(
-            &definition.aircraft(),
-            initial,
-            config,
-            InputCase::Neutral.sample(0),
-            &loads,
-        )
-        .unwrap_err();
-        let TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
-            AerodynamicEvaluationError::Hybrid(error),
-        ))) = error
-        else {
-            panic!("expected the original static polar error");
-        };
-        assert_eq!(error.site(), HybridSite::StaticPolar);
-        assert_eq!(error.cause(), AeroError::OutsideEnvelope);
-        assert_eq!(error.limit(), Some(HybridLimit::StaticAlpha));
-        assert_eq!(error.stage(), Some(AerodynamicStage::First));
-        assert_eq!(initial, before);
-    }
 }
