@@ -62,7 +62,7 @@ pub use scene::{
 pub use shutdown::ApplicationLifecycle;
 #[cfg(not(verus_only))]
 pub use storage::{
-    ApplicationAircraftLoad, ApplicationDisplaySettingsLoad, ApplicationKeyboardControlsLoad,
+    ApplicationConfigurationLoad, ApplicationDisplaySettingsLoad, ApplicationKeyboardControlsLoad,
     ApplicationRecordLoadCompletion,
 };
 #[cfg(not(verus_only))]
@@ -98,6 +98,8 @@ use birdman_game_app::flight_input::{
 use birdman_game_app::{HybridSessionPreparation, identity_for_selection};
 #[cfg(not(verus_only))]
 use birdman_game_core::{SessionPhase, SessionScenarioIdentity};
+#[cfg(not(verus_only))]
+use birdman_game_format::ConfigurationDocumentKind;
 
 #[cfg(not(verus_only))]
 use birdman_game_presentation::game_ui::{
@@ -314,8 +316,8 @@ impl ApplicationRuntime {
                     | ApplicationInput::RecordPreviewObserved { .. }
                     | ApplicationInput::RecordLoaded { .. }
                     | ApplicationInput::DownloadCompleted { .. }
-                    | ApplicationInput::AircraftLoaded { .. }
-                    | ApplicationInput::AircraftSaved { .. }
+                    | ApplicationInput::ConfigurationLoaded { .. }
+                    | ApplicationInput::ConfigurationSaved { .. }
                     | ApplicationInput::KeyboardControlsLoaded { .. }
                     | ApplicationInput::KeyboardControlsSaved { .. }
                     | ApplicationInput::DisplaySettingsLoaded { .. }
@@ -386,12 +388,14 @@ impl ApplicationRuntime {
         let mut spatial_frame = None;
         let mut render_spatial = false;
         match input {
-            ApplicationInput::AircraftLoaded {
+            ApplicationInput::ConfigurationLoaded {
+                document,
                 request_id,
                 completion,
             } => {
                 let write_id = self.allocate_request()?;
-                let (selected, request) = self.storage.aircraft_read_completed(
+                let (selected, request) = self.storage.configuration_read_completed(
+                    document,
                     request_id,
                     completion,
                     &self.application,
@@ -399,21 +403,24 @@ impl ApplicationRuntime {
                 );
                 requests.extend(request);
                 if let Some(selected) = selected {
-                    self.application
-                        .select_aircraft(selected)
+                    selected
+                        .apply(&mut self.application)
                         .map_err(ApplicationRuntimeError::Session)?;
                 }
             }
-            ApplicationInput::AircraftSaved {
+            ApplicationInput::ConfigurationSaved {
+                document,
                 request_id,
                 failure,
             } => {
-                if let Some(selected) =
-                    self.storage
-                        .aircraft_saved(request_id, failure, &self.application)
-                {
-                    self.application
-                        .select_aircraft(selected)
+                if let Some(selected) = self.storage.configuration_saved(
+                    document,
+                    request_id,
+                    failure,
+                    &self.application,
+                ) {
+                    selected
+                        .apply(&mut self.application)
                         .map_err(ApplicationRuntimeError::Session)?;
                 }
             }
@@ -1087,9 +1094,14 @@ impl ApplicationRuntime {
         if io_continuation {
             return Ok(self.output(None, requests, keyboard_consumed));
         }
-        if !self.shutdown.closed() && self.storage.aircraft_needs_read() {
-            let request_id = self.allocate_request()?;
-            requests.push(self.storage.read_aircraft(request_id));
+        for document in [
+            ConfigurationDocumentKind::Aircraft,
+            ConfigurationDocumentKind::Controller,
+        ] {
+            if !self.shutdown.closed() && self.storage.configuration_needs_read(document) {
+                let request_id = self.allocate_request()?;
+                requests.push(self.storage.read_configuration(document, request_id));
+            }
         }
         if !self.shutdown.closed() && self.storage.keyboard_needs_read() {
             let request_id = self.allocate_request()?;
@@ -1125,7 +1137,7 @@ impl ApplicationRuntime {
         if matches!(self.boot, boot::BootOwner::Preparing) {
             match self.resource_readiness {
                 BackendReadiness::Ready
-                    if !self.storage.aircraft_loading()
+                    if !self.storage.configuration_loading()
                         && !self.storage.keyboard_loading()
                         && !self.storage.display_loading() =>
                 {
@@ -1186,7 +1198,7 @@ impl ApplicationRuntime {
             self.replay_supported && self.application.replay_available();
         self.platform.operation_pending = self.display.state().pending()
             || self.storage.load_pending()
-            || self.storage.aircraft_pending();
+            || self.storage.configuration_pending();
         self.platform.stored_records_retry_available = self.platform.stored_records_available
             && self.storage.can_retry_preview(&self.application);
         self.platform.render_quality_confirmed = self.graphics.resource().is_some();
@@ -1707,16 +1719,24 @@ impl ApplicationRuntime {
                         .map_err(ApplicationRuntimeError::Graphics)?;
                 }
                 GameUiEffect::Platform {
-                    command: GameUiPlatformCommand::LoadAircraft {},
+                    command: GameUiPlatformCommand::LoadConfiguration { document },
                 } => {
                     let request_id = self.allocate_request()?;
-                    requests.extend(self.storage.pick_aircraft(request_id, &self.application));
+                    requests.extend(self.storage.pick_configuration(
+                        document,
+                        request_id,
+                        &self.application,
+                    ));
                 }
                 GameUiEffect::Platform {
-                    command: GameUiPlatformCommand::DeleteAircraft {},
+                    command: GameUiPlatformCommand::DeleteConfiguration { document },
                 } => {
                     let request_id = self.allocate_request()?;
-                    requests.extend(self.storage.delete_aircraft(request_id, &self.application));
+                    requests.extend(self.storage.delete_configuration(
+                        document,
+                        request_id,
+                        &self.application,
+                    ));
                 }
                 GameUiEffect::Platform {
                     command: GameUiPlatformCommand::SetPresentation { mode },
@@ -2196,6 +2216,11 @@ impl ApplicationRuntime {
                     ))
                 })?
                 .identity();
+            identity.controller_identity = self
+                .application
+                .controller()
+                .ok()
+                .map(|selected| selected.identity());
             Ok(Some(identity))
         } else {
             Ok(self.application.core_session().configuration_identity())
@@ -2245,8 +2270,46 @@ impl ApplicationRuntime {
                     }
                 })
                 .unwrap_or("機体を準備できない"),
-            aircraft_notification: self.storage.aircraft_notification(),
-            aircraft_can_delete: self.storage.aircraft_can_delete(),
+            aircraft_notification: self
+                .storage
+                .configuration_notification(ConfigurationDocumentKind::Aircraft),
+            aircraft_can_delete: self
+                .storage
+                .configuration_can_delete(ConfigurationDocumentKind::Aircraft),
+            controller_name: self
+                .application
+                .controller()
+                .map(|selected| {
+                    if selected.is_bundled() {
+                        "既定の制御設定"
+                    } else {
+                        selected.document().controller_id.as_str()
+                    }
+                })
+                .unwrap_or("制御設定を準備できない"),
+            controller_notification: self
+                .storage
+                .configuration_notification(ConfigurationDocumentKind::Controller),
+            controller_can_delete: self
+                .storage
+                .configuration_can_delete(ConfigurationDocumentKind::Controller),
+            controller_pair_diagnostic: self
+                .application
+                .controller_pair()
+                .err()
+                .map(|cause| cause.to_string()),
+            controller_shared_authority: self
+                .application
+                .controller()
+                .ok()
+                .map(|selected| selected.document().shared_authority),
+            controller_effective_authority: self.application.display_control_mode().map(|mode| {
+                match mode {
+                    birdman_game_core::ControlMode::Manual => 0.0,
+                    birdman_game_core::ControlMode::Shared(authority) => authority.value(),
+                    birdman_game_core::ControlMode::Automatic => 1.0,
+                }
+            }),
             aircraft_replay_available: self.application.replay_available(),
             representative_position_ned_m: self
                 .application

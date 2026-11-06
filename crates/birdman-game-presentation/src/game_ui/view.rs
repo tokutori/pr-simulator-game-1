@@ -159,7 +159,7 @@ pub fn game_ui_view(
                 "飛行準備へ進む",
                 SessionCommand::Prepare {},
                 GameUiEmphasis::Primary,
-                true,
+                context.controller_pair_diagnostic.is_none(),
             );
             menu.session(
                 "game-setup-back",
@@ -751,15 +751,48 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_>) {
     menu.platform(
         "game-setup-load-aircraft",
         "機体JSONを読み込む",
-        GameUiPlatformCommand::LoadAircraft {},
+        GameUiPlatformCommand::LoadConfiguration {
+            document: birdman_game_format::ConfigurationDocumentKind::Aircraft,
+        },
         true,
     );
     menu.platform(
         "game-setup-delete-aircraft",
         "読み込んだ機体を削除する",
-        GameUiPlatformCommand::DeleteAircraft {},
+        GameUiPlatformCommand::DeleteConfiguration {
+            document: birdman_game_format::ConfigurationDocumentKind::Aircraft,
+        },
         context.aircraft_can_delete,
     );
+    menu.automatic_sections();
+    menu.section("controller", "制御設定", GameUiSectionLayout::Column);
+    menu.status("game-setup-controller", "選択中", context.controller_name);
+    if !context.controller_notification.is_empty() {
+        menu.status(
+            "game-setup-controller-notification",
+            "",
+            context.controller_notification,
+        );
+    }
+    menu.platform(
+        "game-setup-load-controller",
+        "制御設定JSONを読み込む",
+        GameUiPlatformCommand::LoadConfiguration {
+            document: birdman_game_format::ConfigurationDocumentKind::Controller,
+        },
+        true,
+    );
+    menu.platform(
+        "game-setup-delete-controller",
+        "読み込んだ制御設定を削除する",
+        GameUiPlatformCommand::DeleteConfiguration {
+            document: birdman_game_format::ConfigurationDocumentKind::Controller,
+        },
+        context.controller_can_delete,
+    );
+    if let Some(diagnostic) = &context.controller_pair_diagnostic {
+        menu.status("game-setup-controller-pair", "開始条件", diagnostic);
+    }
     menu.automatic_sections();
     let difficulty = context.difficulty;
     progress(menu, SessionPhase::FlightSetup);
@@ -1414,13 +1447,16 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_>) {
 fn technical_configuration(context: &GameUiContext<'_>) -> String {
     let mut description = match context.identity {
         Some(identity) => format!(
-            "Catalog: v{}\nScenario: {} / v{}\nAircraft: v{}\nEnvironment: v{}\nController: v{}\nSeed: {}:{}",
+            "Catalog: v{}\nScenario: {} / v{}\nAircraft: v{}\nEnvironment: v{}\nController: {}\nSeed: {}:{}",
             identity.catalog_version,
             identity.scenario_id,
             identity.scenario_version,
             identity.aircraft_model_version,
             identity.environment_version,
-            identity.controller_profile_version,
+            identity
+                .controller_identity
+                .map(digest_hex)
+                .unwrap_or_else(|| "未記録".to_owned()),
             identity.seed >> 32,
             identity.seed as u32
         ),

@@ -198,15 +198,19 @@ pub struct ApplicationSpatialObservation {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationInput {
-    /// Terminal original-byte result of an aircraft read or picker.
-    AircraftLoaded {
+    /// Terminal original-byte result of a configuration read or picker.
+    ConfigurationLoaded {
+        /// Independently selected original document kind.
+        document: birdman_game_format::ConfigurationDocumentKind,
         /// Owner-issued operation identity.
         request_id: u32,
         /// Unmodified I/O result.
-        completion: super::ApplicationAircraftLoad,
+        completion: super::ApplicationConfigurationLoad,
     },
-    /// Terminal atomic aircraft write or delete result.
-    AircraftSaved {
+    /// Terminal atomic configuration write or delete result.
+    ConfigurationSaved {
+        /// Independently selected original document kind.
+        document: birdman_game_format::ConfigurationDocumentKind,
         /// Owner-issued operation identity.
         request_id: u32,
         /// Original I/O failure, absent after success.
@@ -529,29 +533,37 @@ pub enum ApplicationInput {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ApplicationRequest {
-    /// Reads the persisted original aircraft document once at boot.
-    ReadAircraft {
+    /// Reads a persisted original configuration document once at boot.
+    ReadConfiguration {
+        /// Independently selected original document kind.
+        document: birdman_game_format::ConfigurationDocumentKind,
         /// Owner-issued operation identity.
         request_id: u32,
         /// Source-byte read budget.
         maximum_bytes: u32,
     },
-    /// Asks the player to select one aircraft source file.
-    PickAircraft {
+    /// Asks the player to select one original configuration source file.
+    PickConfiguration {
+        /// Independently selected original document kind.
+        document: birdman_game_format::ConfigurationDocumentKind,
         /// Owner-issued operation identity.
         request_id: u32,
         /// Source-byte read budget.
         maximum_bytes: u32,
     },
     /// Atomically persists the exact validated source bytes.
-    WriteAircraft {
+    WriteConfiguration {
+        /// Independently selected original document kind.
+        document: birdman_game_format::ConfigurationDocumentKind,
         /// Owner-issued operation identity.
         request_id: u32,
         /// Original validated source bytes.
         bytes: Vec<u8>,
     },
-    /// Removes only the user's aircraft document.
-    DeleteAircraft {
+    /// Removes only the requested user's configuration document.
+    DeleteConfiguration {
+        /// Independently selected original document kind.
+        document: birdman_game_format::ConfigurationDocumentKind,
         /// Owner-issued operation identity.
         request_id: u32,
     },

@@ -54,6 +54,12 @@ pub(super) fn context<'view>(
     GameUiContext {
         aircraft_replay_available: true,
         representative_position_ned_m: [0.0, 0.0, -10.5],
+        controller_name: "既定の制御設定",
+        controller_notification: "",
+        controller_can_delete: false,
+        controller_pair_diagnostic: None,
+        controller_shared_authority: Some(0.5),
+        controller_effective_authority: Some(0.0),
         aircraft_name: "既定の機体",
         aircraft_notification: "",
         aircraft_can_delete: false,

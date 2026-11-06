@@ -1371,17 +1371,27 @@ fn finish_boot(
     runtime: &mut ApplicationRuntime,
     mut initial: ApplicationOutput,
 ) -> ApplicationOutput {
-    if let Some(request_id) = initial.requests.iter().find_map(|request| match request {
-        ApplicationRequest::ReadAircraft { request_id, .. } => Some(*request_id),
-        _ => None,
-    }) {
+    for (document, request_id) in initial
+        .requests
+        .iter()
+        .filter_map(|request| match request {
+            ApplicationRequest::ReadConfiguration {
+                document,
+                request_id,
+                ..
+            } => Some((*document, *request_id)),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+    {
         initial
             .requests
-            .retain(|request| !matches!(request, ApplicationRequest::ReadAircraft { .. }));
+            .retain(|request| !matches!(request, ApplicationRequest::ReadConfiguration { .. }));
         runtime
-            .observe_test(ApplicationInput::AircraftLoaded {
+            .observe_test(ApplicationInput::ConfigurationLoaded {
+                document,
                 request_id,
-                completion: ApplicationAircraftLoad::Missing,
+                completion: ApplicationConfigurationLoad::Missing,
             })
             .unwrap();
     }
@@ -2631,19 +2641,29 @@ impl ObservedInput for ApplicationRuntime {
                             && frame.fields.is_empty() && frame.button_labels.is_empty()
                             && frame.chart_cursor.is_none() && frame.flight_touch.is_empty())));
         }
-        if let Some(request_id) = output.requests.iter().find_map(|request| match request {
-            ApplicationRequest::ReadAircraft { request_id, .. } => Some(*request_id),
-            _ => None,
-        }) {
+        for (document, request_id) in output
+            .requests
+            .iter()
+            .filter_map(|request| match request {
+                ApplicationRequest::ReadConfiguration {
+                    document,
+                    request_id,
+                    ..
+                } => Some((*document, *request_id)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+        {
             output
                 .requests
-                .retain(|request| !matches!(request, ApplicationRequest::ReadAircraft { .. }));
+                .retain(|request| !matches!(request, ApplicationRequest::ReadConfiguration { .. }));
             let completed = self.update(
                 ApplicationObservation {
                     observed_ms,
-                    input: ApplicationInput::AircraftLoaded {
+                    input: ApplicationInput::ConfigurationLoaded {
+                        document,
                         request_id,
-                        completion: ApplicationAircraftLoad::Missing,
+                        completion: ApplicationConfigurationLoad::Missing,
                     },
                 },
                 &mut no_text_metrics,

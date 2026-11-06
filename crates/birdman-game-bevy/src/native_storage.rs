@@ -13,11 +13,18 @@ use birdman_game_app::record_persistence::{
 };
 use birdman_game_presentation::game_ui::game_ui_saved_record_timestamp;
 use birdman_game_runtime::{
-    ApplicationAircraftLoad, ApplicationDisplaySettingsLoad, ApplicationInput,
+    ApplicationConfigurationLoad, ApplicationDisplaySettingsLoad, ApplicationInput,
     ApplicationKeyboardControlsLoad, ApplicationRecordLoadCompletion, ApplicationRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+fn configuration_stem(document: birdman_game_format::ConfigurationDocumentKind) -> &'static str {
+    match document {
+        birdman_game_format::ConfigurationDocumentKind::Aircraft => "aircraft",
+        birdman_game_format::ConfigurationDocumentKind::Controller => "controller",
+    }
+}
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -68,57 +75,83 @@ impl NativeStorage {
         request: &ApplicationRequest,
     ) -> Option<Vec<ApplicationInput>> {
         match request {
-            ApplicationRequest::ReadAircraft {
+            ApplicationRequest::ReadConfiguration {
+                document,
                 request_id,
                 maximum_bytes,
             } => {
-                let completion = match self.read_aircraft(*maximum_bytes) {
-                    Ok(Some(bytes)) => ApplicationAircraftLoad::Found { bytes },
-                    Ok(None) => ApplicationAircraftLoad::Missing,
-                    Err(cause) => ApplicationAircraftLoad::Failed {
+                let completion = match self.read_configuration(*document, *maximum_bytes) {
+                    Ok(Some(bytes)) => ApplicationConfigurationLoad::Found { bytes },
+                    Ok(None) => ApplicationConfigurationLoad::Missing,
+                    Err(cause) => ApplicationConfigurationLoad::Failed {
                         cause: cause.to_string(),
                     },
                 };
-                Some(vec![ApplicationInput::AircraftLoaded {
+                Some(vec![ApplicationInput::ConfigurationLoaded {
+                    document: *document,
                     request_id: *request_id,
                     completion,
                 }])
             }
-            ApplicationRequest::PickAircraft {
+            ApplicationRequest::PickConfiguration {
+                document,
                 request_id,
                 maximum_bytes,
             } => {
                 let completion = match rfd::FileDialog::new()
-                    .add_filter("機体JSON", &["json"])
+                    .add_filter(
+                        match document {
+                            birdman_game_format::ConfigurationDocumentKind::Aircraft => "機体JSON",
+                            birdman_game_format::ConfigurationDocumentKind::Controller => {
+                                "制御設定JSON"
+                            }
+                        },
+                        &["json"],
+                    )
                     .pick_file()
                 {
-                    Some(path) => match Self::read_aircraft_file(&path, *maximum_bytes) {
-                        Ok(bytes) => ApplicationAircraftLoad::Found { bytes },
-                        Err(cause) => ApplicationAircraftLoad::Failed {
+                    Some(path) => match Self::read_configuration_file(&path, *maximum_bytes) {
+                        Ok(bytes) => ApplicationConfigurationLoad::Found { bytes },
+                        Err(cause) => ApplicationConfigurationLoad::Failed {
                             cause: cause.to_string(),
                         },
                     },
-                    None => ApplicationAircraftLoad::Cancelled,
+                    None => ApplicationConfigurationLoad::Cancelled,
                 };
-                Some(vec![ApplicationInput::AircraftLoaded {
+                Some(vec![ApplicationInput::ConfigurationLoaded {
+                    document: *document,
                     request_id: *request_id,
                     completion,
                 }])
             }
-            ApplicationRequest::WriteAircraft { request_id, bytes } => {
+            ApplicationRequest::WriteConfiguration {
+                document,
+                request_id,
+                bytes,
+            } => {
                 let failure = std::str::from_utf8(bytes)
                     .map_err(io::Error::other)
-                    .and_then(|json| self.write_settings("aircraft", *request_id, json))
+                    .and_then(|json| {
+                        self.write_settings(configuration_stem(*document), *request_id, json)
+                    })
                     .err()
                     .map(|cause| cause.to_string());
-                Some(vec![ApplicationInput::AircraftSaved {
+                Some(vec![ApplicationInput::ConfigurationSaved {
+                    document: *document,
                     request_id: *request_id,
                     failure,
                 }])
             }
-            ApplicationRequest::DeleteAircraft { request_id } => {
-                let failure = self.delete_aircraft().err().map(|cause| cause.to_string());
-                Some(vec![ApplicationInput::AircraftSaved {
+            ApplicationRequest::DeleteConfiguration {
+                document,
+                request_id,
+            } => {
+                let failure = self
+                    .delete_configuration(*document)
+                    .err()
+                    .map(|cause| cause.to_string());
+                Some(vec![ApplicationInput::ConfigurationSaved {
+                    document: *document,
                     request_id: *request_id,
                     failure,
                 }])
@@ -428,7 +461,7 @@ impl NativeStorage {
         Ok(json!({ "id": id, "savedAt": row.saved_at, "json": json }))
     }
 
-    fn read_aircraft_file(path: &Path, maximum_bytes: u32) -> io::Result<Vec<u8>> {
+    fn read_configuration_file(path: &Path, maximum_bytes: u32) -> io::Result<Vec<u8>> {
         let file = File::open(path)?;
         let mut bytes = Vec::new();
         file.take(u64::from(maximum_bytes) + 1)
@@ -436,19 +469,29 @@ impl NativeStorage {
         Ok(bytes)
     }
 
-    fn read_aircraft(&self, maximum_bytes: u32) -> io::Result<Option<Vec<u8>>> {
+    fn read_configuration(
+        &self,
+        document: birdman_game_format::ConfigurationDocumentKind,
+        maximum_bytes: u32,
+    ) -> io::Result<Option<Vec<u8>>> {
         let directory = self
             .keyboard_directory
             .as_ref()
             .map_err(|cause| io::Error::other(cause.clone()))?;
-        match Self::read_aircraft_file(&directory.join("aircraft.json"), maximum_bytes) {
+        match Self::read_configuration_file(
+            &directory.join(format!("{}.json", configuration_stem(document))),
+            maximum_bytes,
+        ) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(cause) if cause.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(cause) => Err(cause),
         }
     }
 
-    fn delete_aircraft(&self) -> io::Result<()> {
+    fn delete_configuration(
+        &self,
+        document: birdman_game_format::ConfigurationDocumentKind,
+    ) -> io::Result<()> {
         let directory = self
             .keyboard_directory
             .as_ref()
@@ -459,9 +502,9 @@ impl NativeStorage {
             .truncate(false)
             .read(true)
             .write(true)
-            .open(directory.join("aircraft.lock"))?;
+            .open(directory.join(format!("{}.lock", configuration_stem(document))))?;
         lock.try_lock().map_err(io::Error::other)?;
-        match fs::remove_file(directory.join("aircraft.json")) {
+        match fs::remove_file(directory.join(format!("{}.json", configuration_stem(document)))) {
             Err(cause) if cause.kind() == io::ErrorKind::NotFound => Ok(()),
             result => result,
         }
@@ -811,15 +854,21 @@ pub(crate) mod tests {
         let aircraft = "{\"configuration_id\":\"機体-α\"}\n ".as_bytes().to_vec();
         assert!(matches!(
             &reopened
-                .execute(&ApplicationRequest::WriteAircraft {
+                .execute(&ApplicationRequest::WriteConfiguration {
+                    document: birdman_game_format::ConfigurationDocumentKind::Aircraft,
                     request_id: 8,
                     bytes: aircraft.clone()
                 })
                 .unwrap()[0],
-            ApplicationInput::AircraftSaved { failure: None, .. }
+            ApplicationInput::ConfigurationSaved { failure: None, .. }
         ));
         assert_eq!(
-            reopened.read_aircraft(262144).unwrap(),
+            reopened
+                .read_configuration(
+                    birdman_game_format::ConfigurationDocumentKind::Aircraft,
+                    262144
+                )
+                .unwrap(),
             Some(aircraft.clone())
         );
         let temporary = directory
@@ -828,24 +877,78 @@ pub(crate) mod tests {
         fs::write(&temporary, "pre-existing file").unwrap();
         assert!(matches!(
             &reopened
-                .execute(&ApplicationRequest::WriteAircraft {
+                .execute(&ApplicationRequest::WriteConfiguration {
+                    document: birdman_game_format::ConfigurationDocumentKind::Aircraft,
                     request_id: 9,
                     bytes: b"replacement".to_vec()
                 })
                 .unwrap()[0],
-            ApplicationInput::AircraftSaved {
+            ApplicationInput::ConfigurationSaved {
                 failure: Some(_),
                 ..
             }
         ));
-        assert_eq!(reopened.read_aircraft(262144).unwrap(), Some(aircraft));
+        assert_eq!(
+            reopened
+                .read_configuration(
+                    birdman_game_format::ConfigurationDocumentKind::Aircraft,
+                    262144
+                )
+                .unwrap(),
+            Some(aircraft)
+        );
         assert!(matches!(
             &reopened
-                .execute(&ApplicationRequest::DeleteAircraft { request_id: 10 })
+                .execute(&ApplicationRequest::DeleteConfiguration {
+                    document: birdman_game_format::ConfigurationDocumentKind::Aircraft,
+                    request_id: 10
+                })
                 .unwrap()[0],
-            ApplicationInput::AircraftSaved { failure: None, .. }
+            ApplicationInput::ConfigurationSaved { failure: None, .. }
         ));
-        assert!(reopened.read_aircraft(262144).unwrap().is_none());
+        assert!(
+            reopened
+                .read_configuration(
+                    birdman_game_format::ConfigurationDocumentKind::Aircraft,
+                    262144
+                )
+                .unwrap()
+                .is_none()
+        );
+        let controller_source = b" {\"controller_id\":\"original-controller\"}\n ";
+        assert!(matches!(
+            &reopened
+                .execute(&ApplicationRequest::WriteConfiguration {
+                    document: birdman_game_format::ConfigurationDocumentKind::Controller,
+                    request_id: 11,
+                    bytes: controller_source.to_vec(),
+                })
+                .unwrap()[0],
+            ApplicationInput::ConfigurationSaved {
+                document: birdman_game_format::ConfigurationDocumentKind::Controller,
+                failure: None,
+                ..
+            }
+        ));
+        assert_eq!(
+            reopened
+                .read_configuration(
+                    birdman_game_format::ConfigurationDocumentKind::Controller,
+                    65536
+                )
+                .unwrap()
+                .as_deref(),
+            Some(controller_source.as_slice())
+        );
+        assert!(
+            reopened
+                .read_configuration(
+                    birdman_game_format::ConfigurationDocumentKind::Aircraft,
+                    262144
+                )
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(
             reopened.read_keyboard(4096).unwrap().as_deref(),
             Some(original)

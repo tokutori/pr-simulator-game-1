@@ -683,36 +683,42 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
 });
 
 
-it("passes original aircraft file bytes to Rust and persists the exact validated UTF-8 source", async () => {
+it("passes original configuration bytes to Rust and persists each exact UTF-8 source", async () => {
   const state = await fixture();
   const prototype = state.browser.HTMLInputElement.prototype;
   const original = Object.getOwnPropertyDescriptor(prototype, "showPicker");
-  const document = JSON.parse(readFileSync(new URL("../../assets/aircraft/playable-glider-v7.json", import.meta.url), "utf8")) as Record<string, unknown>;
-  document.configuration_id = "custom-aircraft-a";
-  const source = ` \n${JSON.stringify(document).replace("configuration_id", "\\u0063onfiguration_id")}\n\t`;
-  const valid = new TextEncoder().encode(source);
-  let bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...valid]);
+  let bytes = new Uint8Array();
   Object.defineProperty(prototype, "showPicker", { configurable: true, value(this: HTMLInputElement) {
-    Object.defineProperty(this, "files", { configurable: true, value: [new state.browser.File([bytes], "aircraft.json")] });
+    Object.defineProperty(this, "files", { configurable: true, value: [new state.browser.File([bytes], "configuration.json")] });
     this.dispatchEvent(new state.browser.Event("change") as unknown as Event);
   } });
   try {
     await state.ready();
     state.click("game-title-start");
-    state.click("game-setup-load-aircraft");
-    await flush();
-    const key = "tokutori.pr-simulator-game-1.aircraft";
-    expect(state.browser.localStorage.getItem(key)).toBeNull();
-    const observed = state.updates.mock.calls.map(([json]) => JSON.parse(json) as ApplicationObservation)
-      .find(observation => observation.input.kind === "aircraft_loaded" && observation.input.completion.kind === "found");
-    expect(observed?.input).toMatchObject({ kind: "aircraft_loaded", completion: { kind: "found", bytes: [...bytes] } });
-    bytes = valid;
-    state.click("game-setup-load-aircraft");
-    await flush();
-    expect(state.browser.localStorage.getItem(key)).toBe(source);
-    state.click("game-setup-delete-aircraft");
-    await flush();
-    expect(state.browser.localStorage.getItem(key)).toBeNull();
+    for (const [kind, path, id] of [
+      ["aircraft", "../../assets/aircraft/playable-glider-v7.json", "configuration_id"],
+      ["controller", "../../assets/controllers/default-rate-v1.json", "controller_id"]
+    ] as const) {
+      const document = JSON.parse(readFileSync(new URL(path, import.meta.url), "utf8")) as Record<string, unknown>;
+      document[id] = `custom-${kind}-a`;
+      const source = ` \n${JSON.stringify(document)}\n\t`;
+      const valid = new TextEncoder().encode(source);
+      bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...valid]);
+      state.click(`game-setup-load-${kind}`);
+      await flush();
+      const key = `tokutori.pr-simulator-game-1.${kind}`;
+      expect(state.browser.localStorage.getItem(key)).toBeNull();
+      const observed = state.updates.mock.calls.map(([json]) => JSON.parse(json) as ApplicationObservation)
+        .find(observation => observation.input.kind === "configuration_loaded" && observation.input.document === kind && observation.input.completion.kind === "found");
+      expect(observed?.input).toMatchObject({ kind: "configuration_loaded", document: kind, completion: { kind: "found", bytes: [...bytes] } });
+      bytes = valid;
+      state.click(`game-setup-load-${kind}`);
+      await flush();
+      expect(state.browser.localStorage.getItem(key)).toBe(source);
+      state.click(`game-setup-delete-${kind}`);
+      await flush();
+      expect(state.browser.localStorage.getItem(key)).toBeNull();
+    }
   } finally {
     state.dispose();
     await flush();

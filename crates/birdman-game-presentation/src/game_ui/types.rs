@@ -222,10 +222,16 @@ pub enum GameUiWaterQualityOperation {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GameUiPlatformCommand {
-    /// Reads an externally selected aircraft through the shared owner.
-    LoadAircraft {},
-    /// Deletes the stored custom aircraft and restores the bundled definition.
-    DeleteAircraft {},
+    /// Reads an externally selected configuration through the shared owner.
+    LoadConfiguration {
+        /// Independently selected original document.
+        document: birdman_game_format::ConfigurationDocumentKind,
+    },
+    /// Deletes the requested stored source and restores its bundled definition.
+    DeleteConfiguration {
+        /// Independently selected original document.
+        document: birdman_game_format::ConfigurationDocumentKind,
+    },
     /// Reloads the application after its current resources have been released.
     ReloadApplication {},
     /// Changes only the Screen 3D drawing resolution.
@@ -585,6 +591,18 @@ pub struct GameUiContext<'view> {
     pub aircraft_notification: &'view str,
     /// Whether the stored aircraft document can be explicitly removed.
     pub aircraft_can_delete: bool,
+    /// Selected independently validated controller identifier.
+    pub controller_name: &'view str,
+    /// Controller document validation and persistence feedback.
+    pub controller_notification: &'view str,
+    /// Whether persisted controller source is available for deletion.
+    pub controller_can_delete: bool,
+    /// Latest aircraft/controller compatibility diagnostics from their shared owner.
+    pub controller_pair_diagnostic: Option<String>,
+    /// Shared-mode authority supplied by the selected controller document.
+    pub controller_shared_authority: Option<f64>,
+    /// Recorded or prepared effective authority, absent for unknown legacy modes.
+    pub controller_effective_authority: Option<f64>,
     /// Whether the selected aircraft matches the displayed recorded geometry.
     pub aircraft_replay_available: bool,
     /// Selected launch reference for weather readouts, independent of resource keys.
