@@ -575,6 +575,10 @@ pub struct GameUiContext<'view, 'session> {
     pub keyboard_controls: birdman_game_app::flight_input::KeyboardControlSettings,
     /// Shared persistent-settings feedback, independent of a flight record.
     pub keyboard_controls_notification: &'view str,
+    /// Selected display adjustment, editable on Title, Setup and while paused.
+    pub display_settings: birdman_game_app::display_settings::DisplaySettings,
+    /// Shared display-settings persistence feedback, independent of a flight record.
+    pub display_settings_notification: &'view str,
     /// Admitted Up, Down, Left, Right, J, L, C, P, Escape, W, S, A and D keys.
     pub accepted_flight_keys: [bool; 13],
     /// Exact displayed preset retained for archived selections.

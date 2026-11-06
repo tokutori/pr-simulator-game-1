@@ -20,6 +20,13 @@ pub(super) struct StorageOwner {
     keyboard_wanted: Option<birdman_game_app::flight_input::KeyboardControlSettings>,
     keyboard_save_failed: bool,
     keyboard_notification: String,
+    display_read: Option<u32>,
+    display_loaded: bool,
+    display_save: Option<(u32, birdman_game_app::display_settings::DisplaySettings)>,
+    display_saved: Option<birdman_game_app::display_settings::DisplaySettings>,
+    display_wanted: Option<birdman_game_app::display_settings::DisplaySettings>,
+    display_save_failed: bool,
+    display_notification: String,
     observed_source: Option<RecordSourceId>,
     save_notification: Option<(RecordSourceId, String)>,
     saves: BTreeMap<u32, SaveJob>,
@@ -90,11 +97,37 @@ pub enum ApplicationKeyboardControlsLoad {
     },
 }
 
+/// Raw completion of the requested user display-settings read.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ApplicationDisplaySettingsLoad {
+    /// No stored settings exist.
+    Missing,
+    /// Original UTF-8 JSON; the shared owner validates it.
+    Found {
+        /// Unmodified UTF-8 document read by the adapter.
+        json: String,
+    },
+    /// Original storage failure.
+    Failed {
+        /// Original platform diagnostic.
+        cause: String,
+    },
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct KeyboardControlsDocument {
     schema_version: u32,
     keyboard_controls: birdman_game_app::flight_input::KeyboardControlSettings,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DisplaySettingsDocument {
+    schema_version: u32,
+    display_settings: birdman_game_app::display_settings::DisplaySettings,
 }
 
 impl StorageOwner {
@@ -226,6 +259,136 @@ impl StorageOwner {
 
     pub(super) fn keyboard_notification(&self) -> &str {
         &self.keyboard_notification
+    }
+
+    pub(super) fn display_needs_read(&self) -> bool {
+        !self.display_loaded && self.display_read.is_none()
+    }
+
+    pub(super) fn display_loading(&self) -> bool {
+        !self.display_loaded
+    }
+
+    pub(super) fn read_display(&mut self, request_id: u32) -> ApplicationRequest {
+        self.display_read = Some(request_id);
+        ApplicationRequest::ReadDisplaySettings {
+            request_id,
+            maximum_bytes: 4096,
+        }
+    }
+
+    pub(super) fn display_loaded(
+        &mut self,
+        request_id: u32,
+        completion: ApplicationDisplaySettingsLoad,
+    ) -> Option<birdman_game_app::display_settings::DisplaySettings> {
+        if self.display_read != Some(request_id) {
+            return None;
+        }
+        self.display_read = None;
+        self.display_loaded = true;
+        let result = match completion {
+            ApplicationDisplaySettingsLoad::Missing => return None,
+            ApplicationDisplaySettingsLoad::Failed { cause } => Err(cause),
+            ApplicationDisplaySettingsLoad::Found { json } => {
+                if json.len() > 4096 {
+                    Err("設定ファイルが上限を超えている。".to_owned())
+                } else {
+                    serde_json::from_str::<DisplaySettingsDocument>(&json)
+                        .map_err(|cause| cause.to_string())
+                        .and_then(|document| {
+                            if document.schema_version == 1 && document.display_settings.is_valid()
+                            {
+                                Ok(document.display_settings)
+                            } else {
+                                Err("設定の形式または値を受理できない。".to_owned())
+                            }
+                        })
+                }
+            }
+        };
+        match result {
+            Ok(settings) => {
+                self.display_saved = Some(settings);
+                Some(settings)
+            }
+            Err(cause) => {
+                self.display_notification =
+                    format!("保存済み設定を読み込めないため既定値を使用する。原因: {cause}");
+                None
+            }
+        }
+    }
+
+    pub(super) fn display_changed(
+        &mut self,
+        settings: birdman_game_app::display_settings::DisplaySettings,
+    ) {
+        self.display_wanted = Some(settings);
+        self.display_save_failed = false;
+        self.display_notification =
+            if self.display_saved == Some(settings) && self.display_save.is_none() {
+                "保存済み".to_owned()
+            } else {
+                "保存中".to_owned()
+            };
+    }
+
+    pub(super) fn display_needs_write(&self) -> bool {
+        self.display_save.is_none()
+            && !self.display_save_failed
+            && self.display_wanted.is_some()
+            && self.display_wanted != self.display_saved
+    }
+
+    pub(super) fn write_display(&mut self, request_id: u32) -> Option<ApplicationRequest> {
+        let settings = self.display_wanted?;
+        match serde_json::to_string(&DisplaySettingsDocument {
+            schema_version: 1,
+            display_settings: settings,
+        }) {
+            Ok(json) => {
+                self.display_save = Some((request_id, settings));
+                Some(ApplicationRequest::WriteDisplaySettings { request_id, json })
+            }
+            Err(cause) => {
+                self.display_save_failed = true;
+                self.display_notification = format!(
+                    "設定は今回有効だが保存できない。選択し直して再試行する。原因: {cause}"
+                );
+                None
+            }
+        }
+    }
+
+    pub(super) fn display_written(&mut self, request_id: u32, failure: Option<String>) {
+        let Some((expected, settings)) = self.display_save else {
+            return;
+        };
+        if expected != request_id {
+            return;
+        }
+        self.display_save = None;
+        if let Some(cause) = failure {
+            if self.display_wanted == Some(settings) {
+                self.display_save_failed = true;
+                self.display_notification = format!(
+                    "設定は今回有効だが保存できない。選択し直して再試行する。原因: {cause}"
+                );
+            }
+        } else {
+            self.display_saved = Some(settings);
+            if self.display_wanted == Some(settings) {
+                self.display_notification = "保存済み".to_owned();
+            }
+        }
+        if self.display_wanted == self.display_saved {
+            self.display_notification = "保存済み".to_owned();
+        }
+    }
+
+    pub(super) fn display_notification(&self) -> &str {
+        &self.display_notification
     }
 
     pub(super) fn close(&mut self) {

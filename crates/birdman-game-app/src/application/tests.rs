@@ -885,3 +885,73 @@ fn shared_attract_keeps_player_selection_and_reuses_the_installed_record() {
         0.0
     );
 }
+
+#[test]
+fn display_settings_are_admitted_on_title_setup_and_pause_only() {
+    use crate::display_settings::DisplaySettings;
+    let settings = DisplaySettings {
+        brightness: 1.25,
+        contrast: 0.75,
+        saturation: 1.5,
+    };
+    let mut application = ApplicationSession::new(ControlMode::Manual, 3, 42);
+    assert_eq!(application.display_settings(), DisplaySettings::default());
+    execute(
+        &mut application,
+        SessionCommand::SetDisplaySettings { settings },
+    );
+    assert_eq!(application.display_settings(), settings);
+    execute(&mut application, SessionCommand::OpenSetup {});
+    execute(
+        &mut application,
+        SessionCommand::SetDisplaySettings {
+            settings: DisplaySettings::default(),
+        },
+    );
+    assert_eq!(application.display_settings(), DisplaySettings::default());
+    execute(
+        &mut application,
+        SessionCommand::SetDisplaySettings { settings },
+    );
+    // Invalid values are rejected without replacing the retained selection.
+    assert!(
+        application
+            .execute(
+                SessionCommand::SetDisplaySettings {
+                    settings: DisplaySettings {
+                        brightness: 2.0,
+                        ..settings
+                    },
+                },
+                BackendReadiness::Ready,
+            )
+            .is_err()
+    );
+    assert_eq!(application.display_settings(), settings);
+    execute(&mut application, SessionCommand::Prepare {});
+    // Briefing does not admit display changes.
+    assert!(
+        application
+            .execute(
+                SessionCommand::SetDisplaySettings {
+                    settings: DisplaySettings::default(),
+                },
+                BackendReadiness::Ready,
+            )
+            .is_err()
+    );
+    launch(&mut application);
+    execute(&mut application, SessionCommand::Pause {});
+    execute(
+        &mut application,
+        SessionCommand::SetDisplaySettings {
+            settings: DisplaySettings {
+                brightness: 0.5,
+                ..settings
+            },
+        },
+    );
+    assert_eq!(application.display_settings().brightness, 0.5);
+    // The flight record identity never carries the display-only selection.
+    assert_eq!(application.display_settings().contrast, settings.contrast);
+}

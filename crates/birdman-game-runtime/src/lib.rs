@@ -61,7 +61,10 @@ pub use scene::{
 #[cfg(not(verus_only))]
 pub use shutdown::ApplicationLifecycle;
 #[cfg(not(verus_only))]
-pub use storage::{ApplicationKeyboardControlsLoad, ApplicationRecordLoadCompletion};
+pub use storage::{
+    ApplicationDisplaySettingsLoad, ApplicationKeyboardControlsLoad,
+    ApplicationRecordLoadCompletion,
+};
 #[cfg(not(verus_only))]
 pub use surface::{
     ApplicationGlyphMetrics, ApplicationHeadHudProjection, ApplicationMenuPaint,
@@ -310,6 +313,8 @@ impl ApplicationRuntime {
                     | ApplicationInput::DownloadCompleted { .. }
                     | ApplicationInput::KeyboardControlsLoaded { .. }
                     | ApplicationInput::KeyboardControlsSaved { .. }
+                    | ApplicationInput::DisplaySettingsLoaded { .. }
+                    | ApplicationInput::DisplaySettingsSaved { .. }
             ) {
             ApplicationInput::PageVisibility { visible: false }
         } else {
@@ -403,6 +408,36 @@ impl ApplicationRuntime {
                 failure,
             } => {
                 self.storage.keyboard_written(request_id, failure);
+            }
+            ApplicationInput::DisplaySettingsLoaded {
+                request_id,
+                completion,
+            } => {
+                if let Some(settings) = self.storage.display_loaded(request_id, completion)
+                    && !self.shutdown.closed()
+                    && self.boot.active()
+                    && matches!(
+                        self.application.core_session().snapshot().phase(),
+                        SessionPhase::Title
+                            | SessionPhase::FlightSetup
+                            | SessionPhase::FlightPaused { .. }
+                    )
+                {
+                    self.application
+                        .execute(
+                            birdman_game_app::application::SessionCommand::SetDisplaySettings {
+                                settings,
+                            },
+                            self.resource_readiness,
+                        )
+                        .map_err(ApplicationRuntimeError::Application)?;
+                }
+            }
+            ApplicationInput::DisplaySettingsSaved {
+                request_id,
+                failure,
+            } => {
+                self.storage.display_written(request_id, failure);
             }
             ApplicationInput::PhoneSensorsStarted {
                 resource_id,
@@ -1023,6 +1058,14 @@ impl ApplicationRuntime {
             let request_id = self.allocate_request()?;
             requests.extend(self.storage.write_keyboard(request_id));
         }
+        if !self.shutdown.closed() && self.storage.display_needs_read() {
+            let request_id = self.allocate_request()?;
+            requests.push(self.storage.read_display(request_id));
+        }
+        if self.storage.display_needs_write() {
+            let request_id = self.allocate_request()?;
+            requests.extend(self.storage.write_display(request_id));
+        }
         self.synchronize_phone(&mut requests)?;
         self.synchronize_xr()?;
         self.synchronize_graphics()?;
@@ -1040,7 +1083,9 @@ impl ApplicationRuntime {
         }
         if matches!(self.boot, boot::BootOwner::Preparing) {
             match self.resource_readiness {
-                BackendReadiness::Ready if !self.storage.keyboard_loading() => {
+                BackendReadiness::Ready
+                    if !self.storage.keyboard_loading() && !self.storage.display_loading() =>
+                {
                     self.boot = boot::BootOwner::Ready
                 }
                 BackendReadiness::Ready => {}
@@ -1255,6 +1300,7 @@ impl ApplicationRuntime {
             .projection(render_spatial, observed_ms)
             .map_err(ApplicationRuntimeError::Graphics)?;
         let drawing = ApplicationDrawingOutput {
+            display: self.application.display_settings().adjustment(),
             presentation: ApplicationDrawingPresentation {
                 frame_rate_label: self.frame_rate.label(),
                 mode: self.display.state().active_mode(),
@@ -1564,6 +1610,10 @@ impl ApplicationRuntime {
                         &command,
                         birdman_game_app::application::SessionCommand::SetKeyboardControls { .. }
                     );
+                    let display_change = matches!(
+                        &command,
+                        birdman_game_app::application::SessionCommand::SetDisplaySettings { .. }
+                    );
                     let previous_phase = self.application.core_session().snapshot().phase();
                     self.application
                         .execute(command, self.resource_readiness)
@@ -1571,6 +1621,10 @@ impl ApplicationRuntime {
                     if keyboard_change {
                         self.storage
                             .keyboard_changed(self.application.keyboard_controls());
+                    }
+                    if display_change {
+                        self.storage
+                            .display_changed(self.application.display_settings());
                     }
                     self.observe_replay_entry(previous_phase);
                     self.previous_frame_ms = None;
@@ -2043,6 +2097,8 @@ impl ApplicationRuntime {
             difficulty: self.application.display_difficulty(),
             keyboard_controls: self.application.keyboard_controls(),
             keyboard_controls_notification: self.storage.keyboard_notification(),
+            display_settings: self.application.display_settings(),
+            display_settings_notification: self.storage.display_notification(),
             accepted_flight_keys: self.application.accepted_flight_keys(),
             preset: self.application.display_preset(),
             identity: self.identity()?,

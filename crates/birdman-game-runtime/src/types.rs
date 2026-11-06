@@ -212,6 +212,20 @@ pub enum ApplicationInput {
         /// Original write error, absent after successful persistence.
         failure: Option<String>,
     },
+    /// Terminal read of the requested display settings; never a flight record.
+    DisplaySettingsLoaded {
+        /// Owner-issued operation identity.
+        request_id: u32,
+        /// Unmodified storage result.
+        completion: super::ApplicationDisplaySettingsLoad,
+    },
+    /// Terminal write of exactly the requested display-settings JSON.
+    DisplaySettingsSaved {
+        /// Owner-issued operation identity.
+        request_id: u32,
+        /// Original write error, absent after successful persistence.
+        failure: Option<String>,
+    },
     /// Terminal result of attaching the exact requested sensor subscription.
     PhoneSensorsStarted {
         #[doc = "Owner-issued sensor subscription identity."]
@@ -514,6 +528,20 @@ pub enum ApplicationRequest {
         /// Complete canonical document; adapters perform raw I/O only.
         json: String,
     },
+    /// Reads the platform display-settings location once during boot.
+    ReadDisplaySettings {
+        /// Owner-issued operation identity.
+        request_id: u32,
+        /// Maximum accepted UTF-8 document size.
+        maximum_bytes: u32,
+    },
+    /// Replaces user display settings with the shared, validated UTF-8 document.
+    WriteDisplaySettings {
+        /// Owner-issued operation identity.
+        request_id: u32,
+        /// Complete canonical document; adapters perform raw I/O only.
+        json: String,
+    },
     /// Subscribe to raw phone observations without changing the active display.
     StartPhoneSensors {
         #[doc = "Owner-issued sensor subscription identity."]
@@ -671,6 +699,8 @@ pub struct ApplicationDrawingPresentation {
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationDrawingOutput {
+    /// Shared display adjustment derived from the retained display settings.
+    pub display: birdman_game_app::display_settings::DisplayAdjustment,
     /// Final visibility decisions for drawing adapters.
     pub presentation: ApplicationDrawingPresentation,
     /// Confirmed graphics resources and optional query for this frame.

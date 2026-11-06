@@ -61,6 +61,8 @@ pub(super) fn context<'view>(
         difficulty,
         keyboard_controls: birdman_game_app::flight_input::KeyboardControlSettings::default(),
         keyboard_controls_notification: "",
+        display_settings: birdman_game_app::display_settings::DisplaySettings::default(),
+        display_settings_notification: "",
         accepted_flight_keys: [false; 13],
         preset: difficulty.preset_label(),
         identity: session.configuration_identity(),
@@ -812,7 +814,6 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
             weather: WeatherClass::Calm,
         },
         SessionCommand::Prepare {},
-        SessionCommand::StartCountdown {},
     ] {
         application
             .execute(command, BackendReadiness::Ready)
@@ -820,6 +821,27 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
     }
     let state = GameUiState::default();
     let platform = platform();
+    let briefing = game_ui_view(
+        &state,
+        &context(
+            application.core_session(),
+            application.difficulty(),
+            &platform,
+        ),
+    )
+    .unwrap();
+    assert!(!briefing.layout.passthrough);
+    // The briefing keeps its preparation progress line; only the countdown
+    // drops it.
+    assert!(
+        briefing.panels[0]
+            .controls
+            .iter()
+            .any(|control| control.id == "game-preparation-progress")
+    );
+    application
+        .execute(SessionCommand::StartCountdown {}, BackendReadiness::Ready)
+        .unwrap();
     let countdown = revision(&mut cache, &application, &state, &platform);
     let view = game_ui_view(
         &state,
@@ -830,26 +852,75 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
         ),
     )
     .unwrap();
+    // The countdown view keeps the shared theme: no phase-specific override.
+    assert_eq!(view.theme, briefing.theme);
+    // The shell paints no panel background behind the countdown.
+    assert!(view.layout.passthrough);
+    // The countdown carries no heading or description text.
+    assert!(view.title.is_empty());
+    assert!(view.description.is_empty());
+    // The seconds are separated from their label: the readout carries the
+    // value alone with primary emphasis, and the label is a subordinate
+    // static line of its own.
+    let seconds = control(&view, "game-countdown-status");
+    assert!(seconds.label.is_empty());
     assert!(matches!(
-        control(&view, "game-countdown-status").content,
+        seconds.content,
         GameUiControlContent::Status {
             emphasis: GameUiEmphasis::Primary,
-            ..
-        }
+            source: GameUiReadoutSource::Countdown,
+            ref value,
+        } if value == "3 秒"
     ));
-    assert_eq!(view.theme.panel_opacity, 0.0);
-    assert!(view.layout.passthrough);
-    assert!(control(&view, "game-countdown-cancel").enabled);
-    assert_eq!(
-        control(&view, "game-countdown-cancel").section,
-        "flight-actions"
-    );
-    assert!(view.panels[0].sections.iter().any(
-        |section| section.id == "flight-actions" && section.layout == GameUiSectionLayout::Row
-    ));
-    assert_eq!(view.theme.muted_text, view.theme.text);
+    let caption = control(&view, "game-countdown-caption");
+    assert!(caption.label.is_empty());
     assert!(matches!(
-        control(&view, "game-countdown-cancel").content,
+        caption.content,
+        GameUiControlContent::Status {
+            emphasis: GameUiEmphasis::Normal,
+            source: GameUiReadoutSource::Static,
+            ref value,
+        } if value == "発進まで"
+    ));
+    let order: Vec<&str> = view.panels[0]
+        .controls
+        .iter()
+        .map(|control| control.id.as_str())
+        .collect();
+    // The countdown screen consists of the countdown and the cancel button
+    // alone: no preparation progress and no feedback line.
+    assert_eq!(
+        order,
+        [
+            "game-countdown-caption",
+            "game-countdown-status",
+            "game-countdown-cancel"
+        ]
+    );
+    // A pending notification adds no feedback line to the countdown.
+    let mut notified = platform.clone();
+    notified.notification = "試験通知".to_owned();
+    let notified_view = game_ui_view(
+        &state,
+        &context(
+            application.core_session(),
+            application.difficulty(),
+            &notified,
+        ),
+    )
+    .unwrap();
+    let notified_order: Vec<&str> = notified_view.panels[0]
+        .controls
+        .iter()
+        .map(|control| control.id.as_str())
+        .collect();
+    assert_eq!(notified_order, order);
+    // The cancel button shares the flight-actions row with the in-flight
+    // session buttons and keeps the common normal emphasis.
+    let cancel = control(&view, "game-countdown-cancel");
+    assert_eq!(cancel.section, "flight-actions");
+    assert!(matches!(
+        cancel.content,
         GameUiControlContent::Button {
             presentation: GameUiButtonPresentation::Action {
                 emphasis: GameUiEmphasis::Normal,
@@ -977,6 +1048,12 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
                 <= projection.content.clip.y + projection.content.clip.height + 1e-10
         );
     }
+    let actions = view.panels[0]
+        .sections
+        .iter()
+        .find(|section| section.id == "flight-actions")
+        .unwrap();
+    assert_eq!(actions.layout, GameUiSectionLayout::Row);
     let token = application.core_session().countdown_token().unwrap();
     let description = game_ui_view(
         &state,
@@ -1041,6 +1118,27 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
             .is_err()
     );
     assert!(revision(&mut cache, &application, &state, &platform) > hidden);
+}
+
+#[test]
+fn flight_setup_keeps_progress_and_feedback_lines() {
+    let mut session = GameSession::new();
+    session.open_setup().unwrap();
+    let mut platform = platform();
+    platform.notification = "試験通知".to_owned();
+    let view = game_ui_view(
+        &GameUiState::default(),
+        &context(&session, difficulty(), &platform),
+    )
+    .unwrap();
+    assert!(matches!(
+        &control(&view, "game-preparation-progress").content,
+        GameUiControlContent::Status { value, .. } if value == "● 設定 ─ ○ 確認 ─ ○ 発進"
+    ));
+    assert!(matches!(
+        &control(&view, "game-preparation-feedback").content,
+        GameUiControlContent::Status { value, .. } if value == "試験通知"
+    ));
 }
 
 #[test]
@@ -1160,6 +1258,26 @@ fn web_setup_candidates_groups_order_and_primary_action_are_shared() {
             ..
         }
     ));
+    assert_eq!(start.section, "flight-actions");
+    let actions_section = &view.panels[0].sections[0];
+    assert_eq!(actions_section.id, "flight-actions");
+    assert_eq!(actions_section.layout, GameUiSectionLayout::Row);
+    assert_eq!(controls[0].id, "game-setup-start");
+    assert_eq!(controls[1].id, "game-setup-back");
+    for control in &controls[2..] {
+        assert_ne!(control.section, "flight-actions");
+    }
+    for (index, control) in controls.iter().enumerate() {
+        if matches!(
+            control.content,
+            GameUiControlContent::Button {
+                presentation: GameUiButtonPresentation::Choice { .. },
+                ..
+            }
+        ) {
+            assert!(index > 0, "choice {} precedes the start action", control.id);
+        }
+    }
     for group in [
         "preset",
         "information",
@@ -5001,4 +5119,97 @@ fn flight_camera_choices_share_selection_and_admission_in_all_modes() {
         assert_eq!(selected.state.flight_camera, GameUiFlightCamera::Pilot);
         assert!(selected.effects.is_empty());
     }
+}
+
+#[test]
+fn display_settings_choices_show_the_current_selection_in_setup_and_pause_settings() {
+    use birdman_game_app::display_settings::{DISPLAY_SETTING_STEPS, DisplaySettings};
+    let selected = DisplaySettings {
+        brightness: 1.25,
+        contrast: 0.75,
+        saturation: 1.5,
+    };
+    let platform = platform();
+    let assert_choices = |view: &GameUiView| {
+        for (group, group_label, value) in [
+            ("display-brightness", "明るさ", selected.brightness),
+            ("display-contrast", "コントラスト", selected.contrast),
+            ("display-saturation", "彩度", selected.saturation),
+        ] {
+            for (code, step) in DISPLAY_SETTING_STEPS.iter().enumerate() {
+                let found = control(view, &format!("game-setup-select-{group}-{code}"));
+                assert!(!found.label.is_empty());
+                let GameUiControlContent::Button {
+                    action,
+                    presentation,
+                } = &found.content
+                else {
+                    panic!("display setting choice must be a button");
+                };
+                let GameUiButtonPresentation::Choice {
+                    group: actual_group,
+                    group_label: actual_label,
+                    selected: is_selected,
+                    ..
+                } = presentation
+                else {
+                    panic!("display setting choice must use choice presentation");
+                };
+                assert_eq!(actual_group, group);
+                assert_eq!(actual_label, group_label);
+                assert_eq!(*is_selected, *step == value);
+                let GameUiAction::Session {
+                    command: SessionCommand::SetDisplaySettings { settings },
+                } = action
+                else {
+                    panic!("display setting choice must carry the session command");
+                };
+                let expected = match group {
+                    "display-brightness" => DisplaySettings {
+                        brightness: *step,
+                        ..selected
+                    },
+                    "display-contrast" => DisplaySettings {
+                        contrast: *step,
+                        ..selected
+                    },
+                    _ => DisplaySettings {
+                        saturation: *step,
+                        ..selected
+                    },
+                };
+                assert_eq!(*settings, expected);
+            }
+        }
+    };
+    let mut session = GameSession::new();
+    session.open_setup().unwrap();
+    let mut setup_context = context(&session, difficulty(), &platform);
+    setup_context.display_settings = selected;
+    setup_context.display_settings_notification = "保存済み";
+    let view = game_ui_view(&GameUiState::default(), &setup_context).unwrap();
+    assert_choices(&view);
+    let GameUiControlContent::Status { value, .. } =
+        &control(&view, "game-display-settings-storage").content
+    else {
+        panic!("display settings storage status");
+    };
+    assert_eq!(value, "保存済み");
+    assert!(
+        view.panels
+            .iter()
+            .flat_map(|panel| &panel.sections)
+            .any(|section| section.id == "graphics-settings")
+    );
+
+    let mut session = launched();
+    session.pause(PauseReason::Manual).unwrap();
+    let state = GameUiState {
+        pause_overlay: GameUiPauseOverlay::Settings,
+        ..GameUiState::default()
+    };
+    let mut pause_context = context(&session, difficulty(), &platform);
+    pause_context.display_settings = selected;
+    let view = game_ui_view(&state, &pause_context).unwrap();
+    assert_choices(&view);
 }

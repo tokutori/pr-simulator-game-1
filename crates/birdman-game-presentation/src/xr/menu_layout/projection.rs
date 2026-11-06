@@ -448,7 +448,11 @@ pub(super) fn project(
         size: plan.source.surface_size,
         title: plan.source.title.clone(),
         background: theme.panel_background.clone(),
-        opacity: theme.panel_opacity,
+        opacity: if view.layout.passthrough {
+            0.0
+        } else {
+            theme.panel_opacity
+        },
         content: MenuPaintLayer {
             clip: viewport.content_clip,
             items: content,

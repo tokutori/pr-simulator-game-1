@@ -111,6 +111,7 @@ pub struct ApplicationSession {
     maximum_flight_ticks: u64,
     seed: u64,
     keyboard_controls: crate::flight_input::KeyboardControlSettings,
+    display_settings: crate::display_settings::DisplaySettings,
     prepared: Option<PreparedFlight>,
     attract: Option<AttractMetadata>,
     archived: Option<ArchiveMetadata>,
@@ -144,6 +145,11 @@ impl ApplicationSession {
         self.keyboard_controls
     }
 
+    /// Returns the display adjustment selection applied to every surface.
+    pub fn display_settings(&self) -> crate::display_settings::DisplaySettings {
+        self.display_settings
+    }
+
     /// Creates the existing Title state with explicit reproducible settings.
     pub fn new(control_mode: ControlMode, maximum_flight_ticks: u64, seed: u64) -> Self {
         Self {
@@ -152,6 +158,7 @@ impl ApplicationSession {
             maximum_flight_ticks,
             seed,
             keyboard_controls: crate::flight_input::KeyboardControlSettings::default(),
+            display_settings: crate::display_settings::DisplaySettings::default(),
             prepared: None,
             attract: None,
             archived: None,
@@ -285,6 +292,25 @@ impl ApplicationSession {
                     ));
                 }
                 self.keyboard_controls = settings;
+                return Ok(());
+            }
+            SessionCommand::SetDisplaySettings { settings } => {
+                if !matches!(
+                    self.session.snapshot().phase(),
+                    SessionPhase::Title
+                        | SessionPhase::FlightSetup
+                        | SessionPhase::FlightPaused { .. }
+                ) {
+                    return Err(ApplicationError::Session(
+                        GameSessionError::InvalidTransition,
+                    ));
+                }
+                if !settings.is_valid() {
+                    return Err(ApplicationError::Input(
+                        birdman_game_core::TailControlError::InvalidPilotIntent,
+                    ));
+                }
+                self.display_settings = settings;
                 return Ok(());
             }
             SessionCommand::OpenSetup {} => self.session.open_setup(),

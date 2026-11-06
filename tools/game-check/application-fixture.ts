@@ -56,6 +56,10 @@ export function readyApplicationFixture() {
         output = observe({ kind: "keyboard_controls_loaded", request_id: request.request_id, completion: { kind: "missing" } }, now);
       } else if (request.kind === "write_keyboard_controls") {
         output = observe({ kind: "keyboard_controls_saved", request_id: request.request_id, failure: null }, now);
+      } else if (request.kind === "read_display_settings") {
+        output = observe({ kind: "display_settings_loaded", request_id: request.request_id, completion: { kind: "missing" } }, now);
+      } else if (request.kind === "write_display_settings") {
+        output = observe({ kind: "display_settings_saved", request_id: request.request_id, failure: null }, now);
       } else if (request.kind === "prepare_resources") {
         prepared.set(request.request_id, request);
         output = observe({ kind: "resources", request_id: request.request_id,

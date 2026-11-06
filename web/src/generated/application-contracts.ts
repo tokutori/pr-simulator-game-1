@@ -28,6 +28,26 @@ export type ApplicationInput = {
     readonly request_id: number;
 } | {
     /**
+     * Unmodified storage result.
+     */
+    readonly completion: ApplicationDisplaySettingsLoad;
+    readonly kind: "display_settings_loaded";
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+} | {
+    /**
+     * Original write error, absent after successful persistence.
+     */
+    readonly failure?: string | null;
+    readonly kind: "display_settings_saved";
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+} | {
+    /**
      * Original subscription failure, absent after successful attachment.
      */
     readonly failure?: string | null;
@@ -455,6 +475,24 @@ export type ApplicationInput = {
  * Raw completion of the requested user keyboard-settings read.
  */
 export type ApplicationKeyboardControlsLoad = {
+    readonly kind: "missing";
+} | {
+    /**
+     * Unmodified UTF-8 document read by the adapter.
+     */
+    readonly json: string;
+    readonly kind: "found";
+} | {
+    /**
+     * Original platform diagnostic.
+     */
+    readonly cause: string;
+    readonly kind: "failed";
+};
+/**
+ * Raw completion of the requested user display-settings read.
+ */
+export type ApplicationDisplaySettingsLoad = {
     readonly kind: "missing";
 } | {
     /**
@@ -1142,6 +1180,12 @@ export type SessionCommand = {
      */
     readonly settings: KeyboardControlSettings;
 } | {
+    readonly kind: "set_display_settings";
+    /**
+     * Complete display adjustment selection.
+     */
+    readonly settings: DisplaySettings;
+} | {
     readonly kind: "open_setup";
 } | {
     readonly kind: "return_to_title";
@@ -1736,6 +1780,28 @@ export type ApplicationRequest = {
      */
     readonly json: string;
     readonly kind: "write_keyboard_controls";
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "read_display_settings";
+    /**
+     * Maximum accepted UTF-8 document size.
+     */
+    readonly maximum_bytes: number;
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    /**
+     * Complete canonical document; adapters perform raw I/O only.
+     */
+    readonly json: string;
+    readonly kind: "write_display_settings";
     /**
      * Owner-issued operation identity.
      */
@@ -2704,6 +2770,10 @@ export interface ApplicationOutput {
  */
 export interface ApplicationDrawingOutput {
     /**
+     * Shared display adjustment derived from the retained display settings.
+     */
+    readonly display: DisplayAdjustment;
+    /**
      * Confirmed graphics resources and optional query for this frame.
      */
     readonly graphics: ApplicationGraphicsProjection;
@@ -2724,6 +2794,36 @@ export interface ApplicationDrawingOutput {
      */
     readonly ui: ApplicationUiProjection;
     readonly [k: string]: unknown | undefined;
+}
+/**
+ * Color adjustment parameters derived once from the retained display settings.
+ *
+ * Every adapter applies the same formula in linear RGB at its tone-mapping
+ * stage: exposure multiplication, contrast around the middle-gray pivot, then
+ * a saturation mix from linear luminance. The default settings derive the
+ * identity adjustment.
+ */
+export interface DisplayAdjustment {
+    /**
+     * Contrast factor around the pivot.
+     */
+    readonly contrast: number;
+    /**
+     * Linear middle gray that anchors the contrast factor.
+     */
+    readonly contrast_pivot: number;
+    /**
+     * Exposure shift in EV100 stops; an exposure-based adapter adds this to its base EV.
+     */
+    readonly exposure_ev_shift: number;
+    /**
+     * Linear multiplier applied before tone mapping; equals the brightness setting.
+     */
+    readonly exposure_multiplier: number;
+    /**
+     * Saturation mix factor from linear luminance.
+     */
+    readonly saturation: number;
 }
 /**
  * Drawing resource identity and optional GPU query for one output.
@@ -3489,6 +3589,23 @@ export interface KeyboardControlSettings {
      * Maximum normalized nose-up and turn demand.
      */
     readonly sensitivity: number;
+}
+/**
+ * Display adjustment selection applied identically to every surface.
+ */
+export interface DisplaySettings {
+    /**
+     * Exposure multiplier of the 3D scene; 1.0 keeps the existing brightness.
+     */
+    readonly brightness: number;
+    /**
+     * Contrast factor around linear middle gray; 1.0 keeps the existing contrast.
+     */
+    readonly contrast: number;
+    /**
+     * Saturation mix from linear luminance; 1.0 keeps the existing saturation.
+     */
+    readonly saturation: number;
 }
 /**
  * Shared Web-baseline HUD model; no adapter rederives flight values or labels.
