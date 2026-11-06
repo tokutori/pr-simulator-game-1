@@ -34,9 +34,9 @@ fn launch(trim: SteadyGlideTrim, height: f64, heading: f64) -> CompositeCgLaunch
     .unwrap()
 }
 
-fn parameters<'a>(
+fn parameters(
     definition: &TestAircraft,
-    contacts: &'a [BodyPoint],
+    contacts: &[BodyPoint],
     height: f64,
     heading: f64,
 ) -> TailFlightScenarioParameters {

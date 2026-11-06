@@ -69,6 +69,7 @@ fn named_terminal_and_saved_query_share_exact_controls_and_terminal_metadata() {
     assert_eq!(named["controls"]["layout"], "tail_incidence");
     assert!(named["controls"].get("roll_rad").is_none());
     let expected_identity = HybridSessionPreparation::try_new_for_weather(
+        &birdman_game_app::SelectedAircraft::bundled().unwrap(),
         ControlMode::Manual,
         TICK_LIMIT,
         0,
