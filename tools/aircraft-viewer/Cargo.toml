@@ -1,0 +1,25 @@
+[package]
+name = "aircraft-viewer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+publish = false
+
+[workspace]
+resolver = "3"
+
+[dependencies]
+birdman-game-content = { path = "../../crates/birdman-game-content" }
+birdman-game-format = { path = "../../crates/birdman-game-format" }
+birdman-game-core = { path = "../../crates/birdman-game-core" }
+eframe = { version = "=0.33.3", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+egui_plot = "=0.34.1"
+rfd = "=0.15.4"
+sha2 = "=0.11.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.dev]
+debug = 0
