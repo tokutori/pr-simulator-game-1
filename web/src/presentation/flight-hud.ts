@@ -42,10 +42,12 @@ export class FlightHudAdapter {
       this.root.dataset.shared = "true";
       Object.assign(this.root.style, {
       width: `${String(layout.width_px)}px`, height: `${String(layout.height_px)}px`,
-      fontSize: `${String(layout.font_size_px)}px`, color: theme.text
+      fontSize: `${String(layout.font_size_px)}px`, lineHeight: `${String(layout.line_height_px)}px`, color: theme.text
       });
       this.root.style.setProperty("--hud-muted-text", theme.muted_text);
+      this.root.style.setProperty("--hud-text-shadow", `${String(theme.text_shadow_offset_px[0])}px ${String(theme.text_shadow_offset_px[1])}px 0 ${theme.text_shadow_color}`);
       this.root.style.setProperty("--hud-warning-text", theme.warning_text);
+      this.root.style.setProperty("--hud-warning-font-weight", String(theme.section_text.font_weight));
       this.root.style.setProperty("--hud-left", `${String(layout.offset_px[0])}px`);
       this.root.style.setProperty("--hud-bottom", `${String(layout.offset_px[1])}px`);
       this.root.style.setProperty("--hud-card-background", `color-mix(in srgb, ${theme.panel_background} ${String(layout.opacity * 100)}%, transparent)`);

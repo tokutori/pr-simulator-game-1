@@ -1,22 +1,13 @@
-#import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
+#define_import_path birdman_game::display_adjustment
 
-struct DisplayAdjustment {
-    contrast: f32,
-    saturation: f32,
-    contrast_pivot: f32,
-    padding: f32,
-}
+#import bevy_render::view::ColorGrading
 
-@group(0) @binding(0) var screen_texture: texture_2d<f32>;
-@group(0) @binding(1) var texture_sampler: sampler;
-@group(0) @binding(2) var<uniform> settings: DisplayAdjustment;
-
-@fragment
-fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    let sampled = textureSample(screen_texture, texture_sampler, in.uv);
-    var color = (sampled.rgb - settings.contrast_pivot) * settings.contrast
-        + settings.contrast_pivot;
-    let luminance = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
-    color = mix(vec3<f32>(luminance), color, settings.saturation);
-    return vec4<f32>(color, sampled.a);
+// Every luminance section receives the same shared ASC slope and offset.
+// The reflection view stays at identity and both presenting eyes use the same
+// transform through their existing view uniforms.
+fn adjust_scene_color(color: vec3<f32>, grading: ColorGrading) -> vec3<f32> {
+    let exposed = color * exp2(grading.exposure);
+    let contrasted = exposed * grading.gain.x + grading.lift.x;
+    let luminance = dot(contrasted, vec3<f32>(0.2126, 0.7152, 0.0722));
+    return mix(vec3<f32>(luminance), contrasted, grading.post_saturation);
 }

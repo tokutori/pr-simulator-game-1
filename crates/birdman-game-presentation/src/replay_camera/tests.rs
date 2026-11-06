@@ -90,15 +90,7 @@ fn fixture_record(duration: f64, reason: SessionEndReason) -> FlightRecord {
 }
 
 fn view(record: &FlightRecord, time: f64, camera: GameUiReplayCamera) -> ReplayCameraView {
-    replay_camera_view(
-        record,
-        None,
-        time,
-        camera,
-        GameUiPresentationMode::Screen,
-        false,
-    )
-    .unwrap()
+    replay_camera_view(record, None, time, camera, false).unwrap()
 }
 
 #[test]
@@ -118,7 +110,6 @@ fn render_pose_matches_the_same_record_sample_and_retains_unknown_geometry() {
         Some(&identity),
         0.205,
         GameUiReplayCamera::Chase,
-        GameUiPresentationMode::Screen,
         false,
     )
     .unwrap();
@@ -229,7 +220,6 @@ fn replay_uses_adopted_interval_and_same_time_terminal_deformation() {
             Some(&identity),
             time,
             GameUiReplayCamera::Chase,
-            GameUiPresentationMode::Screen,
             false,
         )
         .unwrap();
@@ -399,58 +389,10 @@ fn director_preserves_opening_low_altitude_terminal_attract_and_vr_choices() {
         (10.0, GameUiReplayCamera::Telephoto),
     ] {
         assert_eq!(
-            replay_camera_view(
-                &record,
-                None,
-                time,
-                GameUiReplayCamera::Auto,
-                GameUiPresentationMode::Screen,
-                true
-            )
-            .unwrap()
-            .camera,
+            replay_camera_view(&record, None, time, GameUiReplayCamera::Auto, true)
+                .unwrap()
+                .camera,
             expected
-        );
-    }
-    for presentation in [GameUiPresentationMode::Hmd, GameUiPresentationMode::PhoneVr] {
-        assert_eq!(
-            replay_camera_view(
-                &record,
-                None,
-                0.0,
-                GameUiReplayCamera::Auto,
-                presentation,
-                false
-            )
-            .unwrap()
-            .camera,
-            GameUiReplayCamera::Pilot
-        );
-        assert_eq!(
-            replay_camera_view(
-                &record,
-                None,
-                10.0,
-                GameUiReplayCamera::Shore,
-                presentation,
-                false
-            )
-            .unwrap()
-            .camera,
-            GameUiReplayCamera::Shore
-        );
-        assert_eq!(
-            replay_camera_view(
-                &record,
-                None,
-                10.0,
-                GameUiReplayCamera::Auto,
-                presentation,
-                true
-            )
-            .unwrap()
-            .camera,
-            GameUiReplayCamera::Pilot
         );
     }
     let short = fixture_record(0.4, SessionEndReason::WaterContact);
@@ -544,14 +486,7 @@ fn queries_are_readonly_and_handle_vertical_coincident_and_invalid_targets() {
     assert!(look_at([0.0; 3], [0.0; 3]).unwrap().is_none());
     for time in [-1.0, f64::NAN, f64::INFINITY] {
         assert_eq!(
-            replay_camera_view(
-                &record,
-                None,
-                time,
-                GameUiReplayCamera::Auto,
-                GameUiPresentationMode::Screen,
-                false
-            ),
+            replay_camera_view(&record, None, time, GameUiReplayCamera::Auto, false),
             Err(ReplayCameraError::InvalidTime)
         );
     }

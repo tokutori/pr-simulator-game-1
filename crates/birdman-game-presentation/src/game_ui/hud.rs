@@ -6,6 +6,8 @@ use unicode_width::UnicodeWidthStr;
 
 use super::types::*;
 
+pub(super) const HUD_OPACITY: f64 = 0.48;
+
 #[derive(Clone, Copy)]
 struct GameUiHudAttitude {
     roll_degrees: f64,
@@ -29,10 +31,7 @@ pub(super) fn game_ui_hud(
     }
     let (sample, distance, target, incidence_rates, pilot_protection) = match snapshot {
         SessionSnapshot::TailFlightRunning { state, .. }
-        | SessionSnapshot::TailFlightPaused { state, .. }
-            if context.platform.presentation_mode == GameUiPresentationMode::Screen
-                || phase == SessionPhase::FlightRunning =>
-        {
+        | SessionSnapshot::TailFlightPaused { state, .. } => {
             let telemetry = context
                 .session
                 .telemetry()
@@ -80,10 +79,7 @@ pub(super) fn game_ui_hud(
                 ),
             )
         }
-        SessionSnapshot::Replay { .. }
-            if context.platform.presentation_mode == GameUiPresentationMode::Screen
-                && state.replay_view == GameUiReplayView::Telemetry =>
-        {
+        SessionSnapshot::Replay { .. } if state.replay_view == GameUiReplayView::Telemetry => {
             let record = context.record.ok_or(GameUiError::ActionUnavailable)?;
             let clock = context
                 .session
@@ -750,11 +746,8 @@ fn hud_layout(
             [5.6 * font, 3.6 * font]
         },
         font_size_px: (0.875 * font).max(14.0),
-        opacity: if platform.presentation_mode == GameUiPresentationMode::Screen {
-            0.48
-        } else {
-            0.28
-        },
+        line_height_px: (0.875 * font).max(14.0) * 1.5,
+        opacity: HUD_OPACITY,
     }
 }
 
@@ -1016,8 +1009,7 @@ fn hud_node_height(
         node.label,
         if node.label.is_empty() { "" } else { " " },
         node.content.value()
-    )) * font
-        * 1.5;
+    )) * layout.line_height_px;
     node.instrument_height_em = match node.content {
         GameUiHudNodeContent::Text { .. } => 0.0,
         GameUiHudNodeContent::Attitude { .. } => {
