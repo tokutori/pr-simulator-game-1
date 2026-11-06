@@ -85,9 +85,8 @@
 - 反射targetは有効3D寸法に追随する。shadowのみの変更では既存の解像度targetを保持する。
 - shadow調整はmap寸法だけを変更し、cascade、bias、太陽条件を保持する。
 
-- Phone VRは元の描画倍率、WebXRはruntimeのcompositor解像度を維持する。
-- VR中はScreen Autoを停止し、復帰時はepoch/readinessを再準備して保持設定へ戻る。
-- Webのrenderer共有shadow適用値はVR切替後も保持する。
+- Autoは全表示方式で実target・GPU計測能力・資源準備状態に従って動作する。寸法が固定されたtargetでは解像度を固定し、shadowと水面を同じ共有policyで調整する。
+- 表示先の交代では計測epochとreadinessを更新し、要求した品質と実寸法の交換ACKを受けてから新しい計測窓を開始する。
 
 ## 共有水面モデル
 
