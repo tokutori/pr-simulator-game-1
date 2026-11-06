@@ -34,6 +34,7 @@ interface PreparedResources {
   readonly aircraft: Group;
   readonly attachments: Readonly<Record<ApplicationMeshAttachment, Group>>;
   readonly water: Group;
+  readonly sky: Mesh<PlaneGeometry, ShaderMaterial>;
   readonly water_materials: readonly ShaderMaterial[];
   readonly water_geometries: readonly BufferGeometry[];
   readonly sun: DirectionalLight;
@@ -185,20 +186,18 @@ export class ThreeApplicationRenderer {
     });
     const xr = this.renderer.xr.enabled;
     const target = this.renderer.getRenderTarget();
-    const background = candidate.scene.background;
     const pending: Promise<unknown>[] = [];
     const failures: unknown[] = [];
     try {
       candidate.scene.add(...surfaces);
       this.renderer.xr.enabled = false;
       pending.push(this.renderer.compileAsync(candidate.scene, this.camera));
-      candidate.scene.background = null;
       this.renderer.setRenderTarget(candidate.reflection);
       pending.push(this.renderer.compileAsync(candidate.scene, this.reflection_camera));
     } catch (cause) { failures.push(cause); }
     finally {
       for (const restore of [() => { candidate.scene.remove(...surfaces); },
-        () => { candidate.scene.background = background; }, () => { this.renderer.xr.enabled = xr; },
+        () => { this.renderer.xr.enabled = xr; },
         () => { this.renderer.setRenderTarget(target); }]) {
         try { restore(); } catch (cause) { failures.push(cause); }
       }
@@ -234,7 +233,6 @@ export class ThreeApplicationRenderer {
     const savedScissor = this.renderer.getScissor(new Vector4());
     const savedScissorTest = this.renderer.getScissorTest();
     const savedXr = this.renderer.xr.enabled;
-    const savedBackground = candidate.scene.background;
     const savedShadowAutoUpdate = this.renderer.shadowMap.autoUpdate;
     const savedShadowNeedsUpdate = this.renderer.shadowMap.needsUpdate;
     const uncullable: Object3D[] = [];
@@ -263,7 +261,6 @@ export class ThreeApplicationRenderer {
       this.renderer.shadowMap.autoUpdate = false;
       this.renderer.shadowMap.needsUpdate = true;
       this.render(candidate.scene, this.camera, "prepare-main-offscreen");
-      candidate.scene.background = null;
       this.renderer.shadowMap.needsUpdate = false;
       this.renderer.setRenderTarget(candidate.reflection);
       this.renderer.setViewport(0, 0, 1, 1);
@@ -280,7 +277,7 @@ export class ThreeApplicationRenderer {
     } catch (cause) { failures.push(cause); }
     finally {
       for (const restore of [
-        () => { candidate.scene.background = savedBackground; this.renderer.xr.enabled = savedXr; },
+        () => { this.renderer.xr.enabled = savedXr; },
         () => { this.renderer.shadowMap.autoUpdate = savedShadowAutoUpdate; this.renderer.shadowMap.needsUpdate = savedShadowNeedsUpdate; },
         () => { this.renderer.setRenderTarget(savedTarget); }, () => { this.renderer.setViewport(savedViewport); },
         () => { this.renderer.setScissor(savedScissor); }, () => { this.renderer.setScissorTest(savedScissorTest); },
@@ -414,8 +411,41 @@ export class ThreeApplicationRenderer {
     try {
     const scene = new Scene();
     const lighting = assets.lighting;
-    scene.background = this.buffers.image(assets.sky, true, 1);
+    const skyTexture = this.buffers.image(assets.sky, true, 1);
     cleanup.push(() => { this.buffers.releaseImages([[assets.sky.buffer_id, 1]]); });
+    // The explicit background primitive participates in the same scene tone
+    // mapping as meshes and water. The actual eye matrices supply its rays.
+    const sky = new Mesh(new PlaneGeometry(2, 2), new ShaderMaterial({
+      name: "LakeSky", depthTest: false, depthWrite: false, fog: false,
+      uniforms: { uSkyTexture: { value: skyTexture }, displayAdjustment: displayAdjustmentUniform },
+      vertexShader: `
+        varying vec3 vSkyDirection;
+        void main() {
+          vec4 point = inverse(projectionMatrix) * vec4(position.xy, 0.5, 1.0);
+          vSkyDirection = transpose(mat3(viewMatrix)) * point.xyz;
+          gl_Position = vec4(position.xy, 1.0, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D uSkyTexture;
+        varying vec3 vSkyDirection;
+        void main() {
+          vec3 ray = normalize(vSkyDirection);
+          vec2 uv = vec2(atan(ray.z, ray.x) / 6.28318530718 + 0.5,
+                         asin(clamp(ray.y, -1.0, 1.0)) / 3.14159265359 + 0.5);
+          vec2 gradientX = dFdx(uv), gradientY = dFdy(uv);
+          gradientX.x -= round(gradientX.x);
+          gradientY.x -= round(gradientY.x);
+          gl_FragColor = vec4(textureGrad(uSkyTexture, uv, gradientX, gradientY).rgb, 1.0);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }
+      `
+    }));
+    sky.frustumCulled = false;
+    sky.renderOrder = -Infinity;
+    scene.add(sky);
+    cleanup.push(() => { sky.geometry.dispose(); sky.material.dispose(); });
     scene.fog = new Fog(lighting.haze_color_srgb, lighting.haze_range_meters[0], lighting.haze_range_meters[1]);
     const images: ImageLease[] = [[assets.sky.buffer_id, 1]];
     for (const texture of this.manifest.wing_textures) this.buffers.wingTexture(texture);
@@ -476,7 +506,7 @@ export class ThreeApplicationRenderer {
       uDetailScale: { value: assets.water.detail_amplitude_scale }, uDetailNear: { value: nearTexture }, uDetailFar: { value: farTexture },
       uDetailExtents: { value: new Vector4(near.extent_meters, far.extent_meters, 0, 0) },
       uDetailFilterMinification: { value: new Vector2(...projection.detailFilterMinification) },
-      uSkyTexture: { value: scene.background },
+      uSkyTexture: { value: skyTexture },
       uWaveKAmplitude: { value: projection.waveKAmplitude.map(wave => new Vector4(...wave)) },
       uWaveOmegaPhase: { value: projection.waveOmegaPhase.map(wave => new Vector4(...wave)) },
       uChoppiness: { value: projection.choppiness },
@@ -512,10 +542,10 @@ export class ThreeApplicationRenderer {
       return geometry;
     });
     scene.add(water);
-    for (const texture of [scene.background, nearTexture, farTexture]) this.renderer.initTexture(texture);
+    for (const texture of [skyTexture, nearTexture, farTexture]) this.renderer.initTexture(texture);
     for (const mesh of [this.menu_mesh, this.head_mesh]) if (mesh.material.map !== null) this.renderer.initTexture(mesh.material.map);
     this.renderer.initRenderTarget(reflection);
-    return { request, scene, aircraft, attachments, water, water_materials: [material, backing], sun, reflection, image_leases: images, water_geometries: waterGeometries };
+    return { request, scene, aircraft, attachments, water, sky, water_materials: [material, backing], sun, reflection, image_leases: images, water_geometries: waterGeometries };
     } catch (cause) {
       const failures = [cause];
       for (const release of cleanup.reverse()) {
@@ -544,7 +574,8 @@ export class ThreeApplicationRenderer {
   }
 
   private releaseCandidate(candidate: PreparedResources): void {
-    const resources = [candidate.sun.shadow, ...candidate.water_geometries, ...candidate.water_materials, candidate.reflection];
+    const resources = [candidate.sun.shadow, candidate.sky.geometry, candidate.sky.material,
+      ...candidate.water_geometries, ...candidate.water_materials, candidate.reflection];
     const failures: unknown[] = [];
     for (const resource of resources) {
       try { resource.dispose(); } catch (cause) { failures.push(cause); }
@@ -923,7 +954,6 @@ export class ThreeApplicationRenderer {
     const scissorTest = this.renderer.getScissorTest();
     const xr = this.renderer.xr.enabled;
     const autoClear = this.renderer.autoClear;
-    const background = active.scene.background;
     const shadowAutoUpdate = this.renderer.shadowMap.autoUpdate;
     const shadowNeedsUpdate = this.renderer.shadowMap.needsUpdate;
     const hidden: Mesh[] = [];
@@ -955,7 +985,6 @@ export class ThreeApplicationRenderer {
           if (!sides.has(material)) sides.set(material, material.side);
         }
       });
-      active.scene.background = null;
       this.renderer.autoClear = false;
       this.renderer.xr.enabled = false;
       this.renderer.shadowMap.autoUpdate = false;
@@ -978,8 +1007,7 @@ export class ThreeApplicationRenderer {
       }
       for (const [material, side] of sides) material.side = side;
       for (const mesh of hidden) mesh.visible = true;
-      for (const restore of [() => { active.scene.background = background; },
-        () => { this.renderer.autoClear = autoClear; this.renderer.xr.enabled = xr; },
+      for (const restore of [() => { this.renderer.autoClear = autoClear; this.renderer.xr.enabled = xr; },
         () => { this.renderer.shadowMap.autoUpdate = shadowAutoUpdate; this.renderer.shadowMap.needsUpdate = shadowNeedsUpdate; },
         () => { this.renderer.setRenderTarget(target, face, mip); }, () => { this.renderer.setViewport(viewport); },
         () => { this.renderer.setScissor(scissor); }, () => { this.renderer.setScissorTest(scissorTest); }]) {
@@ -1000,7 +1028,6 @@ export class ThreeApplicationRenderer {
     this.reflection_camera.projectionMatrixInverse.copy(this.reflection_camera.projectionMatrix).invert();
     uniform(water, "uReflectionMatrix", new Matrix4().fromArray(reflection.projection_from_world));
     const target = this.renderer.getRenderTarget();
-    const background = active.scene.background;
     const alpha = this.renderer.getClearAlpha();
     const color = this.renderer.getClearColor(new Color());
     const xr = this.renderer.xr.enabled;
@@ -1009,7 +1036,6 @@ export class ThreeApplicationRenderer {
     const scissorTest = this.renderer.getScissorTest();
     const failures: unknown[] = [];
     try {
-      active.scene.background = null;
       this.renderer.xr.enabled = false;
       this.renderer.setRenderTarget(active.reflection);
       this.renderer.setScissorTest(false);
@@ -1018,7 +1044,7 @@ export class ThreeApplicationRenderer {
       this.render(active.scene, this.reflection_camera, "reflection");
     } catch (cause) { failures.push(cause); }
     finally {
-      for (const restore of [() => { active.scene.background = background; }, () => { this.renderer.xr.enabled = xr; },
+      for (const restore of [() => { this.renderer.xr.enabled = xr; },
         () => { this.renderer.setRenderTarget(target); }, () => { this.renderer.setClearColor(color, alpha); },
         () => { this.renderer.setViewport(viewport); }, () => { this.renderer.setScissor(scissor); },
         () => { this.renderer.setScissorTest(scissorTest); }]) {

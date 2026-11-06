@@ -1,8 +1,11 @@
 use bevy::{asset as bevy_asset, ecs as bevy_ecs, reflect as bevy_reflect, render as bevy_render};
 use bevy::{
-    pbr::{ExtendedMaterial, MaterialExtension},
+    mesh::MeshVertexBufferLayoutRef,
+    pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline},
     prelude::*,
-    render::render_resource::AsBindGroup,
+    render::render_resource::{
+        AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
+    },
     shader::ShaderRef,
 };
 
@@ -30,5 +33,15 @@ impl TerrainHazeExtension {
 impl MaterialExtension for TerrainHazeExtension {
     fn fragment_shader() -> ShaderRef {
         super::native_assets::terrain_shader_path().into()
+    }
+
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        super::display_adjustment::disable_inline_tonemapping(descriptor);
+        Ok(())
     }
 }

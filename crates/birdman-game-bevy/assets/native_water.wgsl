@@ -6,6 +6,7 @@
     mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT,
     shadows::fetch_directional_shadow,
 }
+#import birdman_game::display_adjustment::adjust_scene_color
 
 struct LakeWaterUniforms {
     camera_time: vec4<f32>,
@@ -346,7 +347,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let footprint_x = dpdx(position);
     let footprint_y = dpdy(position);
 #ifdef LAKE_SKY
-    return vec4<f32>(lake_sky_radiance(-view), 1.0);
+    return vec4<f32>(adjust_scene_color(lake_sky_radiance(-view), view_bindings::view.color_grading), 1.0);
 #else
     var spacing = 1200.0;
 #ifdef VERTEX_UVS_B
@@ -425,7 +426,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let distance_to_eye = length(water.camera_time.xyz - mesh.world_position.xyz);
     let atmospheric_fade = smoothstep(water.haze_parameters.x, water.haze_parameters.y, distance_to_eye);
     color = mix(color, water.water_palette[3].xyz, atmospheric_fade);
-    return vec4<f32>(color, 1.0);
+    return vec4<f32>(adjust_scene_color(color, view_bindings::view.color_grading), 1.0);
 #endif
 #endif
 #endif
