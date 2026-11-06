@@ -1,4 +1,8 @@
-use bevy::{prelude::*, render::view::ColorGrading};
+use bevy::{
+    prelude::*,
+    render::{render_resource::RenderPipelineDescriptor, view::ColorGrading},
+    shader::ShaderDefVal,
+};
 use birdman_game_app::display_settings::DisplayAdjustment;
 
 /// Transfers the completed linear transform into Bevy's existing per-view
@@ -25,6 +29,17 @@ pub(crate) fn submit(world: &mut World, camera: Entity, adjustment: &DisplayAdju
             || current.highlights != grading.highlights
     }) {
         world.entity_mut(camera).insert(grading);
+    }
+}
+
+/// Non-HDR PBR pipelines inline Bevy's grading even for Tonemapping::None.
+/// Scene shaders own that stage and UI materials retain their supplied ink;
+/// fog and alpha handling remain in main_pass_post_lighting_processing.
+pub(crate) fn disable_inline_tonemapping(descriptor: &mut RenderPipelineDescriptor) {
+    if let Some(fragment) = &mut descriptor.fragment {
+        fragment.shader_defs.retain(|definition| {
+            !matches!(definition, ShaderDefVal::Bool(name, _) if name == "TONEMAP_IN_SHADER")
+        });
     }
 }
 
