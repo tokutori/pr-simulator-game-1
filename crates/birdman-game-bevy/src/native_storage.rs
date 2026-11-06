@@ -574,33 +574,56 @@ impl NativeStorage {
     }
 
     fn download(&self, name: &str, bytes: &[u8]) -> io::Result<()> {
+        self.download_with(name, |file| file.write_all(bytes))
+    }
+
+    fn download_with(
+        &self,
+        name: &str,
+        write: impl FnOnce(&mut File) -> io::Result<()>,
+    ) -> io::Result<()> {
         let name = Path::new(name);
         if name.components().count() != 1
             || !matches!(name.components().next(), Some(Component::Normal(_)))
         {
             return Err(io::Error::other("Invalid download path"));
         }
-        for suffix in 0..u32::MAX {
-            let path = if suffix == 0 {
-                self.directory.join(name)
-            } else {
-                self.directory.join(format!(
-                    "{}-{suffix}.{}",
-                    name.file_stem().unwrap_or_default().to_string_lossy(),
-                    name.extension().unwrap_or_default().to_string_lossy()
-                ))
-            };
-            match OpenOptions::new().create_new(true).write(true).open(path) {
-                Ok(mut file) => {
-                    file.write_all(bytes)?;
-                    file.sync_all()?;
-                    return Ok(());
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(io::Error::other)?
+            .as_nanos();
+        let temporary = self
+            .directory
+            .join(format!("download-{}-{timestamp}.tmp", std::process::id()));
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
+        let result = (|| {
+            write(&mut file)?;
+            file.sync_all()?;
+            drop(file);
+            for suffix in 0..u32::MAX {
+                let path = if suffix == 0 {
+                    self.directory.join(name)
+                } else {
+                    self.directory.join(format!(
+                        "{}-{suffix}.{}",
+                        name.file_stem().unwrap_or_default().to_string_lossy(),
+                        name.extension().unwrap_or_default().to_string_lossy()
+                    ))
+                };
+                // Publish the completed file without replacing a concurrent download.
+                match fs::hard_link(&temporary, path) {
+                    Ok(()) => return Ok(()),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(error) => return Err(error),
                 }
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(error) => return Err(error),
             }
-        }
-        Err(io::Error::other("Download name exhausted"))
+            Err(io::Error::other("Download name exhausted"))
+        })();
+        let _ = fs::remove_file(&temporary);
+        result
     }
 }
 
@@ -794,6 +817,38 @@ pub(crate) mod tests {
             fs::read(directory.0.join("record.json")).unwrap(),
             original.as_bytes()
         );
+        assert_eq!(
+            fs::read(directory.0.join("record-1.json")).unwrap(),
+            b"second"
+        );
+        assert!(fs::read_dir(&directory.0).unwrap().all(|entry| {
+            entry
+                .unwrap()
+                .path()
+                .extension()
+                .is_none_or(|extension| extension != "tmp")
+        }));
+    }
+
+    #[test]
+    fn failed_download_removes_partial_file_and_retry_reuses_requested_name() {
+        let directory = Directory::new();
+        let storage = NativeStorage::new(directory.0.clone(), Ok(directory.0.clone())).unwrap();
+        let error = storage
+            .download_with("record.json", |file| {
+                file.write_all(b"partial")?;
+                Err(io::Error::other("Injected write failure"))
+            })
+            .unwrap_err();
+        assert_eq!(error.to_string(), "Injected write failure");
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
+
+        storage.download("record.json", b"complete").unwrap();
+        assert_eq!(
+            fs::read(directory.0.join("record.json")).unwrap(),
+            b"complete"
+        );
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
     }
 
     #[test]
