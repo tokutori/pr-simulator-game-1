@@ -320,6 +320,8 @@ pub enum TailControlError {
     InvalidPilotIntent,
     /// A finite controller setting or stage observation is outside its valid domain.
     InvalidController,
+    /// Preserved cause of a historical record rejected by its original rate-target policy.
+    InvalidRateTarget,
     /// The underlying software actuator limit or timestep is invalid.
     Actuator(ActuatorError),
     /// Physical effective incidence validation failed with its original cause.
@@ -336,6 +338,7 @@ impl core::fmt::Display for TailControlError {
             Self::InvalidController => {
                 f.write_str("controller setting or observation is outside its valid domain")
             }
+            Self::InvalidRateTarget => f.write_str("recorded rate target violated its original controller limits"),
             Self::Actuator(_) => f.write_str("tail actuator"),
             Self::Incidence(_) => f.write_str("physical tail incidence"),
         }
@@ -347,7 +350,7 @@ impl core::error::Error for TailControlError {
         match self {
             Self::Actuator(cause) => Some(cause),
             Self::Incidence(cause) => Some(cause),
-            Self::NonFinite | Self::InvalidPilotIntent | Self::InvalidController => None,
+            Self::NonFinite | Self::InvalidPilotIntent | Self::InvalidController | Self::InvalidRateTarget => None,
         }
     }
 }
