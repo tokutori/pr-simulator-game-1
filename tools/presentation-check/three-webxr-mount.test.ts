@@ -384,15 +384,14 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       if (!(firstStructure instanceof Mesh) || !(matchingStructure instanceof Mesh)) throw new Error("Shared structure materials are unavailable");
       expect(firstStructure.material).toBe(matchingStructure.material);
       const water: ShaderMaterial[] = [];
-      let sky: Mesh | null = null;
+      const skies: Mesh[] = [];
       state.driver.scene?.traverse(object => {
         if (!(object instanceof Mesh) || !(object.material instanceof ShaderMaterial)) return;
-        if (object.material.name === "LakeSky") sky = object;
+        if (object.material.name === "LakeSky") skies.push(object);
         else water.push(object.material);
       });
-      if (sky === null) throw new Error("Scene sky material is unavailable");
-      const skyMesh: Mesh = sky;
-      if (!(skyMesh.material instanceof ShaderMaterial)) throw new Error("Sky shader is unavailable");
+      const skyMesh = skies[0];
+      if (skyMesh === undefined || !(skyMesh.material instanceof ShaderMaterial)) throw new Error("Sky shader is unavailable");
       expect(skyMesh.material.toneMapped).toBe(true);
       expect(skyMesh.material.depthWrite).toBe(false);
       expect(skyMesh.material.depthTest).toBe(false);
