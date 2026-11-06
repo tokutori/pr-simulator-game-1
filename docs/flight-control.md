@@ -49,28 +49,11 @@ u=(1-a)u_{pilot}+a u_{FBW}
 - Replayのexact sampleは保存値、区間内点は終端側sampleの保持incidenceを返す。
 - 入力から連続したactuator軌跡を推測しない。
 
-### 局所迎角差と尾翼角の合成範囲
+### 局所迎角差と尾翼角の評価
 
-Manual・Shared・Automaticの全てへ、同じRust tick内で保護を適用する。
-hybridの各proxyが持つ局所迎角差 $\Delta\alpha_i$ と尾翼角の合計を検査する。
-
-```math
-I(s)=[-0.2,0.2]\cap\bigcap_i[-0.2-\Delta\alpha_i,0.2-\Delta\alpha_i]
-```
-
-- 最初に通常のauthority・slewで生成した保持incidenceを、全RK4 stageと公開stateで評価する。
-- 公開stateは非接触時のweighted endpoint、接触時の同時刻terminal stateである。
-- 成功結果は変更せず採用する。
-
-- 合成角制限に失敗した場合は、現在状態の許容区間と`previous ± maximum_slew × PHYSICS_DT_SECONDS`の可到達区間を交差する。
-- 各軸の投影要求、前tick incidenceの投影値、中央、下限、上限から最大25組を追加検査し、最初に成功した結果だけを公開する。
-- controller、身体目標、身体加速度は一度だけ導出して候補間で固定する。
-- incidenceを候補ごとの全stageへ保持し、刻み・物理式・係数・適用範囲を変更しない。
-
-- この探索は有限候補による1 tickの検査である。
-- 連続区間の網羅、将来の継続安全、失速保護、姿勢・迎角の保持は保証しない。
-- `StaticAlpha`、局所速度、風の領域外等の独立した失敗は元の型付きエラーを保持する。
-- 候補が得られない場合は名目指令の元cause/site/stageで終了し、最後の有効stateとrecordを維持する。
+- Manual・Shared・Automaticの全てで、authority・slewから導いた保持incidenceを一度採用し、全RK4 stageと公開stateで同じ値を評価する。
+- 局所迎角差と尾翼角の合計が通常域を超える場合は、[共有空力の全域継続](flight-dynamics.md#通常流域と全域継続)によって局所線型式からplate荷重へ滑らかに移る。
+- 公開stateは非接触時のweighted endpoint、接触時の同時刻terminal stateである。風の領域外・非有限計算等の失敗は元のcause/site/stageを保持し、最後の有効stateとrecordを保持する。
 - endpointの直接評価はstageを`None`とし、Fourth stageと区別する。
 
 ### 迎角と身体目標のsoft保護
@@ -78,7 +61,7 @@ I(s)=[-0.2,0.2]\cap\bigcap_i[-0.2-\Delta\alpha_i,0.2-\Delta\alpha_i]
 - `TailAngleOfAttackGuard`は検証済みprofileに保持するoptional policyである。
 - 公開Playableの設定はdatum alpha運用帯[-0.09,+0.09] rad、preview 1.0 s、pitch gain 1.6 sとし、基準alphaはtrimのdatum alphaである。
 - Manual・Shared・Automaticに同じpolicyを適用し、元のauthority、q/r gain、slewを維持する。
-- これらは合成controllerの設計値であり、hybridのhard envelopeを拡大しない。
+- これらは通常運用帯へ操縦を補助する合成controllerの設計値である。
 
 - guardはdatum $O$ で同じ風場を評価し、対地速度から風を引いてbodyへ変換した速度の`atan2(down, forward)`を使う。
 - HUD・record telemetryが示す合成重心 $G$ のalphaとは区別する。

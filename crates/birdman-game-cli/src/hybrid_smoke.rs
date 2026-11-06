@@ -5,10 +5,6 @@ use birdman_game_core::{
     ControlMode, FbwAuthority, FlightRecord, GameSessionError, SessionPhase, TailFlightTickInput,
     TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget,
 };
-#[cfg(test)]
-use birdman_game_core::{GameSession, GameSessionConfiguration};
-#[cfg(test)]
-use birdman_game_format::{AssistanceLevel, DifficultySettings, InformationLevel};
 use birdman_game_format::{
     FlightRecordHeaderDocument, FlightRecordStateDocument, FlightRecordTailIdentityDocument,
     TailFlightRecordControlsDocument, TailFlightRecordDocument,
@@ -106,55 +102,6 @@ fn verify_mode(mode: ControlMode) -> Result<TailFlightRecordDocument, String> {
     verify_roundtrip(document, record)
 }
 
-#[cfg(test)]
-fn run_configuration(
-    mode: ControlMode,
-    configuration: GameSessionConfiguration<'_>,
-    record_identity: FlightRecordTailIdentityDocument,
-) -> Result<TailFlightRecordDocument, String> {
-    let mut session = GameSession::new();
-    session.open_setup().map_err(super::display_error)?;
-    session
-        .prepare_flight(configuration)
-        .map_err(super::display_error)?;
-    session
-        .mark_briefing_ready()
-        .map_err(super::display_error)?;
-    session.start_countdown(1).map_err(super::display_error)?;
-    session
-        .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
-        .map_err(super::display_error)?;
-    for tick in 0..TICK_LIMIT {
-        match session.advance_tail_flight_tick(input(tick)?) {
-            Ok(_) => {}
-            Err(GameSessionError::TailTick(_))
-                if session.snapshot().phase() == SessionPhase::Result =>
-            {
-                break;
-            }
-            Err(error) => return Err(super::display_error(error)),
-        }
-    }
-    if session.snapshot().phase() != SessionPhase::Result {
-        return Err("hybrid smoke did not finalize the configured tick sequence".to_owned());
-    }
-    let record = session
-        .flight_record()
-        .ok_or_else(|| "hybrid smoke record is missing".to_owned())?;
-    let settings = DifficultySettings::custom(
-        InformationLevel::Full,
-        match mode {
-            ControlMode::Manual => AssistanceLevel::Manual,
-            ControlMode::Shared(_) => AssistanceLevel::Assisted,
-            ControlMode::Automatic => AssistanceLevel::Strong,
-        },
-        WeatherClass::Calm,
-    );
-    let document = TailFlightRecordDocument::from_record(record, settings, record_identity)
-        .map_err(super::display_error)?;
-    verify_roundtrip(document, record)
-}
-
 fn verify_roundtrip(
     document: TailFlightRecordDocument,
     record: &FlightRecord,
@@ -213,74 +160,6 @@ fn named_terminal_json(mode: &str, document: &TailFlightRecordDocument) -> Resul
         finalization: document.finalization,
     })
     .map_err(super::display_error)
-}
-
-#[cfg(test)]
-fn verify_mode_at_speed(
-    mode: ControlMode,
-    speed_mps: f64,
-) -> Result<TailFlightRecordDocument, String> {
-    use birdman_game_core::{
-        BodyPoint, BodyVector, CompositeCgLaunchConditions, CourseAxis, Gravity,
-        HybridAerodynamicLoad, HybridModel, NedPoint, NedVector, TailControlProfile,
-        TailFlightScenario, TailFlightScenarioParameters, TailIncidence, WindField,
-    };
-    const CONTACT_POINTS: [BodyPoint; 1] = [BodyPoint::origin()];
-    let definition = birdman_game_app::registered_aircraft().map_err(super::display_error)?;
-    let surfaces = definition.surfaces().map_err(super::display_error)?;
-    let trim = definition.trim().map_err(super::display_error)?;
-    let cg_position = NedPoint::try_new(0.0, 0.0, -10.5).map_err(super::display_error)?;
-    let initial = trim
-        .initial_state_for_ground_launch(cg_position, 0.0)
-        .map_err(super::display_error)?;
-    let launch = CompositeCgLaunchConditions::try_new(
-        cg_position,
-        initial
-            .datum_velocity_ned()
-            .scaled(speed_mps / definition.document().trim.airspeed_mps)
-            .map_err(super::display_error)?,
-        initial.attitude_body_to_ned(),
-        BodyVector::zero(),
-        trim.pilot_position_m(),
-        0.0,
-    )
-    .map_err(super::display_error)?;
-    let parameters = TailFlightScenarioParameters::try_new(
-        definition.aircraft(),
-        launch,
-        TailIncidence::neutral(),
-        Gravity::try_new(definition.document().trim.gravity_mps2).map_err(super::display_error)?,
-        &CONTACT_POINTS,
-        CourseAxis::try_new(1.0, 0.0).map_err(super::display_error)?,
-    )
-    .map_err(super::display_error)?;
-    let load = HybridAerodynamicLoad::try_new(
-        HybridModel::try_new(definition.polar().map_err(super::display_error)?, &surfaces)
-            .map_err(super::display_error)?,
-        definition.document().trim.air_density_kg_m3,
-        WindField::uniform(NedVector::zero()),
-    )
-    .map_err(super::display_error)?;
-    let scenario = TailFlightScenario::try_new(
-        parameters,
-        load,
-        TailControlProfile::try_new(0.2, 0.2, 1.0).map_err(super::display_error)?,
-    )
-    .map_err(super::display_error)?;
-    let selection = HybridSessionPreparation::select_scenario(WeatherClass::Calm, 0)
-        .map_err(super::display_error)?;
-    let identity = birdman_game_app::identity_for_selection(selection);
-    let configuration =
-        GameSessionConfiguration::try_new_tail(scenario, mode, TICK_LIMIT, identity)
-            .map_err(super::display_error)?;
-    run_configuration(
-        mode,
-        configuration,
-        FlightRecordTailIdentityDocument {
-            aircraft_configuration_id: definition.document().configuration_id.clone(),
-            controller_profile_id: "cli-low-speed-fixture".to_owned(),
-        },
-    )
 }
 
 #[cfg(test)]

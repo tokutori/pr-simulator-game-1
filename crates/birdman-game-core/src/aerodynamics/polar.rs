@@ -6,6 +6,8 @@ use crate::dynamics::{AircraftModel, ExternalLoadProvider, FlightState, LoadErro
 use crate::math::{BodyPoint, BodyVector, NedVector, atan2, hypot2};
 use crate::wind_field::WindField;
 
+mod continuation;
+
 /// The analysis family for one table; this does not establish its aircraft scope.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
@@ -213,7 +215,7 @@ impl StaticPolarRow {
 ///
 /// Construction and evaluation use no allocation or I/O. Rows and metadata must outlive
 /// the table. All columns are interpolated independently inside the closed alpha interval.
-/// No configuration blending, extrapolation, endpoint clamp, or Re dependency is applied.
+/// Outside the measured interval, a C1 ideal-plate continuation uses the same point P.
 ///
 /// A table cannot escape the lifetime of its coefficient rows:
 ///
@@ -255,6 +257,7 @@ impl<'a> StaticPolar<'a> {
         {
             return Err(AeroError::InvalidPolarTable);
         }
+        continuation::validate(rows)?;
         Ok(Self {
             rows,
             reference,
@@ -299,7 +302,11 @@ impl<'a> StaticPolar<'a> {
         }
         let [minimum, maximum] = self.alpha_interval_rad();
         if alpha_rad < minimum || alpha_rad > maximum {
-            return Err(AeroError::OutsideEnvelope);
+            let alpha = continuation::periodic_angle(alpha_rad);
+            if alpha < minimum || alpha > maximum {
+                return continuation::evaluate(self.rows, alpha);
+            }
+            return self.coefficients_at(alpha);
         }
         let upper = self.rows.partition_point(|row| row.alpha_rad < alpha_rad);
         let second = self.rows[upper];

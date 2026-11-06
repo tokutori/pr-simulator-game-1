@@ -3,9 +3,7 @@ use crate::PHYSICS_DT_SECONDS;
 use vstd::prelude::*;
 
 use crate::aerodynamics::{HybridAerodynamicLoad, TailIncidence};
-use crate::aerodynamics_contract::{
-    AeroError, AerodynamicEvaluationError, AerodynamicStage, HybridLimit,
-};
+use crate::aerodynamics_contract::{AeroError, AerodynamicEvaluationError, AerodynamicStage};
 use crate::contact::{
     ContactError, FlightStateContactSample, TailContactShapeProvider, WaterContactGeometry,
     WingBendingFactor, detect_flight_state_water_contact,
@@ -642,65 +640,6 @@ impl TailTickTrial<'_, '_, '_> {
             tail_wrenches,
         })
     }
-
-    fn protected_incidence(
-        &mut self,
-        requested: TailIncidence,
-        maximum_steps: [f64; 2],
-    ) -> Result<(TailTrialOutcome, TailIncidence), TailFlightTickError> {
-        let original_error = match self.evaluate(requested) {
-            Ok(state) => return Ok((state, requested)),
-            Err(error) if controlled_tail_failure(error) => error,
-            Err(error) => return Err(error),
-        };
-        let Ok(intervals) = self
-            .loads
-            .tail_incidence_intervals(&self.previous.flight_state, self.aircraft.tail_actuators())
-        else {
-            return Err(original_error);
-        };
-        let previous_values = [
-            self.previous.incidence.elevator_rad(),
-            self.previous.incidence.rudder_rad(),
-        ];
-        let requested_values = [requested.elevator_rad(), requested.rudder_rad()];
-        let mut candidates = [[0.0; 5]; 2];
-        for axis in 0..2 {
-            let physical = self.aircraft.tail_actuators()[axis].incidence_bounds_rad();
-            let lower = intervals[axis][0]
-                .max(physical[0])
-                .max(previous_values[axis] - maximum_steps[axis]);
-            let upper = intervals[axis][1]
-                .min(physical[1])
-                .min(previous_values[axis] + maximum_steps[axis]);
-            if lower > upper {
-                return Err(original_error);
-            }
-            candidates[axis] = [
-                requested_values[axis].clamp(lower, upper),
-                previous_values[axis].clamp(lower, upper),
-                lower + 0.5 * (upper - lower),
-                lower,
-                upper,
-            ];
-        }
-        for elevator in candidates[0] {
-            for rudder in candidates[1] {
-                let Ok(incidence) = TailIncidence::try_new(elevator, rudder) else {
-                    continue;
-                };
-                if incidence == requested {
-                    continue;
-                }
-                match self.evaluate(incidence) {
-                    Ok(state) => return Ok((state, incidence)),
-                    Err(error @ TailFlightTickError::Contact(_)) => return Err(error),
-                    Err(_) => {}
-                }
-            }
-        }
-        Err(original_error)
-    }
 }
 
 fn future_wind_domain_failure(error: TailFlightTickError) -> bool {
@@ -771,21 +710,10 @@ fn validate_published_load(
     Ok(evaluation.tail_wrenches())
 }
 
-fn controlled_tail_failure(error: TailFlightTickError) -> bool {
-    matches!(
-        error,
-        TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(error))))
-            if error.cause() == AeroError::OutsideEnvelope
-                && error.limit() == Some(HybridLimit::ControlledAlphaDifference)
-    )
-}
-
 /// Advances one 100 Hz tick with feedback from the previous successful body state only.
 ///
 /// Requested controls are evaluated once. The accepted incidence is held through all four
-/// Hybrid RK4 load stages and checked at the weighted endpoint. Direct controlled-tail
-/// angle failures trigger at most 25 additional trials within current-flow and slew bounds.
-/// An unsuccessful finite search retains the original error, without proving infeasibility.
+/// Hybrid RK4 load stages and checked at the weighted endpoint.
 /// The pilot target is independent of surface authority. Every input state remains unchanged
 /// if control, pilot policy or an aerodynamic stage fails.
 pub fn advance_tail_flight_tick(
@@ -883,16 +811,8 @@ fn evaluate_tail_flight_tick(
         loads,
         geometry,
     };
-    let (outcome, incidence) = trial.protected_incidence(
-        control.incidence(),
-        aircraft.tail_actuators().map(|limits| {
-            config
-                .profile
-                .maximum_slew_rad_per_second()
-                .min(limits.maximum_slew_rad_per_second())
-                * PHYSICS_DT_SECONDS
-        }),
-    )?;
+    let incidence = control.incidence();
+    let outcome = trial.evaluate(incidence)?;
     Ok(TailEvaluatedTick {
         next: TailFlightTickState {
             tick_index,

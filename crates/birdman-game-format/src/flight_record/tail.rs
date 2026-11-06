@@ -490,6 +490,7 @@ impl TailFlightRecordDocument {
             || self.header.score_definition_version
                 != birdman_game_core::COURSE_DISTANCE_SCORE_VERSION
             || !(self.header.physics_model_version == birdman_game_core::PHYSICS_MODEL_VERSION
+                || self.header.physics_model_version == 7
                 || self.header.physics_model_version == 6
                 || self.header.physics_model_version == 5
                 || self.header.physics_model_version == 4

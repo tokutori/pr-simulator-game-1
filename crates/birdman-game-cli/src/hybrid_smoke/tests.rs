@@ -117,43 +117,17 @@ fn named_terminal_and_saved_query_share_exact_controls_and_terminal_metadata() {
         TailPilotPositionCommand::Hold
     );
     assert_eq!(named["finalization"]["failure"], json!(null));
+    let terminal = record
+        .sample_at_seconds(record.duration_seconds().unwrap())
+        .unwrap();
+    assert_eq!(terminal.tick_index, document.finalization.terminal_tick);
+    assert_eq!(
+        terminal.flight_state.datum_position_ned().components(),
+        document.samples.last().unwrap().state.datum_position_ned_m
+    );
 }
 
 #[test]
 fn invalid_command_mode_is_rejected() {
     assert!(run_verification("legacy").is_err());
-}
-
-#[test]
-fn low_speed_envelope_exit_retains_the_original_failure_and_last_valid_record() {
-    let document = verify_mode_at_speed(ControlMode::Manual, 1.0).unwrap();
-    assert_eq!(
-        document.finalization.reason,
-        FlightRecordEndReasonDocument::OutOfValidEnvelope
-    );
-    assert!(document.finalization.failure.is_some());
-    assert!(document.finalization.terminal_tick < TICK_LIMIT);
-    assert_eq!(
-        document.samples.len(),
-        document.finalization.terminal_tick as usize + 1
-    );
-    let named: Value =
-        serde_json::from_str(&named_terminal_json("manual", &document).unwrap()).unwrap();
-    assert_eq!(
-        named["finalization"],
-        serde_json::to_value(document.finalization).unwrap()
-    );
-    assert_eq!(
-        named["state"],
-        serde_json::to_value(&document.samples.last().unwrap().state).unwrap()
-    );
-    let restored = document.to_finalized_core_record().unwrap();
-    let last = restored
-        .sample_at_seconds(restored.duration_seconds().unwrap())
-        .unwrap();
-    assert_eq!(last.tick_index, document.finalization.terminal_tick);
-    assert_eq!(
-        last.flight_state.datum_position_ned().components(),
-        document.samples.last().unwrap().state.datum_position_ned_m
-    );
 }

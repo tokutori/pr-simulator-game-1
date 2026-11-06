@@ -135,18 +135,18 @@ C_{n_{\widehat r}}=-2a_F\frac{S_f}{S}\left(\frac{l_f}{b}\right)^2
 | slope | AR=2で $\pi$、AR=4で $4\pi/3$、大ARで $2\pi$、小ARで $\pi AR$ |
 | 中立増分 | 複数alpha/速度で増分0・static一致。許容差は動圧等の演算scaleに対応 |
 | 符号・風 | p/q/r、fin beta、tail incidence、dihedral、片翼gust、左右相殺、Galilean invariance |
-| 適用域 | global beta、tail角、raw/controlled角差、actual/reference span角と速度比の閉境界・直外 |
-| 零速・異常 | 全点静止の零荷重、datum静止と局所流の未定義参照、微小正速度、wind/density/overflowの原因 |
+| 通常式・継続 | global beta・局所角差・span角・速度比のC1接続、表端の値・勾配、非負抗力、周期境界 |
+| 零速・異常 | 全点静止の零荷重、datum静止時の局所荷重、pure-spanの一意な極限、逆流・微小正速度、wind/density/overflowの原因 |
 | 原子的更新 | 全4 RK stageの保持操作・失敗site/limit/stageと直前成功状態の保持 |
 
-- actual/reference forwardは厳密に正である。
-- proxy速度比0.8–1.2は参照速度に対する比である。
+- 通常局所式の重みが正のとき、actual/reference forwardと分母は正となる。重み0ではplate荷重を直接評価する。
+- 通常局所式のproxy速度比0.8–1.2は参照速度に対する比であり、外側ではplate荷重へC1接続する。
 - 静的適用域、失速、wake、Re依存、実機精度はそれぞれのモデル契約に従う。
 
 ### 動的割当の計測
 
 - `tools/allocation-check/main.py` はnative debug専用harnessを実行する。登録形状の経路では係数の導出・補間と固定順点群の更新をまとめて計測する。
-- 本番provider評価・RK4・実tickの成功とGlobalBetaの型付き失敗を各10,000回計測し、 `alloc`・`alloc_zeroed`・`realloc` の各計数0を要求する。
+- 本番provider評価・RK4・実tickの高横滑り時の継続成功と、非有限動圧による型付き失敗を各10,000回計測し、 `alloc`・`alloc_zeroed`・`realloc` の各計数0を要求する。
 - 同梱機体の準備済み点群をcaller所有sliceへ変形する経路を100回計測する。速度0・基準近傍・高荷重と正負の尾翼角を切り替え、同じ3種の割当計数0を要求する。
 - 実`ApplicationSession`の準備を終えてから計測を開始し、発進後の全tickから自然着水まで、採用係数を持つ記録と3種の割当計数0を検査する。
 - 校正では各1回を検出し、warmup・assert・出力は計測窓の外に置く。
@@ -225,7 +225,7 @@ gradientの行は風N/E/D、列は位置N/E/D、単位はs⁻¹である。
 - 上限近傍のalphaは最後のPWL区間内に置く。
 - 区間内確認は補助観測であり、適用域は本番providerで判定する。
 
-- 公開polar上限の $10^{-6}$ rad外側は全modeのFirst stageで `StaticPolar / OutsideEnvelope / StaticAlpha / First` として拒否され、入力状態を保持する。
+- 登録機体JSONから準備した機体を用い、迎角0.9 rad・逆流・初速0.02 m/sの3代表で各100 tickの継続を確認する。
 - 後段stageの失敗保持も個別に検査する。
 - 上限近傍の結果は選択したtest-local gainに限定する。
 
