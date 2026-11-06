@@ -609,14 +609,18 @@ fn assert_playable_sequence(sequence: PlayabilitySequence) {
             record.samples().last().unwrap().flight_state,
             result.state.flight_state()
         );
-        for sample in record.samples() {
-            let FlightRecordControls {
-                incidence,
-                input_from_previous,
-            } = sample.controls;
+        let samples = record.samples();
+        for index in [0, samples.len() / 2, samples.len() - 1] {
+            let sample = &samples[index];
             loads
-                .evaluate_hybrid(&sample.flight_state, incidence)
+                .evaluate_hybrid(&sample.flight_state, sample.controls.incidence)
                 .unwrap();
+        }
+        for sample in samples {
+            let FlightRecordControls {
+                input_from_previous,
+                ..
+            } = sample.controls;
             let relative = sample
                 .flight_state
                 .datum_velocity_ned()

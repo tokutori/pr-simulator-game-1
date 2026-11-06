@@ -757,13 +757,25 @@ fn launched() -> GameSession {
         .unwrap();
     session
 }
+fn aircraft_fixture() -> (
+    birdman_game_app::SelectedAircraft,
+    birdman_game_content::AircraftContactBuffer,
+) {
+    let selected = birdman_game_app::SelectedAircraft::bundled().unwrap();
+    let contact = birdman_game_content::AircraftContactBuffer::try_new(
+        selected.definition(),
+        selected.definition().contact_points().to_vec(),
+    )
+    .unwrap();
+    (selected, contact)
+}
 fn prepare_manual_flight(
     session: &mut GameSession,
     weather: WeatherClass,
     maximum_ticks: u64,
     seed: u64,
 ) -> Result<(), birdman_game_core::GameSessionError> {
-    let fixture_aircraft = birdman_game_app::SelectedAircraft::bundled().unwrap();
+    let (fixture_aircraft, mut contact) = aircraft_fixture();
     let (configuration, _) = HybridSessionPreparation::try_new_for_weather(
         &fixture_aircraft,
         ControlMode::Manual,
@@ -773,11 +785,7 @@ fn prepare_manual_flight(
     )
     .unwrap()
     .into_parts();
-    let mut contact = birdman_game_content::AircraftContactBuffer::try_new(
-        fixture_aircraft.definition(),
-        fixture_aircraft.definition().contact_points().to_vec(),
-    )
-    .unwrap();
+
     let configuration = configuration
         .with_contact_shape(&mut contact.bind(fixture_aircraft.definition()))
         .unwrap();
@@ -822,12 +830,7 @@ fn advance_fixture(
 }
 
 fn finalized() -> GameSession {
-    let fixture_aircraft = birdman_game_app::SelectedAircraft::bundled().unwrap();
-    let mut fixture_contact = birdman_game_content::AircraftContactBuffer::try_new(
-        fixture_aircraft.definition(),
-        fixture_aircraft.definition().contact_points().to_vec(),
-    )
-    .unwrap();
+    let (fixture_aircraft, mut fixture_contact) = aircraft_fixture();
 
     let mut session = launched();
     let input = TailFlightTickInput::new(
@@ -1244,12 +1247,7 @@ fn flight_setup_keeps_progress_and_feedback_lines() {
 
 #[test]
 fn record_replacement_changes_structure_while_rejected_commands_retain_it() {
-    let fixture_aircraft = birdman_game_app::SelectedAircraft::bundled().unwrap();
-    let mut fixture_contact = birdman_game_content::AircraftContactBuffer::try_new(
-        fixture_aircraft.definition(),
-        fixture_aircraft.definition().contact_points().to_vec(),
-    )
-    .unwrap();
+    let (fixture_aircraft, mut fixture_contact) = aircraft_fixture();
 
     use birdman_game_app::application::{ApplicationSession, BackendReadiness};
     let mut record = |nose_up| {
@@ -2979,12 +2977,7 @@ fn lightweight_frame_matches_fresh_full_view_without_record_series() {
 
 #[test]
 fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries() {
-    let fixture_aircraft = birdman_game_app::SelectedAircraft::bundled().unwrap();
-    let mut fixture_contact = birdman_game_content::AircraftContactBuffer::try_new(
-        fixture_aircraft.definition(),
-        fixture_aircraft.definition().contact_points().to_vec(),
-    )
-    .unwrap();
+    let (fixture_aircraft, mut fixture_contact) = aircraft_fixture();
 
     let range = GameUiControlContent::Range {
         target: GameUiRangeTarget::Replay,
@@ -4163,12 +4156,7 @@ fn screen_pause_sections_and_scroll_regions_keep_hud_and_navigation_disjoint() {
 
 #[test]
 fn hud_scene_policy_is_shared_by_full_and_frame_projection_in_screen_and_vr() {
-    let fixture_aircraft = birdman_game_app::SelectedAircraft::bundled().unwrap();
-    let mut fixture_contact = birdman_game_content::AircraftContactBuffer::try_new(
-        fixture_aircraft.definition(),
-        fixture_aircraft.definition().contact_points().to_vec(),
-    )
-    .unwrap();
+    let (fixture_aircraft, mut fixture_contact) = aircraft_fixture();
 
     for mode in [
         GameUiPresentationMode::Screen,
@@ -4302,12 +4290,7 @@ fn legacy_replay_hud_uses_the_recorded_pilot_target_and_marks_unrecorded_loads()
 
 #[test]
 fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
-    let fixture_aircraft = birdman_game_app::SelectedAircraft::bundled().unwrap();
-    let mut fixture_contact = birdman_game_content::AircraftContactBuffer::try_new(
-        fixture_aircraft.definition(),
-        fixture_aircraft.definition().contact_points().to_vec(),
-    )
-    .unwrap();
+    let (fixture_aircraft, mut fixture_contact) = aircraft_fixture();
 
     let session = launched();
     let platform = platform();
