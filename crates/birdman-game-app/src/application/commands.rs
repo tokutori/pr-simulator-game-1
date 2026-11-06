@@ -111,7 +111,7 @@ pub enum RecordCommand {
 }
 
 /// Shared selection and execution failure with its original classified cause.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ApplicationError {
     /// The live frame driver retained its original input, clock or execution failure.
     Flight(super::FlightFrameError),

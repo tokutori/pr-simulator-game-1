@@ -13,7 +13,7 @@
 | 座標系 | x | y | z | 原点 |
 |---|---|---|---|---|
 | Navigation（NED） | 北 | 東 | 下 | 発進地点の水平位置と基準湖面の交点 |
-| Body（FRD） | 前 | 右 | 下 | パイロットを除く機体の固定重心 $O$ |
+| Body（FRD） | 前 | 右 | 下 | 機体構造の固定datum $O$ |
 | 描画用world | 東 | 上 | 南 | NEDと同じ原点 |
 
 - 彦根会場の水平原点はWGS84緯度35.294075°、経度136.254448°とし、局所NEDの $N=E=0$ に対応させる。
@@ -82,7 +82,7 @@ I_B=\begin{bmatrix}I_{xx}&0&-I_{xz}\\0&I_{yy}&0\\-I_{xz}&0&I_{zz}\end{bmatrix}
 
 ### 機体と慣性の検証
 
-- `AircraftModel`はパイロットを除く機体質量、datumまわりの固定慣性、パイロット質量・固定高さ・移動限界を保持する。
+- `AircraftModel`はパイロットを除く機体質量・CG位置・datumまわりの固定慣性、パイロット質量・固定高さ・移動限界と軸別尾翼actuator限界を保持する。
 - 機体質量は正、パイロット質量は非負とし、全値の有限性を検証する。
 - `InertiaTensor`は対称正定値性に加え、次の半正定値性を検査する。
 
@@ -100,13 +100,15 @@ I_B=\begin{bmatrix}I_{xx}&0&-I_{xz}\\0&I_{yy}&0\\-I_{xz}&0&I_{zz}\end{bmatrix}
 - 100個の64 bit limbへ収容し、heap・追加依存・traceや積のoverflow/underflowを回避する。
 - 厳密に表現された回転後の境界テンソルは受理し、外部計算で丸めた成分も最終binary64値で再検査する。
 - 正定値性の失敗は`NonPositiveDefiniteTensor`、物理整合条件の失敗は`NonPhysicalInertiaTensor`とする。
+- 機体CGを $r_a$ とすると、$I_{a,CG}=I_{a,O}-m_a(\lVert r_a\rVert^2\operatorname{Id}-r_ar_a^\mathsf T)$ も物理慣性として検査する。
+- 連成質量行列・運動量・重力モーメントは一次質量モーメント $h=m_ar_a+m_pr_p$ を共有し、launch・telemetry・trimは合成CG $h/(m_a+m_p)$ を用いる。
 - 機体生成時に検証し、移動質量の連成行列と各RK4 stageでは保存済みテンソルを使用する。
 
 ### RK4と原子的更新
 
 - `advance`は正の有限timestep、有限の一定パイロット加速度、重力、機体モデル、現在状態、外力providerを受け取る。
 - providerは空力などの非重力外力をbody-frame wrenchとして返す。
-- coreが全質量への重力合力と、パイロット重力のdatumまわりモーメントを加える。
+- coreが全質量への重力合力と、機体・パイロットの各CGに働く重力のdatumまわりモーメントを加える。
 - 運動量収支の未知量はbody成分の $d v_O^B/dt$ と角加速度である。
 - 積分状態のNED速度へ変換する際は次式を使い、座標成分の微分と物理加速度を区別する。
 

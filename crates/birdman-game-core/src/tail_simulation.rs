@@ -57,6 +57,17 @@ impl TailFlightTickState {
         pilot_position_target: PilotPositionTarget,
     ) -> Result<Self, TailFlightTickError> {
         total_momentum(aircraft, &flight_state).map_err(TailFlightTickError::Dynamics)?;
+        for (value, limits) in [incidence.elevator_rad(), incidence.rudder_rad()]
+            .into_iter()
+            .zip(aircraft.tail_actuators())
+        {
+            let [lower, upper] = limits.incidence_bounds_rad();
+            if value < lower || value > upper {
+                return Err(TailFlightTickError::Control(
+                    crate::TailControlError::Actuator(crate::ActuatorError::InvalidLimit),
+                ));
+            }
+        }
         TailPilotPositionMapping::try_new(aircraft, pilot_position_target.position_m())
             .map_err(TailFlightTickError::Dynamics)?;
         Ok(Self {
@@ -635,7 +646,7 @@ impl TailTickTrial<'_, '_, '_> {
     fn protected_incidence(
         &mut self,
         requested: TailIncidence,
-        maximum_step: f64,
+        maximum_steps: [f64; 2],
     ) -> Result<(TailTrialOutcome, TailIncidence), TailFlightTickError> {
         let original_error = match self.evaluate(requested) {
             Ok(state) => return Ok((state, requested)),
@@ -644,7 +655,7 @@ impl TailTickTrial<'_, '_, '_> {
         };
         let Ok(intervals) = self
             .loads
-            .tail_incidence_intervals(&self.previous.flight_state)
+            .tail_incidence_intervals(&self.previous.flight_state, self.aircraft.tail_actuators())
         else {
             return Err(original_error);
         };
@@ -655,8 +666,13 @@ impl TailTickTrial<'_, '_, '_> {
         let requested_values = [requested.elevator_rad(), requested.rudder_rad()];
         let mut candidates = [[0.0; 5]; 2];
         for axis in 0..2 {
-            let lower = intervals[axis][0].max(previous_values[axis] - maximum_step);
-            let upper = intervals[axis][1].min(previous_values[axis] + maximum_step);
+            let physical = self.aircraft.tail_actuators()[axis].incidence_bounds_rad();
+            let lower = intervals[axis][0]
+                .max(physical[0])
+                .max(previous_values[axis] - maximum_steps[axis]);
+            let upper = intervals[axis][1]
+                .min(physical[1])
+                .min(previous_values[axis] + maximum_steps[axis]);
             if lower > upper {
                 return Err(original_error);
             }
@@ -816,6 +832,7 @@ fn evaluate_tail_flight_tick(
         previous.flight_state.angular_velocity_body(),
         PHYSICS_DT_SECONDS,
         datum_alpha_rad,
+        aircraft.tail_actuators(),
     )
     .map_err(TailFlightTickError::Control)?;
     let requested_pilot_position_target = config
@@ -868,7 +885,13 @@ fn evaluate_tail_flight_tick(
     };
     let (outcome, incidence) = trial.protected_incidence(
         control.incidence(),
-        config.profile.maximum_slew_rad_per_second() * PHYSICS_DT_SECONDS,
+        aircraft.tail_actuators().map(|limits| {
+            config
+                .profile
+                .maximum_slew_rad_per_second()
+                .min(limits.maximum_slew_rad_per_second())
+                * PHYSICS_DT_SECONDS
+        }),
     )?;
     Ok(TailEvaluatedTick {
         next: TailFlightTickState {

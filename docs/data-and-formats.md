@@ -13,12 +13,12 @@
 
 | 対象 | 現行契約 |
 | --- | --- |
-| 機体JSON | `AircraftDocument`、schema 4、最大256 KiB |
+| 機体JSON | `AircraftDocument`、schema 5、最大256 KiB |
 | 環境JSON | `EnvironmentDocument`、schema 1、最大8 MiB |
 | 飛行記録JSON | `TailFlightRecordDocument`、schema 6/7/8、最大16 MiB |
 | 飛行ログCSV | schema 6はexport version 3、schema 7はversion 4、schema 8はversion 5 |
 | Personal Best | 比較方式v3、Rustによるkey再生成・選定 |
-| 物理・積分・接触 | physics model 6 |
+| 物理・積分・接触 | physics model 7 |
 | 既定機体・scenario | aircraft model 7、catalog 10、scenario 11、controller profile 4 |
 
 - 版の正本は実装の公開定義・登録catalogとする。
@@ -132,6 +132,11 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 
 - `AircraftDocument`は機体ID・モデル版、機体質量と慣性、パイロット質量と移動制限、主翼・水平尾翼・垂直尾翼、全機静特性、構造外形、トリム条件を保持する。
 - 座標は機体固定のFRD、寸法はSI単位とする。各翼の四分の一翼弦点・翼弦長から平面形と上反角を表し、空力の参照面積・スパン・平均空力翼弦を同じ主翼から導出する。
+- 機体CGは`mass.airframe_center_of_mass_frd_m`でdatum OからのFRD座標を指定する。慣性はdatumまわりで与え、平行軸換算後のCG慣性も物理整合性を検査する。
+- 各sectionの`twist_rad`はsweepを含む3D quarter-chord接線まわりの右手系回転であり、空力・接触・表示の導出で共有する。station接線は端点で片側secant、内部で前後stationの中心secantを正規化し、station間は両接線の正規化線型補間を用いる。
+- twistの正方向は増加span方向の右手系とし、水平翼では前縁上げ、垂直尾翼では前縁右向きに対応する。mirror翼は左右同じtwistを与え、ゼロは既存station-plane loftと一致する。
+- 尾翼の`actuator`は`incidence_bounds_rad`と`maximum_slew_rad_per_second`を保持する。区間は幾何neutralからのdeltaゼロを含み、controllerの使用限界を経た要求を最後に機械stopと軸別速度へ制限する。
+- JSONの構文・型・未知fieldは入場時に検査し、デコード後の独立したsemantic問題をcode・JSON pointer・入力値・成立条件の一覧として返す。
 - 構造定義は主桁の端点・半径・曲げ剛性、コックピット断面、パイロット視点と、`members`の主翼・尾翼rib/foam・stringer・cockpit frame・rimの寸法と配置を保持する。
 - `format::AircraftDocument`は文書の構造・有限値・物理値域を検証する。`content::AircraftDefinition`は空力stripの対称性・構造支持点の生成・主翼たわみの定義域・トリム解の成立まで検証し、準備済みstorageを公開する。
 - `content::AircraftDefinition`は文書と変換済みの質量・section・strip・静特性・中立構造支持点を所有する。借用した荷重モデルと構造形状の寿命はこのstorageと結び付く。

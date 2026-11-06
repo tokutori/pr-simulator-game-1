@@ -46,12 +46,7 @@ pub fn flight_state_from_composite_cg_launch(
 ) -> Result<FlightState, DynamicsError> {
     let total_mass = aircraft.airframe_mass_kg() + aircraft.pilot_mass_kg();
     let pilot_mass_fraction = aircraft.pilot_mass_kg() / total_mass;
-    let composite_cg_offset_body = BodyVector::try_new(
-        pilot_mass_fraction * launch.pilot_position_m,
-        0.0,
-        pilot_mass_fraction * aircraft.pilot_vertical_offset_m(),
-    )
-    .map_err(map_math_error)?;
+    let composite_cg_offset_body = aircraft.composite_center_of_mass(launch.pilot_position_m)?;
     let composite_cg_position_offset_ned = launch
         .attitude_body_to_ned
         .body_to_ned(composite_cg_offset_body)
@@ -198,12 +193,9 @@ pub(crate) fn derive_flight_telemetry(
 ) -> Result<FlightTelemetry, FlightTelemetryError> {
     let mass_fraction =
         aircraft.pilot_mass_kg() / (aircraft.airframe_mass_kg() + aircraft.pilot_mass_kg());
-    let offset_body = BodyVector::try_new(
-        mass_fraction * state.pilot_position_m(),
-        0.0,
-        mass_fraction * aircraft.pilot_vertical_offset_m(),
-    )
-    .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+    let offset_body = aircraft
+        .composite_center_of_mass(state.pilot_position_m())
+        .map_err(FlightTelemetryError::Dynamics)?;
     let position_ned = state
         .datum_position_ned()
         .translated(
@@ -292,6 +284,8 @@ mod tests {
             0.5,
             1.0,
             2.0,
+            [0.0; 3],
+            [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
         )
         .unwrap()
     }
@@ -453,6 +447,8 @@ mod tests {
             f64::MAX,
             f64::MAX,
             f64::MAX,
+            [0.0; 3],
+            [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
         )
         .unwrap();
         let extreme_launch = CompositeCgLaunchConditions::try_new(

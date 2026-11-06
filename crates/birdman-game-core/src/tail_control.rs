@@ -10,7 +10,50 @@ pub use pilot_position::{
     TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping,
 };
 
-const INCIDENCE_LIMIT_RAD: f64 = 0.2;
+const CONTROLLER_INCIDENCE_LIMIT_RAD: f64 = 0.2;
+
+/// One tail's structural stops and angular-speed limit, relative to neutral mounting.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
+pub struct TailActuatorLimits {
+    incidence_bounds_rad: [f64; 2],
+    maximum_slew_rad_per_second: f64,
+}
+
+impl TailActuatorLimits {
+    /// Validates a finite angular interval containing neutral and a positive rate.
+    pub fn try_new(
+        bounds: [f64; 2],
+        maximum_slew_rad_per_second: f64,
+    ) -> Result<Self, ActuatorError> {
+        if bounds.iter().any(|x| !x.is_finite()) || !maximum_slew_rad_per_second.is_finite() {
+            return Err(ActuatorError::NonFinite);
+        }
+        if bounds[0] >= bounds[1]
+            || bounds[0] > 0.0
+            || bounds[1] < 0.0
+            || bounds[0] < -core::f64::consts::PI
+            || bounds[1] > core::f64::consts::PI
+            || maximum_slew_rad_per_second <= 0.0
+        {
+            return Err(ActuatorError::InvalidLimit);
+        }
+        Ok(Self {
+            incidence_bounds_rad: bounds,
+            maximum_slew_rad_per_second,
+        })
+    }
+
+    /// Inclusive mechanical angle stops.
+    pub const fn incidence_bounds_rad(self) -> [f64; 2] {
+        self.incidence_bounds_rad
+    }
+
+    /// Structural angular-speed limit in radians per second.
+    pub const fn maximum_slew_rad_per_second(self) -> f64 {
+        self.maximum_slew_rad_per_second
+    }
+}
 const RATE_TARGET_LIMIT_RAD_PER_SECOND: f64 = 0.2;
 
 /// Device-independent normalized nose-up and right-turn intent, without a roll axis.
@@ -39,8 +82,8 @@ impl TailPilotIntent {
     /// Maps positive nose-up/right intent to negative physical elevator/rudder incidence.
     pub fn incidence(self) -> Result<TailIncidence, HybridError> {
         TailIncidence::try_new(
-            -INCIDENCE_LIMIT_RAD * self.nose_up,
-            -INCIDENCE_LIMIT_RAD * self.turn_right,
+            -CONTROLLER_INCIDENCE_LIMIT_RAD * self.nose_up,
+            -CONTROLLER_INCIDENCE_LIMIT_RAD * self.turn_right,
         )
     }
 
@@ -125,8 +168,8 @@ impl TailAngleOfAttackGuard {
             return Err(ActuatorError::NonFinite);
         }
         if alpha_interval_rad[0] >= alpha_interval_rad[1]
-            || alpha_interval_rad[0] <= -INCIDENCE_LIMIT_RAD
-            || alpha_interval_rad[1] >= INCIDENCE_LIMIT_RAD
+            || alpha_interval_rad[0] <= -CONTROLLER_INCIDENCE_LIMIT_RAD
+            || alpha_interval_rad[1] >= CONTROLLER_INCIDENCE_LIMIT_RAD
             || trim_alpha_rad <= alpha_interval_rad[0]
             || trim_alpha_rad >= alpha_interval_rad[1]
             || preview_seconds <= 0.0
@@ -172,13 +215,13 @@ impl TailAngleOfAttackGuard {
         let upper_rate = (self.alpha_interval_rad[1] - datum_alpha_rad) / self.preview_seconds;
         let lower_elevator = saturated_rate_command(
             self.pitch_gain_seconds,
-            INCIDENCE_LIMIT_RAD,
+            CONTROLLER_INCIDENCE_LIMIT_RAD,
             observed_pitch_rad_per_second,
             upper_rate,
         );
         let upper_elevator = saturated_rate_command(
             self.pitch_gain_seconds,
-            INCIDENCE_LIMIT_RAD,
+            CONTROLLER_INCIDENCE_LIMIT_RAD,
             observed_pitch_rad_per_second,
             lower_rate,
         );
@@ -248,7 +291,10 @@ impl TailControlProfile {
         Ok(Self {
             pitch_gain_seconds,
             yaw_gain_seconds,
-            actuator: ActuatorConfig::try_new(INCIDENCE_LIMIT_RAD, maximum_slew_rad_per_second)?,
+            actuator: ActuatorConfig::try_new(
+                CONTROLLER_INCIDENCE_LIMIT_RAD,
+                maximum_slew_rad_per_second,
+            )?,
             angle_of_attack_guard: None,
         })
     }
@@ -285,13 +331,13 @@ pub fn tail_rate_feedback_incidence(
     TailIncidence::try_new(
         saturated_rate_command(
             profile.pitch_gain_seconds,
-            INCIDENCE_LIMIT_RAD,
+            CONTROLLER_INCIDENCE_LIMIT_RAD,
             observed[1],
             target.pitch_rad_per_second,
         ),
         saturated_rate_command(
             profile.yaw_gain_seconds,
-            INCIDENCE_LIMIT_RAD,
+            CONTROLLER_INCIDENCE_LIMIT_RAD,
             observed[2],
             target.yaw_rad_per_second,
         ),
@@ -357,6 +403,10 @@ impl TailControlUpdate {
 /// Mixes manual/FBW incidence, saturates, then applies software slew without flow context.
 ///
 /// The optional datum-alpha guard is applied by the sealed flight-tick pipeline.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Aircraft hardware limits are independent of controller policy and observed input"
+)]
 pub fn advance_tail_control(
     previous: TailIncidence,
     profile: TailControlProfile,
@@ -365,6 +415,7 @@ pub fn advance_tail_control(
     target: TailRateTarget,
     observed_body_rate: BodyVector,
     timestep_seconds: f64,
+    physical_limits: [TailActuatorLimits; 2],
 ) -> Result<TailControlUpdate, TailControlError> {
     advance_tail_control_at_alpha(
         previous,
@@ -375,6 +426,7 @@ pub fn advance_tail_control(
         observed_body_rate,
         timestep_seconds,
         None,
+        physical_limits,
     )
 }
 
@@ -391,6 +443,7 @@ pub(crate) fn advance_tail_control_at_alpha(
     observed_body_rate: BodyVector,
     timestep_seconds: f64,
     datum_alpha_rad: Option<f64>,
+    physical_limits: [TailActuatorLimits; 2],
 ) -> Result<TailControlUpdate, TailControlError> {
     if !timestep_seconds.is_finite() || timestep_seconds <= 0.0 {
         return Err(TailControlError::Actuator(ActuatorError::InvalidTimeStep));
@@ -405,8 +458,10 @@ pub(crate) fn advance_tail_control_at_alpha(
         } else if authority == 1.0 {
             feedback
         } else {
-            (manual + authority * (feedback - manual))
-                .clamp(-INCIDENCE_LIMIT_RAD, INCIDENCE_LIMIT_RAD)
+            (manual + authority * (feedback - manual)).clamp(
+                -CONTROLLER_INCIDENCE_LIMIT_RAD,
+                CONTROLLER_INCIDENCE_LIMIT_RAD,
+            )
         }
     };
     let mixed_target = TailIncidence::try_new(
@@ -422,18 +477,27 @@ pub(crate) fn advance_tail_control_at_alpha(
         } else {
             mixed_target
         };
-    let maximum_step = profile.maximum_slew_rad_per_second() * timestep_seconds;
-    let advance = |current: f64, target: f64| {
+    let advance = |axis: usize, current: f64, target: f64| -> Result<f64, TailControlError> {
+        let limits = physical_limits[axis];
+        let [lower, upper] = limits.incidence_bounds_rad();
+        if current < lower || current > upper {
+            return Err(TailControlError::Actuator(ActuatorError::InvalidLimit));
+        }
+        let maximum_step = profile
+            .maximum_slew_rad_per_second()
+            .min(limits.maximum_slew_rad_per_second())
+            * timestep_seconds;
+        let target = target.clamp(lower, upper);
         let difference = target - current;
-        if difference.abs() <= maximum_step {
+        Ok(if difference.abs() <= maximum_step {
             target
         } else {
-            current + difference.signum() * maximum_step
-        }
+            (current + difference.signum() * maximum_step).clamp(lower, upper)
+        })
     };
     let incidence = TailIncidence::try_new(
-        advance(previous.elevator_rad(), projected_target.elevator_rad()),
-        advance(previous.rudder_rad(), projected_target.rudder_rad()),
+        advance(0, previous.elevator_rad(), projected_target.elevator_rad())?,
+        advance(1, previous.rudder_rad(), projected_target.rudder_rad())?,
     )
     .map_err(TailControlError::Incidence)?;
     Ok(TailControlUpdate {

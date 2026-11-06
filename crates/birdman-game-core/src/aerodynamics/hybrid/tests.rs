@@ -420,22 +420,8 @@ fn neutral_increments_match_static_at_current_knots_interiors_and_tiny_speeds() 
 }
 
 #[test]
-fn physical_tail_incidence_bounds_and_missing_tail_adapter_are_explicit() {
-    for sign in [-1.0, 1.0] {
-        assert!(TailIncidence::try_new(sign * 0.2, sign * 0.2).is_ok());
-        assert_eq!(
-            TailIncidence::try_new(sign * 0.20000000000000004, 0.0)
-                .unwrap_err()
-                .limit(),
-            Some(HybridLimit::ElevatorIncidence)
-        );
-        assert_eq!(
-            TailIncidence::try_new(0.0, sign * 0.20000000000000004)
-                .unwrap_err()
-                .limit(),
-            Some(HybridLimit::RudderIncidence)
-        );
-    }
+fn finite_tail_values_and_missing_tail_adapter_are_explicit() {
+    assert!(TailIncidence::try_new(0.3, -0.4).is_ok());
     assert_eq!(
         TailIncidence::try_new(f64::NAN, 0.0).unwrap_err().cause(),
         AeroError::NonFinite

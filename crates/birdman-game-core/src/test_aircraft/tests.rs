@@ -444,6 +444,8 @@ fn user_requested_mass_preserves_inertia_and_pilot_limits() {
         0.4,
         0.3,
         0.8,
+        [0.0; 3],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap();
     assert_eq!(aircraft, expected);

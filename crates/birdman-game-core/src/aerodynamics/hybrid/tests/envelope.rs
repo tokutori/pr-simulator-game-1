@@ -104,7 +104,11 @@ fn neutral_and_zero_flow_tail_intervals_keep_physical_and_missing_axis_bounds() 
     for speed in [0.0, 10.0] {
         let current = state([speed, 0.0, 0.0], [0.0; 3]);
         assert_eq!(
-            load.tail_incidence_intervals(&current).unwrap(),
+            load.tail_incidence_intervals(
+                &current,
+                [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2]
+            )
+            .unwrap(),
             [[-0.2, 0.2]; 2]
         );
         for elevator in [-0.2, 0.2] {
@@ -132,8 +136,11 @@ fn neutral_and_zero_flow_tail_intervals_keep_physical_and_missing_axis_bounds() 
             expected[surface_index - 1] = [-0.2, 0.2];
         }
         assert_eq!(
-            load.tail_incidence_intervals(&state([10.0, 0.0, 0.0], [0.0; 3]))
-                .unwrap(),
+            load.tail_incidence_intervals(
+                &state([10.0, 0.0, 0.0], [0.0; 3]),
+                [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2]
+            )
+            .unwrap(),
             expected
         );
     }
@@ -154,7 +161,12 @@ fn both_tail_axes_intersect_every_rate_driven_proxy_for_both_signs() {
             let pitch_rate = pitch_sign * 0.25;
             let yaw_rate = yaw_sign * 0.3;
             let current = state([10.0, 0.0, 0.0], [0.0, pitch_rate, yaw_rate]);
-            let actual = load.tail_incidence_intervals(&current).unwrap();
+            let actual = load
+                .tail_incidence_intervals(
+                    &current,
+                    [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
+                )
+                .unwrap();
             let mut expected = [[-0.2_f64, 0.2]; 2];
             for (axis, proxies) in fixture.proxies[1..].iter().enumerate() {
                 for proxy in proxies {
@@ -204,7 +216,12 @@ fn spatial_wind_proxies_constrain_both_ends_of_both_tail_intervals() {
         )
         .unwrap();
         let load = HybridAerodynamicLoad::try_new(model, 1.2, wind).unwrap();
-        let intervals = load.tail_incidence_intervals(&current).unwrap();
+        let intervals = load
+            .tail_incidence_intervals(
+                &current,
+                [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
+            )
+            .unwrap();
         for (axis, difference) in [libm::atan2(0.25, 10.0), libm::atan2(0.125, 10.0)]
             .into_iter()
             .enumerate()
@@ -277,7 +294,12 @@ fn tail_intervals_use_current_air_velocity_and_beta_free_reference() {
             .unwrap();
             let load =
                 HybridAerodynamicLoad::try_new(model, 1.2, WindField::uniform(wind)).unwrap();
-            let intervals = load.tail_incidence_intervals(&current).unwrap();
+            let intervals = load
+                .tail_incidence_intervals(
+                    &current,
+                    [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
+                )
+                .unwrap();
             assert_eq!(intervals[0], [-0.2, 0.2]);
             near(intervals[1][0], (-0.2_f64).max(-0.2 + beta), 2.0e-15);
             near(intervals[1][1], 0.2_f64.min(0.2 + beta), 2.0e-15);
@@ -297,9 +319,12 @@ fn tail_interval_scan_preserves_independent_envelope_and_wind_errors() {
         let beta = sign * 0.200000001;
         let local_difference = state([10.0, 0.0, 0.0], [0.0, sign, 0.0]);
         assert_eq!(
-            load.tail_incidence_intervals(&local_difference)
-                .unwrap_err()
-                .limit(),
+            load.tail_incidence_intervals(
+                &local_difference,
+                [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2]
+            )
+            .unwrap_err()
+            .limit(),
             Some(HybridLimit::LocalAlphaDifference)
         );
         for current in [
@@ -319,7 +344,13 @@ fn tail_interval_scan_preserves_independent_envelope_and_wind_errors() {
             let expected = load
                 .evaluate_hybrid(&current, TailIncidence::neutral())
                 .unwrap_err();
-            assert_eq!(load.tail_incidence_intervals(&current), Err(expected));
+            assert_eq!(
+                load.tail_incidence_intervals(
+                    &current,
+                    [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2]
+                ),
+                Err(expected)
+            );
             assert_eq!(expected.stage(), None);
         }
     }
@@ -344,7 +375,13 @@ fn tail_interval_scan_preserves_independent_envelope_and_wind_errors() {
             .evaluate_hybrid(&current, TailIncidence::neutral())
             .unwrap_err();
         assert!(matches!(expected.cause(), AeroError::Wind(_)));
-        assert_eq!(load.tail_incidence_intervals(&current), Err(expected));
+        assert_eq!(
+            load.tail_incidence_intervals(
+                &current,
+                [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2]
+            ),
+            Err(expected)
+        );
         assert_eq!(expected.stage(), None);
     }
 }
@@ -526,6 +563,8 @@ pub(super) fn aircraft() -> AircraftModel {
         0.5,
         1.0,
         1.0,
+        [0.0; 3],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap()
 }

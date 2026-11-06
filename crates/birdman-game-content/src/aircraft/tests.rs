@@ -167,7 +167,7 @@ fn invalid_source_is_rejected_before_a_definition_is_published() {
     assert!(matches!(
         AircraftDefinition::from_document(document),
         Err(AircraftDefinitionError::Format(
-            AircraftFormatError::InvalidStructure
+            AircraftFormatError::Validation(_)
         ))
     ));
 }
