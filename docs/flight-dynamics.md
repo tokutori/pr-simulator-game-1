@@ -277,7 +277,7 @@ MAC_{projected}=\frac{\int c(u)^2du}{S_{projected}},\qquad AR_s=\frac{b_s^2}{S_{
 - `HybridProxy`は一つの直線section区間を覆い、正の実面積weightと面積重心のquarter-chord作用点 $r_i^B$ を持つ。
 - 区間の隙間・重複・異なるgeometryへの流用を拒否し、weight和と面積を照合する。
 - `MirrorSpan`はsection・proxy・anchor・frameの反射対称性を要求する。
-- 幾何照合の相対許容差は $10^{-10}$、flowの受理範囲は閉境界表に従う。
+- 幾何照合の相対許容差は $10^{-10}$、flowは通常流域からplate荷重へ連続に接続する。
 
 - local-to-bodyの正規直交frame $Q_i$ はlocal spanをsectionのy-z方向へ整合させ、twistとdihedralを含む。
 - 固定normalは $n_i^B=Q_i(0,0,1)$ とし、投影spanへdihedralのcosを重ねて乗じない。
@@ -367,8 +367,8 @@ D_i=q_i S_{projected,i}\left(C_{D0}+\frac{C_{L,i}^2}{\pi AR_s e}\right)
 - 機体40 kg、パイロット60 kg、datum慣性 $\operatorname{diag}(900,1000,980)$ kg m²を合成入力とする。
 - パイロットの $y=z=0$、前後範囲±0.4 m、最大速度0.3 m/s、最大加速度0.8 m/s²を使用する。
 
-- datum alphaの閉区間は[-0.18,+0.18] rad、約±10.31°とする。
-- finの参照span角、各proxyのactual local flow、control込み迎角差を、汎用hybridの閉境界に照らして個別に検査する。
+- datum alphaの校正表は[-0.18,+0.18] rad、約±10.31°を覆う。
+- finの参照span角・各proxyの局所流・control込み迎角差は、通常式からplate荷重へC1接続する。機械的な尾翼角・slewの限界は機体JSONのactuator契約を適用する。
 
 - 全機の9節点・7係数列をJSONに保持し、迎角順序、有限値、抗力等の物理境界を検証する。
 - 実行時は保存された全機係数のPWL補間と局所荷重差を評価する。表外は固定baselineへ連続に接続する。
