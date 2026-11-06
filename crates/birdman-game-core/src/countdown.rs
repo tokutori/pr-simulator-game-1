@@ -80,6 +80,10 @@ impl CountdownState {
         self.elapsed_nanos
     }
 
+    pub(crate) const fn duration_seconds(self) -> u32 {
+        self.duration_seconds
+    }
+
     #[cfg_attr(verus_only, verus_verify(dual_spec))]
     #[cfg_attr(verus_only, verus_spec(result =>
         requires self.valid(),

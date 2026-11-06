@@ -62,7 +62,7 @@ pub use game_session::{
 };
 pub use scenario::{
     CompositeCgLaunchConditions, FlightScenarioError, FlightTelemetry, FlightTelemetryError,
-    flight_state_from_composite_cg_launch,
+    flight_state_during_launch_roll, flight_state_from_composite_cg_launch,
 };
 pub use scoring::{
     COURSE_DISTANCE_SCORE_VERSION, CourseAxis, DistanceScore, DistanceScoreError,
