@@ -81,7 +81,11 @@ fn registered_live_records_interval_initial_coefficients_and_restores_them_on_re
             application.prepared().unwrap().record_identity.clone(),
         )
         .unwrap();
-        assert_eq!(document.schema_version, 8);
+        assert_eq!(document.schema_version, 9);
+        assert_eq!(
+            document.control_identity.aircraft_sha256.as_deref(),
+            Some(application.aircraft().unwrap().raw_sha256())
+        );
         let restored = TailFlightRecordDocument::decode_json(&document.encode_json().unwrap())
             .unwrap()
             .to_finalized_core_record()

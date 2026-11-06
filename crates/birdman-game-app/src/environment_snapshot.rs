@@ -598,7 +598,17 @@ mod tests {
             4000,
             u64::MAX,
         );
-        let exhibition = super::EnvironmentSelection::exhibition().unwrap();
+        let exhibition = super::EnvironmentSelection {
+            representative_position_ned_m: Some(
+                session
+                    .aircraft()
+                    .unwrap()
+                    .launch_position()
+                    .unwrap()
+                    .components(),
+            ),
+            ..super::EnvironmentSelection::exhibition().unwrap()
+        };
         assert_eq!(
             super::EnvironmentSelection::for_session(&session).unwrap(),
             exhibition
