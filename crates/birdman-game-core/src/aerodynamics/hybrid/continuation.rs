@@ -100,8 +100,12 @@ pub(super) fn global_flow(
             .iter()
             .map(|r| r.coefficients().profile_drag())
             .fold(f64::INFINITY, f64::min);
-        let skin = -dynamic_pressure(speed, density)? * area * floor;
-        let normal = -density * area * in_plane * w;
+        let pressure_area = dynamic_pressure(speed, density)? * area;
+        if !pressure_area.is_finite() {
+            return Err(AeroError::NonFinite);
+        }
+        let skin = -pressure_area * floor;
+        let normal = -(pressure_area * (in_plane / speed)) * (2.0 * (w / speed));
         let force = BodyVector::try_new(
             skin * (u / speed),
             skin * (v / speed),
@@ -185,11 +189,13 @@ fn plate_wrench(
     }
     let [u, v, w] = proxy.orientation().body_to_local_vector(velocity)?;
     let (s, c) = (libm::sin(delta), libm::cos(delta));
-    let effective_down = u * s + w * c;
-    let normal = -density * proxy.projected_area_m2() * hypot2(u, w) * effective_down;
-    let skin = -dynamic_pressure(speed, density)?
-        * proxy.projected_area_m2()
-        * tail.map_or(0.0, |t| t.0.zero_lift_drag_coefficient());
+    let effective_down_ratio = (u / speed) * s + (w / speed) * c;
+    let pressure_area = dynamic_pressure(speed, density)? * proxy.projected_area_m2();
+    if !pressure_area.is_finite() {
+        return Err(AeroError::NonFinite);
+    }
+    let normal = -(pressure_area * (hypot2(u, w) / speed)) * (2.0 * effective_down_ratio);
+    let skin = -pressure_area * tail.map_or(0.0, |t| t.0.zero_lift_drag_coefficient());
     let force = proxy.orientation().local_to_body_vector([
         normal * s + skin * (u / speed),
         skin * (v / speed),
@@ -199,9 +205,9 @@ fn plate_wrench(
     let midpoint = BodyVector::try_new(x, y, z)
         .map_err(map_math_error)?
         .plus(proxy.orientation().local_to_body_vector([
-            -0.25 * proxy.mean_aerodynamic_chord_m(),
+            -0.25 * proxy.mean_aerodynamic_chord_m() * c,
             0.0,
-            0.0,
+            0.25 * proxy.mean_aerodynamic_chord_m() * s,
         ])?)
         .map_err(map_math_error)?;
     Wrench::try_new(force, midpoint.cross(force).map_err(map_math_error)?)

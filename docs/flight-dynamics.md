@@ -334,7 +334,7 @@ D_i=q_i S_{projected,i}\left(C_{D0}+\frac{C_{L,i}^2}{\pi AR_s e}\right)
 - 通常局所式の重み$g$はC1 smoothstepの積とする。角度差・control込み角度差・局所span角は絶対値0.2から0.4 rad、速度比は[0.8,1.2]から[0.6,1.4]、局所迎角は$\pi/3$から$5\pi/12$で1から0へ移る。
 - 各proxyの増分は$g(W_{linear,actual}-W_{linear,reference})+(1-g)(W_{plate,actual}-W_{plate,reference})$とする。$g=0$では旧式を評価せず、$g>0$では全ての旧分母が正となる。
 - plate圧力は局所速度$[u,v,w]$に対して$F_n=-\rho A\operatorname{hypot}(u,w)w$とし、尾翼の既存$C_{D0}$を等方抗力へ使う。incidenceは流速と法線を同じ回転で変換する。
-- plateの作用点は既存quarter-chordから$-0.25c$移した中弦点とし、momentはこの点の$r\times F$でdatumへ一回転送する。中立一様流ではactual/reference両差分が0となる。
+- plateの作用点は既存quarter-chordから作動後chord方向へ$-0.25c$移した中弦点とする。局所offsetは$[-c\cos\delta/4,0,c\sin\delta/4]$で、momentはこの点の$r\times F$でdatumへ一回転送する。中立一様流ではactual/reference両差分が0となる。
 - global betaも絶対値0.2から0.4 radでpolarから全機plateへ接続する。同じ重み$k$でreferenceを旧$V[\cos\alpha,0,\sin\alpha]$から$[u,0,w]$へ接続し、pure-spanでreference=0とする。全機plateには$d_{min}$の等方抗力を使う。
 - datum速度0でも各proxyの局所風・回転流を評価する。plate式は零速度・逆流・pure-spanで定義される。密度・モデル・観測値と、運動中の動圧・荷重・momentの有限性を検査する。
 

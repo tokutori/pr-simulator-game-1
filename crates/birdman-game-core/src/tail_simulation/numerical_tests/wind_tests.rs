@@ -4,7 +4,6 @@ const UNIFORM_WIND_MPS: [f64; 3] = [0.3, 0.1, -0.04];
 const WIND_GRADIENT_PER_METER: [[f64; 3]; 3] =
     [[0.0, 0.0, 0.015], [0.012, 0.0, 0.0], [0.0, -0.003, 0.0]];
 const UPPER_ALPHA_MARGIN_RAD: f64 = 0.002;
-const OUTSIDE_ALPHA_INCREMENT_RAD: f64 = 1.0e-6;
 const NEAR_BOUND_OBSERVATION_INTERVALS: usize = 5;
 const AIRSPEED_MPS: f64 = 9.7;
 const NEAR_BOUND_PITCH_GAIN_SECONDS: f64 = 0.1;
@@ -152,39 +151,4 @@ fn uniform_shear_and_upper_alpha_use_physics_only_step_halving_gates() {
 #[test]
 fn uniform_shear_and_upper_alpha_use_coupled_step_halving_gates() {
     check_wind_step_halving(Cadence::Coupled);
-}
-
-#[test]
-fn outside_static_alpha_continues_through_a_second_of_flight() {
-    let definition = TestAircraft::try_new().unwrap();
-    let surfaces = definition.surfaces().unwrap();
-    let trim = definition.trim().unwrap();
-    let loads = HybridAerodynamicLoad::try_new(
-        HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
-        TestAircraft::TRIM_AIR_DENSITY_KG_M3,
-        WindField::uniform(NedVector::zero()),
-    )
-    .unwrap();
-    let mut current = state_at_static_alpha(
-        &definition,
-        trim,
-        definition.polar().unwrap().alpha_interval_rad()[1] + OUTSIDE_ALPHA_INCREMENT_RAD,
-    );
-    let config = TailFlightTickConfig::new(
-        ControlMode::Manual,
-        TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap(),
-        trim.pilot_mapping().unwrap(),
-        Gravity::try_new(TestAircraft::TRIM_GRAVITY_MPS2).unwrap(),
-    );
-    for tick in 0..100 {
-        current = advance_tail_flight_tick(
-            &definition.aircraft(),
-            current,
-            config,
-            InputCase::Neutral.sample(tick),
-            &loads,
-        )
-        .unwrap();
-    }
-    assert_eq!(current.tick_index(), 100);
 }

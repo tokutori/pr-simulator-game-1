@@ -34,6 +34,78 @@ fn reverse_plate_load_uses_midchord_once_and_opposes_normal_motion() {
         increment.moment_about_datum_newton_meters().components(),
         [48.0, -12.0, 0.0]
     );
+    let (rotated, _) = proxy_increment(
+        fixture.proxies[1][0],
+        vector([3.0, 0.0, 0.0]),
+        ProxyReference {
+            velocity: BodyVector::zero(),
+            speed: 0.0,
+            pressure: 0.0,
+        },
+        1.2,
+        4.0,
+        core::f64::consts::FRAC_PI_2,
+        None,
+    )
+    .unwrap();
+    // Tail A=0.5, quarter=(-3,-0.5,0), rotated midpoint=(-3,-0.5,0.125).
+    near(rotated.force_body_newtons().components()[0], -5.4, 1e-13);
+    near(
+        rotated.moment_about_datum_newton_meters().components()[1],
+        -0.675,
+        1e-13,
+    );
+    near(
+        rotated.moment_about_datum_newton_meters().components()[2],
+        -2.7,
+        1e-13,
+    );
+}
+
+#[test]
+fn plate_pressure_uses_representable_dynamic_area_across_opposite_scales() {
+    let fixture = Fixture::new(2);
+    let zero = StaticPolarCoefficients::try_new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0).unwrap();
+    let rows = [
+        StaticPolarRow::try_new(-0.1, zero).unwrap(),
+        StaticPolarRow::try_new(0.1, zero).unwrap(),
+    ];
+    for (density, area, component) in [(1e200, 1e200, 1e-200), (1e-200, 1e-200, 1e200)] {
+        let polar = StaticPolar::try_new(
+            &rows,
+            ElementReference::try_new(area, 1.0, 1.0).unwrap(),
+            BodyPoint::origin(),
+            PolarMomentAxes::BodyFrd,
+            fixture.polar().metadata(),
+        )
+        .unwrap();
+        let velocity = vector([0.0, 3.0 * component, component]);
+        let (wrench, _, _) = continuation::global_flow(
+            polar,
+            velocity,
+            velocity.norm().unwrap(),
+            component,
+            density,
+        )
+        .unwrap();
+        // rho*A*H*w=1, evaluated independently of the overflowing/underflowing rho*A.
+        near(wrench.force_body_newtons().components()[2], -1.0, 1e-13);
+    }
+    let (local, _) = proxy_increment(
+        fixture.proxies[0][0],
+        vector([0.0, 0.0, 1e-154]),
+        ProxyReference {
+            velocity: BodyVector::zero(),
+            speed: 0.0,
+            pressure: 0.0,
+        },
+        1e308,
+        4.0,
+        0.0,
+        None,
+    )
+    .unwrap();
+    near(local.force_body_newtons().components()[2], -2.0, 1e-13);
 }
 
 #[test]
