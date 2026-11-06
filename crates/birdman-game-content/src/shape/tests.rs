@@ -89,7 +89,25 @@ fn section_twist_rotates_the_skin_contact_and_aerodynamic_axes_about_quarter_cho
     });
     let length = libm::sqrt(direction.into_iter().map(|v| v * v).sum::<f64>());
     let axis = direction.map(|v| v / length);
-    let swept_shape = AircraftShape::new(&swept).surface(HybridSurfaceRole::MainWing);
+    let swept_definition = AircraftDefinition::from_document(swept.clone()).unwrap();
+    let swept_shape = swept_definition
+        .shape()
+        .surface(HybridSurfaceRole::MainWing);
+    assert!(
+        swept_definition.surfaces().unwrap()[0]
+            .proxies()
+            .iter()
+            .zip(baseline.surfaces().unwrap()[0].proxies())
+            .any(|(twisted, neutral)| twisted.orientation() != neutral.orientation())
+    );
+    let contact_skin = swept_shape.point(station, 0.5, AirfoilFace::Upper).unwrap();
+    assert!(swept_definition.contact_points().iter().any(|point| {
+        point
+            .components()
+            .into_iter()
+            .zip(contact_skin.components())
+            .all(|(a, b)| (a - b).abs() < 1.0e-12)
+    }));
     let rotated_axis = swept_shape.twist_vector(station, axis).unwrap();
     for (actual, expected) in rotated_axis.into_iter().zip(axis) {
         assert!((actual - expected).abs() < 1.0e-13);

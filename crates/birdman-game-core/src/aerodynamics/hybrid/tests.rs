@@ -243,11 +243,18 @@ fn dihedral_uses_surface_weights_and_projected_whole_surface_ar_once() {
         HybridProxy::try_new(geometry, [0.0, 2.0], frame_x(-dihedral), anchor).unwrap(),
     ];
     assert!(HybridSurface::try_new(geometry, &proxies, test_tail(geometry)).is_ok());
+    let (sin, cos) = libm::sincos(0.17);
+    let rotated_frame = ElementOrientation::try_new(
+        vector([cos, sin, 0.0]),
+        vector([-sin, cos, 0.0]),
+        vector([0.0, 0.0, 1.0]),
+    )
+    .unwrap();
     assert_eq!(
-        HybridProxy::try_new(geometry, [-2.0, 0.0], ElementOrientation::IDENTITY, anchor)
-            .unwrap_err()
-            .cause(),
-        AeroError::InvalidOrientation
+        HybridProxy::try_new(geometry, [-2.0, 0.0], rotated_frame, anchor)
+            .unwrap()
+            .orientation(),
+        rotated_frame
     );
 }
 
