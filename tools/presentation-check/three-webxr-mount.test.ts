@@ -387,7 +387,7 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       const skies: Mesh[] = [];
       state.driver.scene?.traverse(object => {
         if (!(object instanceof Mesh) || !(object.material instanceof ShaderMaterial)) return;
-        if (object.material.name === "LakeSky") skies.push(object);
+        if (object.material.name === "LakeSky") skies.push(object as Mesh);
         else water.push(object.material);
       });
       const skyMesh = skies[0];
