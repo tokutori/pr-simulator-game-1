@@ -26,6 +26,7 @@ time = { version = "=0.3.55", default-features = false, features = ["formatting"
 unicode-width = { version = "=0.2.2", default-features = false }
 
 [dev-dependencies]
+birdman-game-content.workspace = true
 birdman-game-scene.workspace = true
 
 [lints]

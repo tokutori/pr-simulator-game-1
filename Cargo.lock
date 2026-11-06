@@ -1690,6 +1690,7 @@ name = "birdman-game-presentation"
 version = "0.1.0"
 dependencies = [
  "birdman-game-app",
+ "birdman-game-content",
  "birdman-game-core",
  "birdman-game-format",
  "birdman-game-scene",

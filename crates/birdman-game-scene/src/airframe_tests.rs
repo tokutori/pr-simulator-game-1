@@ -1,5 +1,5 @@
 use birdman_game_app::application::{ApplicationSession, BackendReadiness, SessionCommand};
-use birdman_game_app::registered_aircraft;
+use birdman_game_content::{AircraftContactBuffer, AircraftDefinition, playable_aircraft};
 
 use birdman_game_core::{
     BodyPoint, BodyVector, ControlMode, FlightRecord, FlightRecordBoundaryEvent,
@@ -114,8 +114,8 @@ fn tail_section_point(
     ]
 }
 
-fn wing_outline_vertices() -> impl Iterator<Item = [f64; 3]> {
-    WingGeometry::new()
+fn wing_outline_vertices(definition: &AircraftDefinition) -> impl Iterator<Item = [f64; 3]> {
+    WingGeometry::new(definition)
         .surfaces()
         .iter()
         .flat_map(|surface| surface.positions().iter().map(|point| point.map(f64::from)))
@@ -123,7 +123,11 @@ fn wing_outline_vertices() -> impl Iterator<Item = [f64; 3]> {
         .into_iter()
 }
 
-fn rendered_airframe_points(factor: WingBendingFactor, incidence: TailIncidence) -> Vec<BodyPoint> {
+fn rendered_airframe_points(
+    definition: &AircraftDefinition,
+    factor: WingBendingFactor,
+    incidence: TailIncidence,
+) -> Vec<BodyPoint> {
     let mut points = Vec::new();
     let mut append = |local: [f32; 3], origin: [f64; 3], attachment| {
         let [right, up, aft] = local.map(f64::from);
@@ -141,27 +145,32 @@ fn rendered_airframe_points(factor: WingBendingFactor, incidence: TailIncidence)
         let [right, up, aft] = core::array::from_fn(|axis| rotated[axis] + origin[axis]);
         points.push(BodyPoint::try_new(-aft, right, -up).unwrap());
     };
-    let wing = WingGeometry::new();
+    let wing = WingGeometry::new(definition);
     let mut frame = wing.frame();
-    wing.update_frame_with_factor(&mut frame, factor).unwrap();
+    wing.update_frame_with_factor(definition, &mut frame, factor)
+        .unwrap();
     for point in frame.surface_positions().iter().flatten() {
         append(*point, [0.0; 3], StructuralAttachment::MainWing);
     }
-    for surface in CockpitGeometry::new().surfaces {
+    for surface in CockpitGeometry::new(definition).surfaces {
         for point in surface.positions {
             append(point, [0.0; 3], StructuralAttachment::Rigid);
         }
     }
-    for (tail, attachment) in TailGeometry::registered().unwrap().into_iter().zip([
-        StructuralAttachment::HorizontalTail,
-        StructuralAttachment::VerticalTail,
-    ]) {
+    for (tail, attachment) in TailGeometry::from_definition(definition)
+        .unwrap()
+        .into_iter()
+        .zip([
+            StructuralAttachment::HorizontalTail,
+            StructuralAttachment::VerticalTail,
+        ])
+    {
         for point in tail.patches.iter().flat_map(|patch| patch.vertices) {
             append(point, tail.origin, attachment);
         }
     }
-    let mut structure = AirframeStructure::new(registered_aircraft().unwrap()).unwrap();
-    structure.update_with_factor(factor).unwrap();
+    let mut structure = AirframeStructure::new(definition).unwrap();
+    structure.update_with_factor(definition, factor).unwrap();
     for mesh in structure.meshes() {
         for point in mesh.positions() {
             append(*point, mesh.origin(), mesh.attachment());
@@ -172,8 +181,8 @@ fn rendered_airframe_points(factor: WingBendingFactor, incidence: TailIncidence)
 
 #[test]
 fn explicit_bending_factors_match_the_mesh_and_structural_support() {
-    let definition = registered_aircraft().unwrap();
-    let geometry = WingGeometry::new();
+    let definition = playable_aircraft().unwrap();
+    let geometry = WingGeometry::new(&definition);
     let mut frame = geometry.frame();
     let neutral = definition.contact_points();
     let contact_indices: Vec<_> = geometry
@@ -216,7 +225,7 @@ fn explicit_bending_factors_match_the_mesh_and_structural_support() {
             )
             .unwrap();
         geometry
-            .update_frame_with_factor(&mut frame, factor)
+            .update_frame_with_factor(&definition, &mut frame, factor)
             .unwrap();
         assert_eq!(frame.bending_factor(), Some(factor));
         for (index, rendered) in contact_indices
@@ -252,7 +261,7 @@ fn explicit_bending_factors_match_the_mesh_and_structural_support() {
 
 #[test]
 fn registered_mesh_vertices_match_structural_support_with_float32_quantization() {
-    let definition = registered_aircraft().unwrap();
+    let definition = playable_aircraft().unwrap();
     let points = definition.contact_points();
     let contains = |point: BodyPoint| {
         points.iter().any(|candidate| {
@@ -265,7 +274,7 @@ fn registered_mesh_vertices_match_structural_support_with_float32_quantization()
                 })
         })
     };
-    for point in cockpit_shell_vertices().chain(wing_outline_vertices()) {
+    for point in cockpit_shell_vertices(&definition).chain(wing_outline_vertices(&definition)) {
         let [right, up, aft] = point;
         assert!(
             contains(BodyPoint::try_new(-aft, right, -up).unwrap()),
@@ -288,10 +297,11 @@ fn registered_mesh_vertices_match_structural_support_with_float32_quantization()
 
 #[test]
 fn tilted_contact_retains_the_dihedral_section_outline_support() {
-    let points = registered_aircraft().unwrap().contact_points();
+    let definition = playable_aircraft().unwrap();
+    let points = definition.contact_points();
     for (roll, pitch) in [(0.1, 0.0), (-0.1, 0.0), (0.1, 0.1)] {
         let orientation = attitude(roll, pitch);
-        let reference = wing_outline_vertices()
+        let reference = wing_outline_vertices(&definition)
             .map(|[right, up, aft]| {
                 rotated_down(orientation, BodyPoint::try_new(-aft, right, -up).unwrap())
             })
@@ -302,7 +312,8 @@ fn tilted_contact_retains_the_dihedral_section_outline_support() {
 
 #[test]
 fn polytope_support_bounds_convex_combinations_for_arbitrary_attitudes() {
-    let points = registered_aircraft().unwrap().contact_points();
+    let definition = playable_aircraft().unwrap();
+    let points = definition.contact_points();
     for (roll, pitch) in [(0.0, 0.0), (0.1, 0.1), (-1.2, 0.3), (2.7, -0.6)] {
         let orientation = attitude(roll, pitch);
         let maximum = maximum_down_offset(orientation, points);
@@ -325,11 +336,12 @@ fn polytope_support_bounds_convex_combinations_for_arbitrary_attitudes() {
 
 #[test]
 fn shell_contact_tracks_the_full_registered_polygon_under_arbitrary_attitude() {
-    let points = registered_aircraft().unwrap().contact_points();
-    let shell = CockpitGeometry::new();
+    let definition = playable_aircraft().unwrap();
+    let points = definition.contact_points();
+    let shell = CockpitGeometry::new(&definition);
     for (roll, pitch) in [(0.0, 0.0), (0.3, 0.17), (-1.2, 0.3), (2.7, -0.6)] {
         let orientation = attitude(roll, pitch);
-        let shell_maximum = cockpit_shell_vertices()
+        let shell_maximum = cockpit_shell_vertices(&definition)
             .map(|[right, up, aft]| {
                 rotated_down(orientation, BodyPoint::try_new(-aft, right, -up).unwrap())
             })
@@ -357,7 +369,7 @@ fn shell_contact_tracks_the_full_registered_polygon_under_arbitrary_attitude() {
 
 #[test]
 fn adopted_shape_contact_matches_independent_rotated_support_and_record_query() {
-    let definition = registered_aircraft().unwrap();
+    let definition = playable_aircraft().unwrap();
     let aircraft = definition.aircraft();
     let surfaces = definition.surfaces().unwrap();
     let trim = definition.trim().unwrap();
@@ -396,8 +408,13 @@ fn adopted_shape_contact_matches_independent_rotated_support_and_record_query() 
     .unwrap();
     let scenario =
         birdman_game_core::TailFlightScenario::try_new(parameters, loads, profile).unwrap();
-    let telemetry = |state| scenario.telemetry(state).unwrap();
-    let selection = HybridSessionPreparation::select_scenario(WeatherClass::Calm, 42).unwrap();
+    let telemetry = |state| scenario.telemetry(state, &loads).unwrap();
+    let selection = HybridSessionPreparation::select_scenario(
+        WeatherClass::Calm,
+        42,
+        definition.document().model_version,
+    )
+    .unwrap();
     let header =
         FlightRecordHeader::try_new(birdman_game_app::identity_for_selection(selection), 10)
             .unwrap();
@@ -496,10 +513,9 @@ fn adopted_shape_contact_matches_independent_rotated_support_and_record_query() 
             let free =
                 advance_tail_flight_tick(&aircraft, previous, config, input, &loads).unwrap();
             assert_eq!(free.incidence(), trial.incidence());
-            let mut storage = definition.contact_points().to_vec();
-            let mut provider =
-                birdman_game_content::AircraftContactShape::try_new(definition, &mut storage)
-                    .unwrap();
+            let storage = definition.contact_points().to_vec();
+            let mut buffer = AircraftContactBuffer::try_new(&definition, storage).unwrap();
+            let mut provider = buffer.bind(&definition);
             let report = advance_tail_flight_tick_with_shape_provider(
                 &aircraft,
                 previous,
@@ -565,7 +581,7 @@ fn adopted_shape_contact_matches_independent_rotated_support_and_record_query() 
                 .abs()
                     <= 2.0e-9
             );
-            let rendered = rendered_airframe_points(factor, contact.incidence());
+            let rendered = rendered_airframe_points(&definition, factor, contact.incidence());
             let mesh_support = rendered
                 .iter()
                 .map(|point| {
@@ -618,10 +634,9 @@ fn adopted_shape_contact_matches_independent_rotated_support_and_record_query() 
                 ),
             ] {
                 let previous = state_at_down(datum_down).with_wing_bending_factor(previous_factor);
-                let mut storage = definition.contact_points().to_vec();
-                let mut provider =
-                    birdman_game_content::AircraftContactShape::try_new(definition, &mut storage)
-                        .unwrap();
+                let storage = definition.contact_points().to_vec();
+                let mut buffer = AircraftContactBuffer::try_new(&definition, storage).unwrap();
+                let mut provider = buffer.bind(&definition);
                 let report = advance_tail_flight_tick_with_shape_provider(
                     &aircraft,
                     previous,
@@ -698,7 +713,7 @@ fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revisio
         .tail_flight_state()
         .unwrap()
         .flight_state();
-    let definition = registered_aircraft().unwrap();
+    let definition = application.aircraft().unwrap().definition();
     let platform = birdman_game_app::launch_venue().unwrap().platform;
     let factor = definition
         .shape()
@@ -706,7 +721,7 @@ fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revisio
         .unwrap();
     let [north, east] = platform.horizontal_direction_ned();
     let slope = platform.downward_slope_degrees.to_radians().tan();
-    for point in rendered_airframe_points(factor, TailIncidence::neutral()) {
+    for point in rendered_airframe_points(definition, factor, TailIncidence::neutral()) {
         let values = point.components();
         let offset = initial
             .attitude_body_to_ned()
@@ -743,7 +758,7 @@ fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revisio
     };
     assert_eq!(result.reason, SessionEndReason::WaterContact);
     let state = contact.flight_state();
-    let definition = registered_aircraft().unwrap();
+    let definition = application.aircraft().unwrap().definition();
     let mut points = definition.contact_points().to_vec();
     definition
         .write_deformed_contact_points_with_factor(
@@ -777,7 +792,10 @@ fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revisio
     );
     let difficulty = application.difficulty();
     let document = application.flight_record_document().unwrap();
-    assert_eq!(document.schema_version, 8);
+    assert_eq!(
+        document.schema_version,
+        birdman_game_format::TAIL_FLIGHT_RECORD_SCHEMA_VERSION
+    );
     assert_eq!(
         (
             document.header.catalog_version,

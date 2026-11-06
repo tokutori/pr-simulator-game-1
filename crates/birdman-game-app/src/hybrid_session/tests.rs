@@ -8,9 +8,21 @@ use birdman_game_format::{
     AssistanceLevel, DifficultySettings, InformationLevel, TailFlightRecordDocument, WeatherClass,
 };
 
-fn launch(configuration: GameSessionConfiguration) -> GameSession {
+fn launch(
+    selected: &crate::SelectedAircraft,
+    configuration: GameSessionConfiguration,
+) -> GameSession {
     let mut session = GameSession::new();
     session.open_setup().unwrap();
+    let definition = selected.definition();
+    let mut contact = birdman_game_content::AircraftContactBuffer::try_new(
+        definition,
+        definition.contact_points().to_vec(),
+    )
+    .unwrap();
+    let configuration = configuration
+        .with_contact_shape(&mut contact.bind(definition))
+        .unwrap();
     session.prepare_flight(configuration).unwrap();
     session.mark_briefing_ready().unwrap();
     session.start_countdown(1).unwrap();
@@ -29,13 +41,12 @@ fn neutral_input() -> TailFlightTickInput {
 }
 
 #[test]
-fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetry() {
-    let definition = registered_aircraft().unwrap();
-    let surfaces = cached_surfaces().unwrap();
-    assert!(std::ptr::eq(definition, registered_aircraft().unwrap()));
-    assert!(std::ptr::eq(surfaces, cached_surfaces().unwrap()));
+fn selected_definition_survives_preparation_moves_and_shares_environment_telemetry() {
+    let selected = crate::SelectedAircraft::bundled().unwrap();
+    let definition = selected.definition();
+    let surfaces = definition.surfaces().unwrap();
     let (configuration, control_identity) =
-        HybridSessionPreparation::try_new(ControlMode::Manual, 2, 42)
+        HybridSessionPreparation::try_new(&selected, ControlMode::Manual, 2, 42)
             .unwrap()
             .into_parts();
     assert_eq!(
@@ -59,14 +70,14 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
         CONTROLLER_PROFILE_VERSION
     );
     assert_eq!(identity.seed, 42);
-    let mut session = launch(configuration);
+    let mut session = launch(&selected, configuration);
     let initial = session.snapshot().tail_flight_state().unwrap();
     assert_eq!(initial.incidence(), TailIncidence::neutral());
     assert_eq!(
         initial.pilot_position_target().position_m(),
         definition.trim().unwrap().pilot_position_m()
     );
-    let telemetry = session.telemetry().unwrap().unwrap();
+    let telemetry = session.telemetry().unwrap();
     assert_eq!(
         telemetry.wind_velocity_ned_mps,
         bundled_environment()
@@ -77,7 +88,7 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
             .unwrap()
     );
     assert!((telemetry.airspeed_mps - definition.document().trim.airspeed_mps).abs() < 1.0e-12);
-    let cg = registered_launch_cg_position().unwrap();
+    let cg = launch_position(definition).unwrap();
     assert_eq!(&cg.components()[..2], &[0.0, 0.0]);
     assert!((telemetry.altitude_m + cg.components()[2]).abs() < 1.0e-12);
     let platform = launch_venue().unwrap().platform;
@@ -140,8 +151,26 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
     // A finite-deck vertex gives a lower bound on the necessary height, so this
     // bounds the conservatism without assuming face intersections occur at vertices.
     assert!(finite_minimum.is_finite() && (0.0..=0.004_406).contains(&finite_minimum));
-    session.advance_tail_flight_tick(neutral_input()).unwrap();
-    session.advance_tail_flight_tick(neutral_input()).unwrap();
+    let loads = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
+        definition.document().trim.air_density_kg_m3,
+        bundled_environment().unwrap().wind_field().unwrap(),
+    )
+    .unwrap();
+    let mut contact = birdman_game_content::AircraftContactBuffer::try_new(
+        definition,
+        definition.contact_points().to_vec(),
+    )
+    .unwrap();
+    for _ in 0..2 {
+        session
+            .advance_tail_flight_tick_with_shape_provider(
+                neutral_input(),
+                &mut contact.bind(definition),
+                &loads,
+            )
+            .unwrap();
+    }
     assert_eq!(session.snapshot().phase(), SessionPhase::Result);
     let record = session.flight_record().unwrap();
     assert!(record.samples().iter().all(|sample| {
@@ -167,7 +196,10 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
         control_identity,
     )
     .unwrap();
-    assert_eq!(document.schema_version, 8);
+    assert_eq!(
+        document.schema_version,
+        birdman_game_format::TAIL_FLIGHT_RECORD_SCHEMA_VERSION
+    );
     assert_eq!(
         TailFlightRecordDocument::decode_json(&document.encode_json().unwrap()).unwrap(),
         document
@@ -183,22 +215,55 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
 
 #[test]
 fn repeated_hybrid_preparation_is_deterministic_and_rejects_invalid_tick_limit() {
+    let selected = crate::SelectedAircraft::bundled().unwrap();
     let mut first = launch(
-        HybridSessionPreparation::try_new(ControlMode::Automatic, 2, 7)
+        &selected,
+        HybridSessionPreparation::try_new(&selected, ControlMode::Automatic, 2, 7)
             .unwrap()
             .into_parts()
             .0,
     );
     let mut second = launch(
-        HybridSessionPreparation::try_new(ControlMode::Automatic, 2, 7)
+        &selected,
+        HybridSessionPreparation::try_new(&selected, ControlMode::Automatic, 2, 7)
             .unwrap()
             .into_parts()
             .0,
     );
+    let definition = selected.definition();
+    let surfaces = definition.surfaces().unwrap();
+    let loads = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
+        definition.document().trim.air_density_kg_m3,
+        bundled_environment().unwrap().wind_field().unwrap(),
+    )
+    .unwrap();
+    let mut first_contact = birdman_game_content::AircraftContactBuffer::try_new(
+        definition,
+        definition.contact_points().to_vec(),
+    )
+    .unwrap();
+    let mut second_contact = birdman_game_content::AircraftContactBuffer::try_new(
+        definition,
+        definition.contact_points().to_vec(),
+    )
+    .unwrap();
     for _ in 0..2 {
         assert_eq!(
-            first.advance_tail_flight_tick(neutral_input()).unwrap(),
-            second.advance_tail_flight_tick(neutral_input()).unwrap()
+            first
+                .advance_tail_flight_tick_with_shape_provider(
+                    neutral_input(),
+                    &mut first_contact.bind(definition),
+                    &loads
+                )
+                .unwrap(),
+            second
+                .advance_tail_flight_tick_with_shape_provider(
+                    neutral_input(),
+                    &mut second_contact.bind(definition),
+                    &loads
+                )
+                .unwrap()
         );
     }
     assert_eq!(
@@ -206,7 +271,7 @@ fn repeated_hybrid_preparation_is_deterministic_and_rejects_invalid_tick_limit()
         second.flight_record().unwrap().samples()
     );
     assert!(matches!(
-        HybridSessionPreparation::try_new(ControlMode::Manual, 0, 42),
+        HybridSessionPreparation::try_new(&selected, ControlMode::Manual, 0, 42),
         Err(HybridSessionPreparationError::Session(
             GameSessionError::InvalidFlightTickLimit
         ))
@@ -215,9 +280,11 @@ fn repeated_hybrid_preparation_is_deterministic_and_rejects_invalid_tick_limit()
 
 #[test]
 fn default_configuration_matches_public_web_selection() {
+    let selected = crate::SelectedAircraft::bundled().unwrap();
     let preparation = HybridSessionPreparation::try_default().unwrap();
     let (configuration, record_identity) = preparation.into_parts();
     let expected = HybridSessionPreparation::try_new_for_weather(
+        &selected,
         ControlMode::Manual,
         4_000,
         (0x5f98_u64 << 32) | 0x55aa,
@@ -227,8 +294,8 @@ fn default_configuration_matches_public_web_selection() {
     .into_parts();
     assert_eq!(configuration.identity(), expected.0.identity());
     assert_eq!(record_identity, expected.1);
-    let session = launch(configuration);
-    let expected_session = launch(expected.0);
+    let session = launch(&selected, configuration);
+    let expected_session = launch(&selected, expected.0);
     assert_eq!(session.snapshot(), expected_session.snapshot());
     assert_eq!(
         session.telemetry().unwrap(),
@@ -238,6 +305,7 @@ fn default_configuration_matches_public_web_selection() {
 
 #[test]
 fn registered_weather_keeps_catalog_identity_and_provider_values() {
+    let selected = crate::SelectedAircraft::bundled().unwrap();
     for weather in [
         WeatherClass::Calm,
         WeatherClass::Mild,
@@ -245,16 +313,25 @@ fn registered_weather_keeps_catalog_identity_and_provider_values() {
         WeatherClass::Challenging,
         WeatherClass::NearLimit,
     ] {
-        let selection = HybridSessionPreparation::select_scenario(weather, 42).unwrap();
-        let preparation =
-            HybridSessionPreparation::try_new_for_weather(ControlMode::Manual, 2, 42, weather)
-                .unwrap();
-        let session = launch(preparation.into_parts().0);
-        assert_eq!(
-            session.configuration_identity(),
-            Some(identity_for_selection(selection))
-        );
-        let telemetry = session.telemetry().unwrap().unwrap();
+        let selection = HybridSessionPreparation::select_scenario(
+            weather,
+            42,
+            selected.definition().document().model_version,
+        )
+        .unwrap();
+        let preparation = HybridSessionPreparation::try_new_for_weather(
+            &selected,
+            ControlMode::Manual,
+            2,
+            42,
+            weather,
+        )
+        .unwrap();
+        let session = launch(&selected, preparation.into_parts().0);
+        let mut expected_identity = identity_for_selection(selection);
+        expected_identity.aircraft_identity = selected.identity();
+        assert_eq!(session.configuration_identity(), Some(expected_identity));
+        let telemetry = session.telemetry().unwrap();
         let expected = if selection.environment_version == 6 {
             bundled_environment()
                 .unwrap()
@@ -268,8 +345,7 @@ fn registered_weather_keeps_catalog_identity_and_provider_values() {
         };
         assert_eq!(telemetry.wind_velocity_ned_mps.components(), expected);
         assert!(
-            (telemetry.airspeed_mps - registered_aircraft().unwrap().document().trim.airspeed_mps)
-                .abs()
+            (telemetry.airspeed_mps - selected.definition().document().trim.airspeed_mps).abs()
                 < 1.0e-12
         );
     }
@@ -277,6 +353,7 @@ fn registered_weather_keeps_catalog_identity_and_provider_values() {
 
 #[test]
 fn every_hybrid_selection_launches_and_scores_along_the_shared_northwest_bearing() {
+    let selected = crate::SelectedAircraft::bundled().unwrap();
     let platform = launch_venue().unwrap().platform;
     let direction = platform.horizontal_direction_ned();
     for mode in [
@@ -292,17 +369,18 @@ fn every_hybrid_selection_launches_and_scores_along_the_shared_northwest_bearing
             WeatherClass::NearLimit,
         ] {
             let preparation =
-                HybridSessionPreparation::try_new_for_weather(mode, 2, 42, weather).unwrap();
+                HybridSessionPreparation::try_new_for_weather(&selected, mode, 2, 42, weather)
+                    .unwrap();
             let axis = preparation.course_axis();
             assert!((axis.components()[0] - direction[0]).abs() < 1.0e-15);
             assert!((axis.components()[1] - direction[1]).abs() < 1.0e-15);
-            let session = launch(preparation.into_parts().0);
+            let session = launch(&selected, preparation.into_parts().0);
             let state = session
                 .snapshot()
                 .tail_flight_state()
                 .unwrap()
                 .flight_state();
-            let telemetry = session.telemetry().unwrap().unwrap();
+            let telemetry = session.telemetry().unwrap();
             let ground = state.datum_velocity_ned().components();
             let wind = telemetry.wind_velocity_ned_mps.components();
             let air = core::array::from_fn::<_, 3, _>(|index| ground[index] - wind[index]);
@@ -460,11 +538,12 @@ fn playable_held_pitch_pulse_and_pilot_endpoint_requests_use_guarded_physics_and
 }
 
 fn assert_playable_sequence(sequence: PlayabilitySequence) {
-    let definition = registered_aircraft().unwrap();
-    let surfaces = cached_surfaces().unwrap();
+    let selected = crate::SelectedAircraft::bundled().unwrap();
+    let definition = selected.definition();
+    let surfaces = definition.surfaces().unwrap();
     let wind = bundled_environment().unwrap().wind_field().unwrap();
     let loads = HybridAerodynamicLoad::try_new(
-        HybridModel::try_new(definition.polar().unwrap(), surfaces).unwrap(),
+        HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
         definition.document().trim.air_density_kg_m3,
         wind,
     )
@@ -475,6 +554,7 @@ fn assert_playable_sequence(sequence: PlayabilitySequence) {
         ControlMode::Automatic,
     ] {
         let preparation = HybridSessionPreparation::try_new_for_weather(
+            &selected,
             mode,
             DEFAULT_MAXIMUM_FLIGHT_TICKS,
             DEFAULT_SESSION_SEED,
@@ -490,11 +570,20 @@ fn assert_playable_sequence(sequence: PlayabilitySequence) {
             guard.trim_alpha_rad(),
             definition.trim().unwrap().alpha_rad()
         );
-        let mut session = launch(preparation.into_parts().0);
+        let mut session = launch(&selected, preparation.into_parts().0);
+        let mut contact = birdman_game_content::AircraftContactBuffer::try_new(
+            definition,
+            definition.contact_points().to_vec(),
+        )
+        .unwrap();
         for tick in 1..=DEFAULT_MAXIMUM_FLIGHT_TICKS {
             assert!(
                 session
-                    .advance_tail_flight_tick(sequence.input(tick))
+                    .advance_tail_flight_tick_with_shape_provider(
+                        sequence.input(tick),
+                        &mut contact.bind(definition),
+                        &loads
+                    )
                     .is_ok(),
                 "{mode:?} {sequence:?} tick={tick} {:?}",
                 session.snapshot().result()

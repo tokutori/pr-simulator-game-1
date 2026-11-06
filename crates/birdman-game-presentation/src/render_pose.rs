@@ -457,12 +457,15 @@ mod tests {
 
     #[test]
     fn render_metadata_uses_physical_pivot_and_rejects_unknown_model_names_or_versions() {
-        let definition = birdman_game_app::registered_aircraft().unwrap();
+        let selected = birdman_game_app::SelectedAircraft::bundled().unwrap();
+        let definition = selected.definition();
         let registered = Some((
             definition.document().configuration_id.as_str(),
             definition.document().model_version,
+            Some(selected.raw_sha256()),
         ));
-        let RenderTailGeometry::Available { value } = render_tail_geometry(registered).unwrap()
+        let RenderTailGeometry::Available { value } =
+            render_tail_geometry(&selected, registered).unwrap()
         else {
             panic!("registered physical geometry must be available");
         };
@@ -475,20 +478,68 @@ mod tests {
         assert_eq!(value.horizontal_tail_arm_meters, -pivot[0]);
         for identity in [
             None,
-            Some(("unknown-aircraft", definition.document().model_version)),
-            Some((definition.document().configuration_id.as_str(), u32::MAX)),
+            Some((
+                "unknown-aircraft",
+                definition.document().model_version,
+                Some(selected.raw_sha256()),
+            )),
+            Some((
+                definition.document().configuration_id.as_str(),
+                u32::MAX,
+                Some(selected.raw_sha256()),
+            )),
         ] {
             assert_eq!(
-                render_tail_geometry(identity).unwrap(),
+                render_tail_geometry(&selected, identity).unwrap(),
                 RenderTailGeometry::Unavailable {
                     reason: RenderGeometryUnavailable::UnregisteredAircraftGeometry,
                 }
             );
         }
         assert_eq!(
-            render_tail_geometry(registered).unwrap(),
+            render_tail_geometry(&selected, registered).unwrap(),
             RenderTailGeometry::Available { value }
         );
+        let mut document = definition.document().clone();
+        for surface in &mut document.surfaces {
+            if surface.role.core_role() == HybridSurfaceRole::HorizontalTail {
+                for section in &mut surface.sections {
+                    section.quarter_chord_frd_m[0] -= 0.75;
+                }
+            }
+        }
+        let changed =
+            birdman_game_app::SelectedAircraft::decode(serde_json::to_vec(&document).unwrap())
+                .unwrap();
+        let identity = Some((
+            document.configuration_id.as_str(),
+            document.model_version,
+            Some(changed.raw_sha256()),
+        ));
+        let RenderTailGeometry::Available {
+            value: changed_geometry,
+        } = render_tail_geometry(&changed, identity).unwrap()
+        else {
+            panic!("selected custom geometry must follow its source identity");
+        };
+        assert!(
+            (changed_geometry.horizontal_tail_arm_meters - value.horizontal_tail_arm_meters - 0.75)
+                .abs()
+                < 1e-12
+        );
+        for identity in [
+            registered,
+            Some((
+                document.configuration_id.as_str(),
+                document.model_version,
+                None,
+            )),
+        ] {
+            assert!(matches!(
+                render_tail_geometry(&changed, identity).unwrap(),
+                RenderTailGeometry::Unavailable { .. }
+            ));
+        }
     }
 
     #[test]

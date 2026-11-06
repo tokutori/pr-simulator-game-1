@@ -7,11 +7,18 @@ use birdman_game_core::{
 };
 use birdman_game_format::WeatherClass;
 
-fn fixture_record(duration: f64, reason: SessionEndReason) -> FlightRecord {
+fn fixture_record(
+    selected: &birdman_game_app::SelectedAircraft,
+    duration: f64,
+    reason: SessionEndReason,
+) -> FlightRecord {
     let ticks = (duration * f64::from(birdman_game_core::PHYSICS_HZ)) as u64;
-    let selection =
-        birdman_game_app::HybridSessionPreparation::select_scenario(WeatherClass::Typical, 42)
-            .unwrap();
+    let selection = birdman_game_app::HybridSessionPreparation::select_scenario(
+        WeatherClass::Typical,
+        42,
+        selected.definition().document().model_version,
+    )
+    .unwrap();
     let header =
         FlightRecordHeader::try_new(birdman_game_app::identity_for_selection(selection), ticks)
             .unwrap();
@@ -89,26 +96,29 @@ fn fixture_record(duration: f64, reason: SessionEndReason) -> FlightRecord {
     .unwrap()
 }
 
-fn view(record: &FlightRecord, time: f64, camera: GameUiReplayCamera) -> ReplayCameraView {
-    replay_camera_view(record, None, time, camera, false).unwrap()
+fn view(
+    record: &FlightRecord,
+    selected: &birdman_game_app::SelectedAircraft,
+    time: f64,
+    camera: GameUiReplayCamera,
+) -> ReplayCameraView {
+    replay_camera_view(record, None, selected, time, camera, false).unwrap()
 }
 
 #[test]
 fn render_pose_matches_the_same_record_sample_and_retains_unknown_geometry() {
-    let record = fixture_record(0.4, SessionEndReason::TimeLimit);
+    let selected = birdman_game_app::SelectedAircraft::bundled().unwrap();
+    let record = fixture_record(&selected, 0.4, SessionEndReason::TimeLimit);
     let identity = FlightRecordTailIdentityDocument {
         aircraft_sha256: None,
-        aircraft_configuration_id: birdman_game_app::registered_aircraft()
-            .unwrap()
-            .document()
-            .configuration_id
-            .clone(),
+        aircraft_configuration_id: selected.definition().document().configuration_id.clone(),
         controller_profile_id: "camera-fixture".into(),
     };
     let sample = record.sample_at_seconds(0.205).unwrap();
     let projection = replay_camera_view(
         &record,
         Some(&identity),
+        &selected,
         0.205,
         GameUiReplayCamera::Chase,
         false,
@@ -162,7 +172,7 @@ fn render_pose_matches_the_same_record_sample_and_retains_unknown_geometry() {
             reason: crate::render_pose::RenderWingDeformationUnavailable::Unrecorded
         }
     );
-    let unknown = view(&record, 0.205, GameUiReplayCamera::Chase);
+    let unknown = view(&record, &selected, 0.205, GameUiReplayCamera::Chase);
     assert!(matches!(
         unknown.render_pose.tail_geometry,
         crate::render_pose::RenderTailGeometry::Unavailable { .. }
@@ -178,7 +188,8 @@ fn render_pose_matches_the_same_record_sample_and_retains_unknown_geometry() {
 
 #[test]
 fn replay_uses_adopted_interval_and_same_time_terminal_deformation() {
-    let fixture = fixture_record(0.02, SessionEndReason::TimeLimit);
+    let selected = birdman_game_app::SelectedAircraft::bundled().unwrap();
+    let fixture = fixture_record(&selected, 0.02, SessionEndReason::TimeLimit);
     let mut samples = fixture.samples()[..2].to_vec();
     for (sample, factor) in samples.iter_mut().zip([0.81, 1.21]) {
         sample.wing_bending_factor = Some(WingBendingFactor::try_new(factor).unwrap());
@@ -210,7 +221,7 @@ fn replay_uses_adopted_interval_and_same_time_terminal_deformation() {
     let record =
         FlightRecord::try_from_finalized_samples(fixture.header(), samples.clone(), finalization)
             .unwrap();
-    let definition = birdman_game_app::registered_aircraft().unwrap();
+    let definition = selected.definition();
     let identity = FlightRecordTailIdentityDocument {
         aircraft_sha256: None,
         aircraft_configuration_id: definition.document().configuration_id.clone(),
@@ -220,6 +231,7 @@ fn replay_uses_adopted_interval_and_same_time_terminal_deformation() {
         let projection = replay_camera_view(
             &record,
             Some(&identity),
+            &selected,
             time,
             GameUiReplayCamera::Chase,
             false,
@@ -252,13 +264,14 @@ fn replay_uses_adopted_interval_and_same_time_terminal_deformation() {
 
 #[test]
 fn manual_rigs_preserve_web_geometry_fov_and_complete_sample_at_one_time() {
-    let record = fixture_record(10.0, SessionEndReason::WaterContact);
+    let selected = birdman_game_app::SelectedAircraft::bundled().unwrap();
+    let record = fixture_record(&selected, 10.0, SessionEndReason::WaterContact);
     for (camera, offset, fov) in [
         (GameUiReplayCamera::Overhead, [0.0, 30.0, 2.0], 65.0),
         (GameUiReplayCamera::Side, [30.0, 9.0, -4.0], 50.0),
         (GameUiReplayCamera::Front, [0.0, 7.0, -28.0], 55.0),
     ] {
-        let output = view(&record, 2.005, camera);
+        let output = view(&record, &selected, 2.005, camera);
         let cinematic = output.cinematic.unwrap();
         let sample = record.sample_at_seconds(2.005).unwrap();
         assert_eq!(output.render_pose.initial_pilot_position_meters, 0.1);
@@ -287,15 +300,15 @@ fn manual_rigs_preserve_web_geometry_fov_and_complete_sample_at_one_time() {
         }
     }
     assert_ne!(
-        view(&record, 4.0, GameUiReplayCamera::Orbit),
-        view(&record, 5.0, GameUiReplayCamera::Orbit)
+        view(&record, &selected, 4.0, GameUiReplayCamera::Orbit),
+        view(&record, &selected, 5.0, GameUiReplayCamera::Orbit)
     );
     for (camera, position, fov) in [
         (GameUiReplayCamera::Platform, [-18.0, 14.0, 16.0], 60.0),
         (GameUiReplayCamera::Shore, [250.0, 10.0, 0.0], 40.0),
         (GameUiReplayCamera::Telephoto, [700.0, 80.0, -300.0], 24.0),
     ] {
-        let cinematic = view(&record, 0.0, camera).cinematic.unwrap();
+        let cinematic = view(&record, &selected, 0.0, camera).cinematic.unwrap();
         assert_eq!(cinematic.position_m, position);
         assert_eq!(cinematic.vertical_field_of_view_degrees, fov);
     }
@@ -303,8 +316,9 @@ fn manual_rigs_preserve_web_geometry_fov_and_complete_sample_at_one_time() {
 
 #[test]
 fn fixed_tracking_preserves_rate_limit_composite_cg_and_seek_order() {
-    let record = fixture_record(10.0, SessionEndReason::WaterContact);
-    let start = view(&record, 0.0, GameUiReplayCamera::Platform)
+    let selected = birdman_game_app::SelectedAircraft::bundled().unwrap();
+    let record = fixture_record(&selected, 10.0, SessionEndReason::WaterContact);
+    let start = view(&record, &selected, 0.0, GameUiReplayCamera::Platform)
         .cinematic
         .unwrap();
     assert_eq!(
@@ -314,9 +328,12 @@ fn fixed_tracking_preserves_rate_limit_composite_cg_and_seek_order() {
             .unwrap()
             .components()
     );
-    let middle = view(&record, 0.005, GameUiReplayCamera::Platform);
-    let _end = view(&record, 9.0, GameUiReplayCamera::Platform);
-    assert_eq!(middle, view(&record, 0.005, GameUiReplayCamera::Platform));
+    let middle = view(&record, &selected, 0.005, GameUiReplayCamera::Platform);
+    let _end = view(&record, &selected, 9.0, GameUiReplayCamera::Platform);
+    assert_eq!(
+        middle,
+        view(&record, &selected, 0.005, GameUiReplayCamera::Platform)
+    );
     let angle = 2.0
         * dot4(
             start.orientation_wxyz,
@@ -327,8 +344,18 @@ fn fixed_tracking_preserves_rate_limit_composite_cg_and_seek_order() {
         .acos();
     assert!(angle <= std::f64::consts::TAU / 3.0 * 0.005 + 1e-9);
     assert_eq!(
-        view(&record, 120.0 / 30.0, GameUiReplayCamera::Platform),
-        view(&record, 480.0 / 120.0, GameUiReplayCamera::Platform)
+        view(
+            &record,
+            &selected,
+            120.0 / 30.0,
+            GameUiReplayCamera::Platform
+        ),
+        view(
+            &record,
+            &selected,
+            480.0 / 120.0,
+            GameUiReplayCamera::Platform
+        )
     );
     let mut samples = record.samples()[..=10].to_vec();
     for sample in &mut samples[1..] {
@@ -346,10 +373,10 @@ fn fixed_tracking_preserves_rate_limit_composite_cg_and_seek_order() {
         },
     )
     .unwrap();
-    let middle = view(&abrupt, 0.05, GameUiReplayCamera::Platform)
+    let middle = view(&abrupt, &selected, 0.05, GameUiReplayCamera::Platform)
         .cinematic
         .unwrap();
-    let end = view(&abrupt, 0.1, GameUiReplayCamera::Platform)
+    let end = view(&abrupt, &selected, 0.1, GameUiReplayCamera::Platform)
         .cinematic
         .unwrap();
     let limit = std::f64::consts::TAU / 3.0 * 0.05;
@@ -363,7 +390,7 @@ fn fixed_tracking_preserves_rate_limit_composite_cg_and_seek_order() {
     }
     assert_eq!(
         middle,
-        view(&abrupt, 0.05, GameUiReplayCamera::Platform)
+        view(&abrupt, &selected, 0.05, GameUiReplayCamera::Platform)
             .cinematic
             .unwrap()
     );
@@ -371,7 +398,8 @@ fn fixed_tracking_preserves_rate_limit_composite_cg_and_seek_order() {
 
 #[test]
 fn director_preserves_opening_low_altitude_terminal_attract_and_vr_choices() {
-    let record = fixture_record(10.0, SessionEndReason::WaterContact);
+    let selected = birdman_game_app::SelectedAircraft::bundled().unwrap();
+    let record = fixture_record(&selected, 10.0, SessionEndReason::WaterContact);
     for (time, expected) in [
         (0.5, GameUiReplayCamera::Platform),
         (4.0, GameUiReplayCamera::Pilot),
@@ -379,7 +407,7 @@ fn director_preserves_opening_low_altitude_terminal_attract_and_vr_choices() {
         (10.0, GameUiReplayCamera::Shore),
     ] {
         assert_eq!(
-            view(&record, time, GameUiReplayCamera::Auto).camera,
+            view(&record, &selected, time, GameUiReplayCamera::Auto).camera,
             expected
         );
     }
@@ -391,30 +419,38 @@ fn director_preserves_opening_low_altitude_terminal_attract_and_vr_choices() {
         (10.0, GameUiReplayCamera::Telephoto),
     ] {
         assert_eq!(
-            replay_camera_view(&record, None, time, GameUiReplayCamera::Auto, true)
-                .unwrap()
-                .camera,
+            replay_camera_view(
+                &record,
+                None,
+                &selected,
+                time,
+                GameUiReplayCamera::Auto,
+                true
+            )
+            .unwrap()
+            .camera,
             expected
         );
     }
-    let short = fixture_record(0.4, SessionEndReason::WaterContact);
+    let short = fixture_record(&selected, 0.4, SessionEndReason::WaterContact);
     assert_eq!(
-        view(&short, 0.0, GameUiReplayCamera::Auto).camera,
+        view(&short, &selected, 0.0, GameUiReplayCamera::Auto).camera,
         GameUiReplayCamera::Platform
     );
     assert_eq!(
-        view(&short, 5.0, GameUiReplayCamera::Auto).camera,
+        view(&short, &selected, 5.0, GameUiReplayCamera::Auto).camera,
         GameUiReplayCamera::Shore
     );
-    let limited = fixture_record(10.0, SessionEndReason::TimeLimit);
+    let limited = fixture_record(&selected, 10.0, SessionEndReason::TimeLimit);
     assert_eq!(
-        view(&limited, 10.0, GameUiReplayCamera::Auto).camera,
+        view(&limited, &selected, 10.0, GameUiReplayCamera::Auto).camera,
         GameUiReplayCamera::Chase
     );
 }
 
 #[test]
 fn fixed_points_require_registered_origin_datum_and_identity() {
+    let selected = birdman_game_app::SelectedAircraft::bundled().unwrap();
     let mut frame = birdman_game_app::bundled_environment()
         .unwrap()
         .document()
@@ -430,7 +466,7 @@ fn fixed_points_require_registered_origin_datum_and_identity() {
         .clone();
     frame.water_level_datum.push_str("-foreign");
     assert!(points_for_frame(&frame).unwrap().is_none());
-    let known = fixture_record(0.4, SessionEndReason::TimeLimit);
+    let known = fixture_record(&selected, 0.4, SessionEndReason::TimeLimit);
     for weather in [
         WeatherClass::Calm,
         WeatherClass::Mild,
@@ -442,6 +478,7 @@ fn fixed_points_require_registered_origin_datum_and_identity() {
         let selection = birdman_game_app::HybridSessionPreparation::select_scenario(
             weather,
             header.scenario.seed,
+            selected.definition().document().model_version,
         )
         .unwrap();
         header.scenario = birdman_game_app::identity_for_selection(selection);
@@ -456,7 +493,7 @@ fn fixed_points_require_registered_origin_datum_and_identity() {
             GameUiReplayCamera::Shore,
             GameUiReplayCamera::Telephoto,
         ] {
-            assert!(view(&record, 0.0, camera).cinematic.is_some());
+            assert!(view(&record, &selected, 0.0, camera).cinematic.is_some());
         }
     }
     let mut header = known.header();
@@ -468,7 +505,7 @@ fn fixed_points_require_registered_origin_datum_and_identity() {
     )
     .unwrap();
     assert!(
-        view(&unknown, 0.0, GameUiReplayCamera::Platform)
+        view(&unknown, &selected, 0.0, GameUiReplayCamera::Platform)
             .cinematic
             .is_none()
     );
@@ -476,11 +513,12 @@ fn fixed_points_require_registered_origin_datum_and_identity() {
 
 #[test]
 fn queries_are_readonly_and_handle_vertical_coincident_and_invalid_targets() {
-    let record = fixture_record(0.4, SessionEndReason::TimeLimit);
+    let selected = birdman_game_app::SelectedAircraft::bundled().unwrap();
+    let record = fixture_record(&selected, 0.4, SessionEndReason::TimeLimit);
     let before = record.samples().to_vec();
     let finalization = record.finalization();
     for camera in GameUiReplayCamera::ALL {
-        let _view = view(&record, 0.2, camera);
+        let _view = view(&record, &selected, 0.2, camera);
     }
     assert_eq!(before, record.samples());
     assert_eq!(finalization, record.finalization());
@@ -488,7 +526,14 @@ fn queries_are_readonly_and_handle_vertical_coincident_and_invalid_targets() {
     assert!(look_at([0.0; 3], [0.0; 3]).unwrap().is_none());
     for time in [-1.0, f64::NAN, f64::INFINITY] {
         assert_eq!(
-            replay_camera_view(&record, None, time, GameUiReplayCamera::Auto, false),
+            replay_camera_view(
+                &record,
+                None,
+                &selected,
+                time,
+                GameUiReplayCamera::Auto,
+                false
+            ),
             Err(ReplayCameraError::InvalidTime)
         );
     }
@@ -496,8 +541,9 @@ fn queries_are_readonly_and_handle_vertical_coincident_and_invalid_targets() {
 
 #[test]
 fn frame_attaches_to_the_registered_beam_without_entering_the_pilot_view() {
+    let selected = birdman_game_app::SelectedAircraft::bundled().unwrap();
     use birdman_game_scene::airframe_structure::StructuralPartKind;
-    let definition = birdman_game_app::registered_aircraft().unwrap();
+    let definition = selected.definition();
     let geometry = definition.structural_geometry();
     let [beam_front, beam_rear] = definition
         .document()
@@ -509,9 +555,9 @@ fn frame_attaches_to_the_registered_beam_without_entering_the_pilot_view() {
         .iter()
         .map(|value| value * value)
         .sum::<f64>();
-    let [forward, right, down] = crate::camera::registered_pilot_eye()
-        .unwrap()
-        .position_frd_m;
+    let [forward, right, down] =
+        crate::camera::pilot_eye(definition.document().structure.pilot_eye_offset_frd_m)
+            .position_frd_m;
     let eye = [right, -down, -forward];
     let mut attachments = 0;
     for part in geometry
