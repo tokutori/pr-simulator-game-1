@@ -1,4 +1,4 @@
-#![doc = "Main-wing presentation from the registered aircraft document; local metres use right/up/aft axes."]
+#![doc = "Main-wing presentation from the selected aircraft definition; local metres use right/up/aft axes."]
 
 use birdman_game_content::{
     AircraftDefinition, AirfoilFace, ContactSampling, ShapeError, SurfaceShape,
@@ -70,25 +70,19 @@ impl WingSurface {
     }
 }
 
-#[doc = "Fixed Web main-wing definition. Construction allocates topology once and accesses no I/O or flight state."]
+#[doc = "Owned main-wing template. Construction allocates topology once and accesses no I/O or flight state."]
 pub struct WingGeometry {
     surfaces: [WingSurface; 4],
 }
 
-impl Default for WingGeometry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl WingGeometry {
     #[doc = "Builds the left skin/film and right skin/film from the registered profile."]
-    pub fn new() -> Self {
+    pub fn new(definition: &AircraftDefinition) -> Self {
         let surfaces = [
-            surface(-1.0, 0.0, COVERED_FRACTION),
-            surface(-1.0, COVERED_FRACTION, 1.0),
-            surface(1.0, 0.0, COVERED_FRACTION),
-            surface(1.0, COVERED_FRACTION, 1.0),
+            surface(definition, -1.0, 0.0, COVERED_FRACTION),
+            surface(definition, -1.0, COVERED_FRACTION, 1.0),
+            surface(definition, 1.0, 0.0, COVERED_FRACTION),
+            surface(definition, 1.0, COVERED_FRACTION, 1.0),
         ];
         Self { surfaces }
     }
@@ -98,24 +92,22 @@ impl WingGeometry {
         &self.surfaces
     }
 
-    #[doc = "Allocates reusable deformation buffers and applies the registered reference load."]
+    #[doc = "Allocates owned deformation buffers; the caller applies its selected definition and load."]
     pub fn frame(&self) -> WingFrame {
-        let mut frame = WingFrame {
+        WingFrame {
             surface_positions: self
                 .surfaces
                 .each_ref()
                 .map(|surface| surface.positions.clone()),
             bending_factor: None,
-        };
-        self.update_frame_with_factor(&mut frame, WingBendingFactor::try_new(1.0).unwrap())
-            .expect("registered reference geometry must remain representable");
-        frame
+        }
     }
 
     #[doc = "Writes an accepted bending coefficient into retained skin buffers; equal coefficients reuse the frame."]
     #[doc = "Publish buffers after success. An arithmetic error clears the valid coefficient until a complete update succeeds."]
     pub fn update_frame_with_factor(
         &self,
+        definition: &AircraftDefinition,
         frame: &mut WingFrame,
         factor: WingBendingFactor,
     ) -> Result<bool, ShapeError> {
@@ -129,7 +121,8 @@ impl WingGeometry {
                 .chunks_exact(ROW_SIZE)
                 .zip(positions.chunks_exact_mut(ROW_SIZE))
             {
-                let displacement = deflection_with_factor(f64::from(base_row[0][0]), factor)?;
+                let displacement =
+                    deflection_with_factor(definition, f64::from(base_row[0][0]), factor)?;
                 for (base, position) in base_row.iter().zip(position_row) {
                     let height = (f64::from(base[1]) + displacement) as f32;
                     if !height.is_finite() {
@@ -162,34 +155,33 @@ impl WingFrame {
     }
 }
 
-fn definition() -> &'static AircraftDefinition {
-    birdman_game_app::registered_aircraft()
-        .expect("registered wing source must pass aircraft admission")
+fn wing(definition: &AircraftDefinition) -> SurfaceShape<'_> {
+    definition.shape().surface(HybridSurfaceRole::MainWing)
 }
 
-fn wing() -> SurfaceShape<'static> {
-    definition().shape().surface(HybridSurfaceRole::MainWing)
-}
-
-fn half_span() -> f64 {
-    wing()
+fn half_span(definition: &AircraftDefinition) -> f64 {
+    wing(definition)
         .span_bounds_m()
         .into_iter()
         .map(f64::abs)
         .fold(0.0, f64::max)
 }
 
-fn deflection_with_factor(span: f64, factor: WingBendingFactor) -> Result<f64, ShapeError> {
-    let [minimum, maximum] = wing().span_bounds_m();
+fn deflection_with_factor(
+    definition: &AircraftDefinition,
+    span: f64,
+    factor: WingBendingFactor,
+) -> Result<f64, ShapeError> {
+    let [minimum, maximum] = wing(definition).span_bounds_m();
     let span = span.clamp(minimum, maximum);
-    definition()
+    definition
         .shape()
         .wing_displacement_with_factor(span, factor)
         .map(|displacement| -displacement.components()[2])
 }
 
-fn wing_point(span: f64, chord: f64, upper: bool) -> [f64; 3] {
-    let [forward, right, down] = wing()
+fn wing_point(definition: &AircraftDefinition, span: f64, chord: f64, upper: bool) -> [f64; 3] {
+    let [forward, right, down] = wing(definition)
         .point(
             span,
             chord,
@@ -218,8 +210,13 @@ fn span_stations(surface: SurfaceShape<'_>, side: f64) -> Vec<f64> {
     stations
 }
 
-fn surface(side: f64, chord_start: f64, chord_end: f64) -> WingSurface {
-    let span_stations = span_stations(wing(), side);
+fn surface(
+    definition: &AircraftDefinition,
+    side: f64,
+    chord_start: f64,
+    chord_end: f64,
+) -> WingSurface {
+    let span_stations = span_stations(wing(definition), side);
     let span_steps = span_stations.len() - 1;
     let surface_size = span_stations.len() * ROW_SIZE;
     let chord_stations: Vec<_> = ContactSampling::DEFAULT
@@ -231,10 +228,11 @@ fn surface(side: f64, chord_start: f64, chord_end: f64) -> WingSurface {
     let mut indices = Vec::new();
     for upper in [true, false] {
         for distance in &span_stations {
-            let fraction = distance / half_span();
+            let fraction = distance / half_span(definition);
             for station_fraction in &chord_stations {
                 positions.push(
-                    wing_point(side * distance, *station_fraction, upper).map(|value| value as f32),
+                    wing_point(definition, side * distance, *station_fraction, upper)
+                        .map(|value| value as f32),
                 );
                 uvs.push([fraction as f32, *station_fraction as f32]);
             }
@@ -319,34 +317,45 @@ mod tests {
 
     #[test]
     fn explicit_bending_projection_reuses_buffers_and_recovers_after_unrepresentable_input() {
-        let geometry = WingGeometry::new();
+        let source_definition = birdman_game_content::playable_aircraft().unwrap();
+        let geometry = WingGeometry::new(&source_definition);
         let mut frame = geometry.frame();
-        let reference = frame.bending_factor().unwrap();
+        let reference = WingBendingFactor::try_new(1.0).unwrap();
+        geometry
+            .update_frame_with_factor(&source_definition, &mut frame, reference)
+            .unwrap();
         let positions = frame.surface_positions[0].as_ptr();
         assert!(
             !geometry
-                .update_frame_with_factor(&mut frame, reference)
+                .update_frame_with_factor(&source_definition, &mut frame, reference)
                 .unwrap()
         );
         assert_eq!(
-            geometry
-                .update_frame_with_factor(&mut frame, WingBendingFactor::try_new(1e50).unwrap()),
+            geometry.update_frame_with_factor(
+                &source_definition,
+                &mut frame,
+                WingBendingFactor::try_new(1e50).unwrap()
+            ),
             Err(ShapeError::Math(MathError::NonFinite))
         );
         assert_eq!(frame.bending_factor(), None);
         assert!(
             geometry
-                .update_frame_with_factor(&mut frame, reference)
+                .update_frame_with_factor(&source_definition, &mut frame, reference)
                 .unwrap()
         );
         assert_eq!(frame.bending_factor(), Some(reference));
-        let expected = geometry.frame();
+        let mut expected = geometry.frame();
+        geometry
+            .update_frame_with_factor(&source_definition, &mut expected, reference)
+            .unwrap();
         assert_eq!(frame.surface_positions, expected.surface_positions);
         assert_eq!(positions, frame.surface_positions[0].as_ptr());
     }
 
     #[test]
     fn registered_load_parameters_and_piecewise_dihedral_match_independent_values() {
+        let source_definition = birdman_game_content::playable_aircraft().unwrap();
         let deflections = [
             0.0,
             0.183672825514125,
@@ -354,35 +363,48 @@ mod tests {
             0.3865168887081755,
         ];
         let dihedral = |span: f64| {
-            wing().section(0.0).unwrap().quarter_chord_frd_m[2]
-                - wing().section(span).unwrap().quarter_chord_frd_m[2]
+            wing(&source_definition)
+                .section(0.0)
+                .unwrap()
+                .quarter_chord_frd_m[2]
+                - wing(&source_definition)
+                    .section(span)
+                    .unwrap()
+                    .quarter_chord_frd_m[2]
         };
         let rises = [0.0, 0.0500712, 0.1439547, 0.3943107];
         let factor = WingBendingFactor::try_new(1.0).unwrap();
         for (index, fraction) in [0.0, 0.6, 0.8, 1.0].into_iter().enumerate() {
-            let span = half_span() * fraction;
+            let span = half_span(&source_definition) * fraction;
             assert!(
-                (deflection_with_factor(span, factor).unwrap() - deflections[index]).abs() < 1e-14
+                (deflection_with_factor(&source_definition, span, factor).unwrap()
+                    - deflections[index])
+                    .abs()
+                    < 1e-14
             );
             assert!((dihedral(span) - rises[index]).abs() < 1e-14);
         }
         for fraction in [0.6, 0.8] {
-            let boundary = half_span() * fraction;
+            let boundary = half_span(&source_definition) * fraction;
             assert!((dihedral(boundary + 1e-9) - dihedral(boundary - 1e-9)).abs() < 3e-10);
         }
     }
 
     #[test]
     fn all_meshes_and_anchors_are_finite_symmetric_and_follow_one_load() {
-        let geometry = WingGeometry::new();
+        let source_definition = birdman_game_content::playable_aircraft().unwrap();
+        let geometry = WingGeometry::new(&source_definition);
         let mut frame = geometry.frame();
         for factor in [0.0, 0.9, 1.2] {
             let factor = WingBendingFactor::try_new(factor).unwrap();
             geometry
-                .update_frame_with_factor(&mut frame, factor)
+                .update_frame_with_factor(&source_definition, &mut frame, factor)
                 .unwrap();
             for (surface, actual) in geometry.surfaces.iter().zip(&frame.surface_positions) {
-                let rows = wing().span_stations_m().filter(|span| *span >= 0.0).count();
+                let rows = wing(&source_definition)
+                    .span_stations_m()
+                    .filter(|span| *span >= 0.0)
+                    .count();
                 assert_eq!(surface.positions.len(), rows * ROW_SIZE * 2);
                 assert_eq!(actual.len(), surface.positions.len());
                 for row in surface.positions.chunks_exact(ROW_SIZE) {
@@ -398,8 +420,12 @@ mod tests {
                         [
                             base[0],
                             (f64::from(base[1])
-                                + deflection_with_factor(f64::from(base[0]), factor).unwrap())
-                                as f32,
+                                + deflection_with_factor(
+                                    &source_definition,
+                                    f64::from(base[0]),
+                                    factor,
+                                )
+                                .unwrap()) as f32,
                             base[2],
                         ]
                     })
@@ -480,26 +506,26 @@ mod tests {
         let factor = WingBendingFactor::try_new(1.2).unwrap();
         assert!(
             !geometry
-                .update_frame_with_factor(&mut frame, factor)
+                .update_frame_with_factor(&source_definition, &mut frame, factor)
                 .unwrap()
         );
         let factor = WingBendingFactor::try_new(0.9).unwrap();
         assert!(
             geometry
-                .update_frame_with_factor(&mut frame, factor)
+                .update_frame_with_factor(&source_definition, &mut frame, factor)
                 .unwrap()
         );
         let previous_tip = *frame.surface_positions[0].last().unwrap();
         let factor = WingBendingFactor::try_new(0.92).unwrap();
         assert!(
             geometry
-                .update_frame_with_factor(&mut frame, factor)
+                .update_frame_with_factor(&source_definition, &mut frame, factor)
                 .unwrap()
         );
         assert_ne!(previous_tip, *frame.surface_positions[0].last().unwrap());
         assert!(
             !geometry
-                .update_frame_with_factor(&mut frame, factor)
+                .update_frame_with_factor(&source_definition, &mut frame, factor)
                 .unwrap()
         );
         assert_eq!(positions, frame.surface_positions[0].as_ptr());
@@ -507,7 +533,8 @@ mod tests {
 
     #[test]
     fn half_wing_partition_includes_the_interpolated_root_of_a_two_station_surface() {
-        let mut document = definition().document().clone();
+        let source_definition = birdman_game_content::playable_aircraft().unwrap();
+        let mut document = source_definition.document().clone();
         let source = document
             .surfaces
             .iter_mut()
@@ -537,7 +564,7 @@ mod tests {
             let stations = span_stations(surface, side);
             assert_eq!(stations.len(), 2);
             assert_eq!(stations[0], 0.0);
-            assert_eq!(stations[1], half_span());
+            assert_eq!(stations[1], half_span(&source_definition));
             assert!(surface.section(side * stations[0]).is_ok());
             assert!(surface.section(side * stations[1]).is_ok());
         }

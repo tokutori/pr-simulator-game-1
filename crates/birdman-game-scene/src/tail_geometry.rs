@@ -1,6 +1,6 @@
 #![doc = "Static tail presentation derived from registered physical sections; local metres use right/up/aft axes."]
 
-use birdman_game_content::{AirfoilFace, ContactSampling, SurfaceShape};
+use birdman_game_content::{AircraftDefinition, AirfoilFace, ContactSampling, SurfaceShape};
 use birdman_game_core::HybridSurfaceRole;
 
 use crate::wing_geometry::COVERED_FRACTION;
@@ -55,9 +55,7 @@ pub struct TailGeometry {
 
 impl TailGeometry {
     #[doc = "Builds horizontal then vertical tails from the same registered physical model."]
-    pub fn registered() -> Result<[Self; 2], &'static str> {
-        let definition =
-            birdman_game_app::registered_aircraft().map_err(|_| "Invalid registered aircraft")?;
+    pub fn from_definition(definition: &AircraftDefinition) -> Result<[Self; 2], &'static str> {
         let tail = |role| Self::from_shape(definition.shape().surface(role));
         Ok([
             tail(HybridSurfaceRole::HorizontalTail)?,
@@ -159,7 +157,8 @@ mod tests {
 
     #[test]
     fn registered_tails_preserve_physical_outline_and_join_cover_to_film() {
-        let [horizontal, vertical] = TailGeometry::registered().unwrap();
+        let source_definition = birdman_game_content::playable_aircraft().unwrap();
+        let [horizontal, vertical] = TailGeometry::from_definition(&source_definition).unwrap();
         for (tail, origin, span_axis, span, chord) in [
             (horizontal, [0.0, -0.1, 3.6], 0, 3.4, 2.5 / 3.4),
             (vertical, [0.0, 0.1, 3.6], 1, 0.7, 0.5 / 0.7),
@@ -205,7 +204,7 @@ mod tests {
             twist_rad: 0.0,
         })
         .collect();
-        let mut document = birdman_game_app::registered_aircraft()
+        let mut document = birdman_game_content::playable_aircraft()
             .unwrap()
             .document()
             .clone();
@@ -248,7 +247,7 @@ mod tests {
         use birdman_game_format::aircraft::AircraftAirfoilDocument;
         use std::collections::BTreeMap;
 
-        let mut document = birdman_game_app::registered_aircraft()
+        let mut document = birdman_game_content::playable_aircraft()
             .unwrap()
             .document()
             .clone();
