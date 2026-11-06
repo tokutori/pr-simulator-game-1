@@ -1094,7 +1094,7 @@ fn briefing_record_factory_preserves_the_owner_on_failure_and_receives_the_seale
     let sealed = configuration(100);
     let identity = sealed.identity;
     let initial = sealed.initial_state();
-    let header = crate::FlightRecordHeader::try_new(identity, 100, None).unwrap();
+    let header = crate::FlightRecordHeader::try_new(identity, 100, Some(sealed.control_mode)).unwrap();
     let attract_storage = session.attract_record.as_ref().unwrap().samples().as_ptr();
     let setup = session.snapshot();
     assert_eq!(
