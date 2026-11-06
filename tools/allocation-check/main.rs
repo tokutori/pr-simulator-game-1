@@ -2,10 +2,10 @@ use birdman_game_core::{
     AeroError, AerodynamicEvaluationError, AerodynamicLoadProvider, AerodynamicStage,
     AircraftModel, BodyPoint, BodyVector, ControlMode, DynamicsError, ElementOrientation,
     ElementReference, ExternalLoadProvider, FlightState, Gravity, HybridAerodynamicLoad,
-    HybridAnchor, HybridLimit, HybridModel, HybridProxy, HybridSection, HybridSite, HybridSurface,
+    HybridAnchor, HybridModel, HybridProxy, HybridSection, HybridSite, HybridSurface,
     HybridSurfaceGeometry, HybridSurfaceRole, InertiaTensor, LoadError, NedPoint, NedVector,
-    PHYSICS_DT_SECONDS, PilotAcceleration, PilotPositionTarget, PlanformSymmetry,
-    PolarAnalysisMethod, PolarMomentAxes, StaticPolar, StaticPolarCoefficients,
+    PHYSICS_DT_SECONDS, PHYSICS_MODEL_VERSION, PilotAcceleration, PilotPositionTarget,
+    PlanformSymmetry, PolarAnalysisMethod, PolarMomentAxes, StaticPolar, StaticPolarCoefficients,
     StaticPolarMetadata, StaticPolarRow, TailAerodynamics, TailControlProfile,
     TailFlightTickConfig, TailFlightTickError, TailFlightTickInput, TailFlightTickOutcome,
     TailFlightTickState, TailIncidence, TailPilotIntent, TailPilotPositionCommand,
@@ -292,21 +292,21 @@ impl Fixture {
     }
 }
 
-fn outside(error: LoadError, stage: Option<AerodynamicStage>) {
+fn arithmetic_failure(error: LoadError, stage: Option<AerodynamicStage>) {
     let LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(error)) = error else {
         panic!("expected a typed hybrid error");
     };
-    assert_eq!(error.cause(), AeroError::OutsideEnvelope);
+    assert_eq!(error.cause(), AeroError::NonFinite);
     assert_eq!(error.site(), HybridSite::Datum);
-    assert_eq!(error.limit(), Some(HybridLimit::GlobalBeta));
+    assert_eq!(error.limit(), None);
     assert_eq!(error.stage(), stage);
 }
 
-fn outside_dynamics(error: DynamicsError) {
+fn arithmetic_dynamics_failure(error: DynamicsError) {
     let DynamicsError::Load(error) = error else {
         panic!("expected a typed load error");
     };
-    outside(error, Some(AerodynamicStage::First));
+    arithmetic_failure(error, Some(AerodynamicStage::First));
 }
 
 fn wind_boundary_contact(aircraft: &AircraftModel, fixture: &Fixture) {
@@ -389,6 +389,7 @@ fn wind_boundary_contact(aircraft: &AircraftModel, fixture: &Fixture) {
 }
 
 fn main() {
+    println!("compiled physics model: {PHYSICS_MODEL_VERSION}");
     calibrate();
     registered_application_flight();
     let definition = birdman_game_content::playable_aircraft().unwrap();
@@ -445,8 +446,8 @@ fn main() {
     )
     .unwrap();
     wind_boundary_contact(&aircraft, &fixture);
-    let valid = state([11.0, 0.2, 0.4]);
-    let invalid = state([11.0, 3.0, 0.4]);
+    let valid = state([11.0, 3.0, 0.4]);
+    let invalid = state([1.0e200, 0.0, 0.0]);
     let gravity = Gravity::try_new(9.80665).unwrap();
     let pilot_acceleration = PilotAcceleration::try_new(0.1).unwrap();
     let pilot_target = PilotPositionTarget::try_new(&aircraft, 0.0).unwrap();
@@ -472,7 +473,7 @@ fn main() {
     let before = failed_previous;
     let expected = provider.evaluate(&aircraft, &valid).unwrap();
     assert_eq!(
-        measure("hybrid provider success", || {
+        measure("hybrid provider continuation", || {
             provider.evaluate(black_box(&aircraft), black_box(&valid))
         }),
         Ok(expected)
@@ -489,7 +490,10 @@ fn main() {
     };
     let expected = rk(&valid).unwrap();
     assert_ne!(expected, valid);
-    assert_eq!(measure("hybrid RK4 success", || rk(&valid)), Ok(expected));
+    assert_eq!(
+        measure("hybrid RK4 continuation", || rk(&valid)),
+        Ok(expected)
+    );
     let tick = |current: TailFlightTickState| {
         advance_tail_flight_tick(
             black_box(&aircraft),
@@ -503,23 +507,23 @@ fn main() {
     assert_eq!(expected.tick_index(), 8);
     assert_ne!(expected.flight_state(), valid);
     assert_eq!(
-        measure("hybrid tick success", || tick(previous)),
+        measure("hybrid tick continuation", || tick(previous)),
         Ok(expected)
     );
-    outside(
-        measure("hybrid provider outside", || {
+    arithmetic_failure(
+        measure("hybrid provider nonfinite", || {
             provider.evaluate(black_box(&aircraft), black_box(&invalid))
         })
         .unwrap_err(),
         None,
     );
-    outside_dynamics(measure("hybrid RK4 outside", || rk(&invalid)).unwrap_err());
+    arithmetic_dynamics_failure(measure("hybrid RK4 nonfinite", || rk(&invalid)).unwrap_err());
     let TailFlightTickError::Dynamics(error) =
-        measure("hybrid tick outside", || tick(failed_previous)).unwrap_err()
+        measure("hybrid tick nonfinite", || tick(failed_previous)).unwrap_err()
     else {
         panic!("expected a typed dynamics error");
     };
-    outside_dynamics(error);
+    arithmetic_dynamics_failure(error);
     assert_eq!(failed_previous, before);
     assert_eq!(failed_previous.tick_index(), 7);
     assert_eq!(failed_previous.incidence(), TailIncidence::neutral());
