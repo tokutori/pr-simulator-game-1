@@ -78,6 +78,11 @@ impl GameSessionConfiguration {
         self.identity
     }
 
+    /// Effective mode resolved from the selected controller at configuration sealing.
+    pub const fn control_mode(&self) -> ControlMode {
+        self.control_mode
+    }
+
     fn initial_state(&self) -> TailFlightTickState {
         self.scenario.initial_state()
     }
