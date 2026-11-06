@@ -62,7 +62,7 @@ pub use game_session::{
 };
 pub use scenario::{
     CompositeCgLaunchConditions, FlightScenarioError, FlightTelemetry, FlightTelemetryError,
-    flight_state_from_composite_cg_launch,
+    flight_state_during_launch_roll, flight_state_from_composite_cg_launch,
 };
 pub use scoring::{
     COURSE_DISTANCE_SCORE_VERSION, CourseAxis, DistanceScore, DistanceScoreError,
@@ -71,9 +71,10 @@ pub use scoring::{
 pub use session_contract::{SessionEndReason, SessionScenarioIdentity};
 pub use steady_glide::{SteadyGlideConditions, SteadyGlideError, SteadyGlideTrim};
 pub use tail_control::{
-    TailAngleOfAttackGuard, TailControlCommands, TailControlError, TailControlProfile,
-    TailControlUpdate, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
-    TailPilotPositionMapping, TailRateTarget, advance_tail_control, tail_rate_feedback_incidence,
+    TailActuatorLimits, TailAngleOfAttackGuard, TailControlCommands, TailControlError,
+    TailControlProfile, TailControlUpdate, TailPilotIntent, TailPilotPositionCommand,
+    TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget, advance_tail_control,
+    tail_rate_feedback_incidence,
 };
 pub use tail_scenario::{
     TailFlightRunError, TailFlightRunOutcome, TailFlightScenario, TailFlightScenarioError,
@@ -112,7 +113,7 @@ pub const PHYSICS_HZ: u32 = 100;
 ///
 /// Increment when the same validated model and tick-input sequence can produce a
 /// different physical trajectory or terminal state.
-pub const PHYSICS_MODEL_VERSION: u32 = 6;
+pub const PHYSICS_MODEL_VERSION: u32 = 7;
 
 /// Fixed simulation timestep in seconds.
 pub const PHYSICS_DT_SECONDS: f64 = 1.0 / PHYSICS_HZ as f64;

@@ -1025,7 +1025,7 @@ fn unknown_corrupt_or_surplus_control_schemas_are_rejected() {
     let TailFlightRecordControlsDocument::TailIncidence {
         physical_incidence, ..
     } = &mut invalid.samples[1].controls;
-    physical_incidence.horizontal_tail_rad = 0.2_f64.next_up();
+    physical_incidence.horizontal_tail_rad = core::f64::consts::PI.next_up();
     assert_eq!(
         invalid.validate(),
         Err(FlightRecordFormatError::InvalidRecord)
@@ -1114,39 +1114,41 @@ fn personal_best_does_not_mix_distinct_model_controller_identity() {
 }
 
 #[test]
-fn previous_physics_four_archive_retains_its_key_and_original_json() {
-    let mut previous = document();
-    previous.schema_version = 7;
-    previous.header.physics_model_version = 4;
-    for sample in &mut previous.samples {
-        sample.wing_bending_factor = Some(1.0);
+fn previous_physics_archives_retain_original_bytes_and_use_current_model_acceptance() {
+    for version in [4, 6] {
+        let mut previous = document();
+        previous.schema_version = 7;
+        previous.header.physics_model_version = version;
+        for sample in &mut previous.samples {
+            sample.wing_bending_factor = Some(1.0);
+        }
+        let mut previous = keyed(previous);
+        let mut metadata = serde_json::to_value(&previous.identity_metadata).unwrap();
+        metadata["comparison_version"] = serde_json::json!(2);
+        previous.identity_metadata = crate::FlightRecordIdentityMetadata::Unrecognized(metadata);
+        previous.header.personal_best_key = Some([
+            99, 248, 110, 33, 196, 207, 121, 204, 161, 168, 60, 249, 24, 208, 74, 193, 71, 91, 225,
+            154, 43, 48, 99, 125, 5, 95, 126, 211, 240, 181, 147, 73,
+        ]);
+        let original = previous.encode_json().unwrap();
+        let restored = TailFlightRecordDocument::decode_json(&original).unwrap();
+        assert_eq!(restored.encode_json().unwrap(), original);
+        assert_eq!(restored, previous);
+        assert!(restored.personal_best_candidate_score().unwrap().is_none());
+        assert!(
+            crate::TailPersonalBestSelection::try_new(&restored)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            restored.require_tail_reintegration_compatibility(
+                &identity(),
+                restored.scenario_identity(),
+                birdman_game_core::PHYSICS_MODEL_VERSION,
+            ),
+            Err(FlightRecordFormatError::IncompatibleReintegration)
+        );
     }
-    let mut previous = keyed(previous);
-    let mut metadata = serde_json::to_value(&previous.identity_metadata).unwrap();
-    metadata["comparison_version"] = serde_json::json!(2);
-    previous.identity_metadata = crate::FlightRecordIdentityMetadata::Unrecognized(metadata);
-    previous.header.personal_best_key = Some([
-        99, 248, 110, 33, 196, 207, 121, 204, 161, 168, 60, 249, 24, 208, 74, 193, 71, 91, 225,
-        154, 43, 48, 99, 125, 5, 95, 126, 211, 240, 181, 147, 73,
-    ]);
-    let original = previous.encode_json().unwrap();
-    let restored = TailFlightRecordDocument::decode_json(&original).unwrap();
-    assert_eq!(restored.encode_json().unwrap(), original);
-    assert_eq!(restored, previous);
-    assert!(restored.personal_best_candidate_score().unwrap().is_none());
-    assert!(
-        crate::TailPersonalBestSelection::try_new(&restored)
-            .unwrap()
-            .is_none()
-    );
-    assert_eq!(
-        restored.require_tail_reintegration_compatibility(
-            &identity(),
-            restored.scenario_identity(),
-            birdman_game_core::PHYSICS_MODEL_VERSION,
-        ),
-        Err(FlightRecordFormatError::IncompatibleReintegration)
-    );
     let mut fixed_shape = document();
     fixed_shape.header.physics_model_version = 4;
     let fixed_shape = keyed(fixed_shape);

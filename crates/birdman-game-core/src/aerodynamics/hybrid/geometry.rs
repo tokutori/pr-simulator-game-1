@@ -309,6 +309,10 @@ impl HybridProxy {
         self.role
     }
     /// Derives a strip within one straight section, with twist in its rotation.
+    ///
+    /// The caller supplies the validated proper local-to-body rotation through
+    /// [`ElementOrientation`], including the complete three-dimensional section twist.
+    /// Planform intervals determine action points and area weights independently.
     pub fn try_new(
         geometry: HybridSurfaceGeometry<'_>,
         interval_m: [f64; 2],
@@ -362,15 +366,6 @@ impl HybridProxy {
             }
             if area <= 0.0 || projected_area <= 0.0 {
                 return Err(AeroError::InvalidHybridProxySet);
-            }
-            let local_span = orientation
-                .local_to_body_vector([0.0, 1.0, 0.0])?
-                .components();
-            if local_span[0].abs() > GEOMETRY_TOLERANCE
-                || (local_span[1] - (second[1] - first[1]) / span_length).abs() > GEOMETRY_TOLERANCE
-                || (local_span[2] - (second[2] - first[2]) / span_length).abs() > GEOMETRY_TOLERANCE
-            {
-                return Err(AeroError::InvalidOrientation);
             }
             Ok(Self {
                 role: geometry.role,

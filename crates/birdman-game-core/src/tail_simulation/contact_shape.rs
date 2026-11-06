@@ -603,7 +603,10 @@ mod tests {
         )
         .with_wing_bending_factor(WingBendingFactor::try_new(0.2).unwrap());
         let intervals = loads
-            .tail_incidence_intervals(&previous.flight_state())
+            .tail_incidence_intervals(
+                &previous.flight_state(),
+                [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
+            )
             .unwrap();
         previous.incidence =
             TailIncidence::try_new(intervals[0][1] - 0.005, intervals[1][1] - 0.005).unwrap();

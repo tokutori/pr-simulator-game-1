@@ -6,7 +6,7 @@ mod worker;
 
 use bevy::ecs as bevy_ecs;
 use bevy::{
-    camera::{Exposure, RenderTarget, Viewport},
+    camera::{RenderTarget, Viewport},
     core_pipeline::tonemapping::Tonemapping,
     prelude::*,
     render::renderer::{RenderDevice, RenderInstance},
@@ -544,17 +544,7 @@ pub(crate) fn submit(world: &mut World, drawing: &ApplicationDrawingOutput) -> R
                 ))
                 .id()
         });
-        // Brightness follows the shared drawing through the same Exposure
-        // mechanism as the main camera. The contrast/saturation fullscreen
-        // pass is not attached to either eye camera: Bevy's pass sets no
-        // viewport, so it cannot isolate one half of the stereo target.
-        let exposure = super::world::scene_exposure_adjusted(&drawing.display);
-        if world
-            .get::<Exposure>(right)
-            .is_none_or(|current| current.ev100 != exposure.ev100)
-        {
-            world.entity_mut(right).insert(exposure);
-        }
+        super::display_adjustment::submit(world, right, &drawing.display);
         if let Some(ambient) = world.get::<AmbientLight>(main).cloned() {
             world.entity_mut(right).insert(ambient);
         }

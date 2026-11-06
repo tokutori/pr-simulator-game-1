@@ -15,7 +15,7 @@
 |---|---|
 | `TailPilotIntent` | normalized nose-up/right-turn。各閉区間[-1,1] |
 | `TailRateTarget` | body正方向のpitch q / yaw r目標。各閉区間±0.2 rad/s |
-| `TailIncidence` | 水平・垂直尾翼のphysical effective incidence。各閉区間±0.2 rad |
+| `TailIncidence` | 水平・垂直尾翼のphysical effective incidence。principal angleの閉区間±π rad。機械stopは機体JSONで指定 |
 | `TailPilotPositionCommand` | 身体位置の`Set`要求または`Hold` |
 | `ControlMode` | Manual、Shared（authority）、Automaticの直和型 |
 | `TailFlightTickState` | body/pilot state、二系統incidence、保持pilot target、整数tickの単一正本 |
@@ -40,7 +40,7 @@ u=(1-a)u_{pilot}+a u_{FBW}
 ## FBWとactuator
 
 - `tail_rate_feedback_incidence`は各軸の`gain × (observed - target)`を±0.2 radへ飽和する。
-- `TailControlProfile`のq/r gainは各0.2 s、最大slewは各1 rad/sとし、機体の空力係数から分離する。
+- 登録controllerのq/r gainは各0.2 s、software slewは各1 rad/sとする。機械stopと軸別slewは機体JSONから受け取り、両者の制限を同時に適用する。
 - `advance_tail_control`はauthority混合、physical saturation、slewを純粋に評価し、混合要求と次区間の保持incidenceを返す。
 
 - 整数tick $k$ のstateは前区間の保持値 $\delta_k$ を持つ。
@@ -118,21 +118,21 @@ rudder要求はこのalpha policyで変更しない。
 ## 移動質量の力学
 
 - パイロットの身体移動は機体前後方向の1自由度とする。
-- パイロットを除く機体の固定重心をdatum $O$ とし、主翼・尾翼・接触点・眼位置の基準をdatumから保持する。
+- 機体構造の固定datum $O$ から主翼・尾翼・接触点・眼位置と、機体単体CG位置 $r_a$ を保持する。
 - 機体は剛体、パイロットは機体に対して回転しない質点である。
 - 相対位置 $x_p$、速度 $\dot x_p$、加速度 $\ddot x_p$ を扱い、質量・固定高さ・範囲・最大速度・最大加速度・初期状態は検証済み`AircraftModel`へ含める。
 
 機体質量 $m_a$、パイロット質量 $m_p$、固定高さ $z_p$、位置 $r_p^B=(x_p,0,z_p)$ から合成重心を導出する。
 
 ```math
-M=m_a+m_p,\qquad r_G^B=\frac{m_p r_p^B}{M}
+M=m_a+m_p,\qquad h=m_a r_a^B+m_p r_p^B,\qquad r_G^B=\frac{h}{M}
 ```
 
-datumまわりの機体固定慣性を $I_a$、$d_a=-r_G^B$、$d_p=r_p^B-r_G^B$ とし、平行軸の定理で合成慣性を求める。
+datumまわりの機体固定慣性を $I_{a,O}$ とし、平行軸の定理で合成慣性を求める。
 
 ```math
-I_G=I_a+m_a\left(\lVert d_a\rVert^2 I_3-d_a d_a^T\right)
-       +m_p\left(\lVert d_p\rVert^2 I_3-d_p d_p^T\right)
+I_G=I_{a,O}+m_p\left(\lVert r_p\rVert^2 I_3-r_p r_p^T\right)
+       -M\left(\lVert r_G\rVert^2 I_3-r_G r_G^T\right)
 ```
 
 固定点 $i$ は $r_{Oi}^B$ を保持する。積分状態はdatumの位置・対地速度、姿勢・角速度、$x_p,\dot x_p$ とする。
@@ -155,11 +155,11 @@ v_G^N=v_O^N+R_{NB}(\omega^B\times r_G^B+\dot r_G^B)
 $v_O^B=R_{NB}^Tv_O^N$、$\dot r_p^B=(\dot x_p,0,0)$ とし、内部質量の相対運動を運動量へ含める。
 
 ```math
-P^B=Mv_O^B+m_p(\omega^B\times r_p^B+\dot r_p^B)
+P^B=Mv_O^B+\omega^B\times h+m_p\dot r_p^B
 ```
 
 ```math
-H_O^B=I_a\omega^B+m_p r_p^B\times(v_O^B+\omega^B\times r_p^B+\dot r_p^B)
+H_O^B=I_{a,O}\omega^B+m_a r_a^B\times v_O^B+m_p r_p^B\times(v_O^B+\omega^B\times r_p^B+\dot r_p^B)
 ```
 
 外力 $F^B$ とdatumまわりの外部モーメント $M_O^B$ は、重力を含む全質量要素・作用点から評価する。

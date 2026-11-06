@@ -39,7 +39,7 @@ pub fn game_ui_frame(
             ) {
                 frame
                     .readouts
-                    .push(readout(&control.id, format!("{remaining_seconds} 秒")));
+                    .push(readout(control, format!("{remaining_seconds} 秒")));
             }
         }
     }
@@ -79,7 +79,7 @@ pub fn game_ui_frame(
             GameUiControlContent::Range { .. } => frame.ranges.push(GameUiRangeValue {
                 id: control.id.clone(),
                 value: time,
-                display_value: range_display_value(time),
+                display_value: game_ui_readout_label(&control.label, &range_display_value(time)),
             }),
             GameUiControlContent::Status { source, .. } => {
                 let value = match source {
@@ -97,7 +97,7 @@ pub fn game_ui_frame(
                     }
                     GameUiReadoutSource::AnalysisCursor => continue,
                 };
-                frame.readouts.push(readout(&control.id, value));
+                frame.readouts.push(readout(control, value));
             }
             GameUiControlContent::Button { action, .. } if phase == SessionPhase::Replay => {
                 let label = match action {
@@ -144,10 +144,10 @@ pub fn game_ui_frame(
     Ok(frame)
 }
 
-fn readout(id: &str, value: String) -> GameUiReadoutValue {
+fn readout(control: &GameUiControl, value: String) -> GameUiReadoutValue {
     GameUiReadoutValue {
-        id: id.to_owned(),
-        value,
+        id: control.id.clone(),
+        value: game_ui_readout_label(&control.label, &value),
     }
 }
 

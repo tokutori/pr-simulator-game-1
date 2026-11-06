@@ -157,6 +157,8 @@ pub enum ScreenRenderAutoStatus {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ScreenRenderAutoSnapshot {
+    /// Whether the actual target permits changing its framebuffer resolution.
+    pub resolution_adjustable: bool,
     /// User choice, independent of the current automatic resolution.
     pub selection: ScreenRenderSelection,
     /// Last successfully applied rendering resolution.
@@ -173,6 +175,7 @@ impl ScreenRenderAutoSnapshot {
     /// Builds a manual quality baseline; the graphics owner tracks resource confirmation.
     pub const fn manual(scale: ScreenRenderScale) -> Self {
         Self {
+            resolution_adjustable: true,
             selection: ScreenRenderSelection::Manual {
                 scale,
                 shadow: ScreenShadowMap::Full,
@@ -253,8 +256,6 @@ impl core::error::Error for ScreenRenderAutoError {}
 /// Selects whether retained flight settings or background Auto controls rendering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScreenRenderScope {
-    /// Keeps runtime framebuffer dimensions and applies the retained manual water quality.
-    Immersive,
     /// Applies the user's retained flight rendering settings.
     FlightSettings,
     /// Automatically adapts rendering outside flight preparation and flight.
@@ -462,6 +463,7 @@ enum MeasurementState {
 /// Owns one render lifetime's selection, measurements, and application handshake.
 pub struct ScreenRenderAutoController {
     selection: QualitySelection,
+    resolution_adjustable: bool,
     scope: ScreenRenderScope,
     applied: RenderQuality,
     resource: ResourceState,
@@ -493,6 +495,7 @@ impl ScreenRenderAutoController {
                 automatic: true,
                 manual: quality,
             },
+            resolution_adjustable: true,
             scope: ScreenRenderScope::FlightSettings,
             applied: quality,
             resource: ResourceState::Ready,
@@ -529,6 +532,7 @@ impl ScreenRenderAutoController {
             },
         };
         ScreenRenderAutoSnapshot {
+            resolution_adjustable: self.resolution_adjustable,
             selection: self.selection.snapshot(),
             applied: self.applied.scale,
             shadow: self.applied.shadow,
@@ -741,13 +745,35 @@ impl ScreenRenderAutoController {
     }
 
     fn desired_quality(&self) -> RenderQuality {
-        if self.scope == ScreenRenderScope::Immersive {
-            RenderQuality {
-                water_quality: self.selection.manual.water_quality,
-                ..self.applied
-            }
+        self.constrain(self.selection.desired(self.applied))
+    }
+
+    fn constrain(&self, mut quality: RenderQuality) -> RenderQuality {
+        if !self.resolution_adjustable {
+            quality.scale = ScreenRenderScale::Full;
+        }
+        quality
+    }
+
+    /// Applies the actual target's resolution constraint while retaining user preferences.
+    pub fn set_resolution_adjustable(
+        &mut self,
+        adjustable: bool,
+        now_ms: f64,
+    ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
+        self.check_time(now_ms)?;
+        if self.resolution_adjustable == adjustable {
+            return Ok(self.requested());
+        }
+        self.reset_window(now_ms)?;
+        self.initial_observation_epoch = None;
+        self.recovery = None;
+        self.resolution_adjustable = adjustable;
+        self.resource = ResourceState::Ready;
+        if self.automatic() && matches!(self.measurement, MeasurementState::Unsupported(_)) {
+            self.request_unsupported_quality()
         } else {
-            self.selection.desired(self.applied)
+            self.request(self.desired_quality())
         }
     }
 
@@ -1019,6 +1045,7 @@ impl ScreenRenderAutoController {
         &mut self,
         quality: RenderQuality,
     ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
+        let quality = self.constrain(quality);
         if quality == self.applied {
             Ok(None)
         } else {
@@ -1109,6 +1136,7 @@ impl ScreenRenderAutoController {
             self.recovery = None;
             ScreenRenderScale::ALL
                 .get(current + 1)
+                .filter(|_| self.resolution_adjustable)
                 .copied()
                 .map(|scale| RenderQuality {
                     scale,
@@ -1148,10 +1176,13 @@ impl ScreenRenderAutoController {
                     })
                 })
                 .or_else(|| {
-                    current.checked_sub(1).map(|index| RenderQuality {
-                        scale: ScreenRenderScale::ALL[index],
-                        ..self.applied
-                    })
+                    current
+                        .checked_sub(1)
+                        .filter(|_| self.resolution_adjustable)
+                        .map(|index| RenderQuality {
+                            scale: ScreenRenderScale::ALL[index],
+                            ..self.applied
+                        })
                 })
         } else {
             None

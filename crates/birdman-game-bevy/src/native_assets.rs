@@ -7,7 +7,7 @@ pub(crate) fn register(app: &mut App) {
     embedded_asset!(app, "../assets/native_water.wgsl");
     embedded_asset!(app, "../assets/native_terrain_haze.wgsl");
     embedded_asset!(app, "../assets/native_direction.wgsl");
-    embedded_asset!(app, "../assets/native_display_adjustment.wgsl");
+    bevy::shader::load_shader_library!(app, "../assets/native_display_adjustment.wgsl");
 }
 
 pub(crate) fn bundled_font() -> &'static [u8] {
@@ -28,7 +28,8 @@ pub(crate) fn direction_shader_path() -> AssetPath<'static> {
         .with_source("embedded")
 }
 
-pub(crate) fn display_adjustment_shader_path() -> AssetPath<'static> {
+#[cfg(test)]
+fn display_adjustment_shader_path() -> AssetPath<'static> {
     AssetPath::from_path_buf(embedded_path!("../assets/native_display_adjustment.wgsl"))
         .with_source("embedded")
 }
@@ -37,11 +38,9 @@ pub(crate) fn display_adjustment_shader_path() -> AssetPath<'static> {
 mod tests {
     use super::*;
     use crate::app::{
-        display_adjustment::NativeDisplayAdjustment,
         native_storage::tests::Directory as TestDirectory, terrain_haze::TerrainHazeExtension,
         ui::DirectionMaterial, water::WaterMaterial,
     };
-    use bevy::core_pipeline::fullscreen_material::FullscreenMaterial;
     use bevy::{
         asset::{AssetApp, AssetPlugin, AssetServer, Assets, LoadState},
         pbr::MaterialExtension,
@@ -70,7 +69,7 @@ mod tests {
             WaterMaterial::fragment_shader(),
             TerrainHazeExtension::fragment_shader(),
             DirectionMaterial::fragment_shader(),
-            NativeDisplayAdjustment::fragment_shader(),
+            ShaderRef::Path(display_adjustment_shader_path()),
         ];
         let expected = [
             include_str!("../assets/native_water.wgsl"),

@@ -41,7 +41,7 @@ static HYBRID_SURFACES: OnceLock<Result<[HybridSurface<'static>; 3], AircraftDef
     OnceLock::new();
 
 /// Typed preparation failures before any hybrid session state or record is published.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HybridSessionPreparationError {
     /// The specified operating point cannot be converted to a launch state.
     Trim(birdman_game_core::SteadyGlideError),
@@ -384,21 +384,24 @@ pub fn registered_aircraft() -> Result<&'static AircraftDefinition, AircraftDefi
     AIRCRAFT_DEFINITION
         .get_or_init(playable_aircraft)
         .as_ref()
-        .map_err(|error| *error)
+        .map_err(Clone::clone)
 }
 
 /// Immutable registered launch geometry, shared by preparation and preset metadata.
 pub(crate) fn registered_launch_cg_position() -> Result<NedPoint, HybridSessionPreparationError> {
-    *LAUNCH_CG_POSITION.get_or_init(|| {
-        let definition = registered_aircraft().map_err(HybridSessionPreparationError::Aircraft)?;
-        let trim = definition
-            .trim()
-            .map_err(HybridSessionPreparationError::Aircraft)?;
-        let platform = launch_venue()
-            .map_err(HybridSessionPreparationError::Venue)?
-            .platform;
-        launch_cg_position(definition, trim, platform)
-    })
+    LAUNCH_CG_POSITION
+        .get_or_init(|| {
+            let definition =
+                registered_aircraft().map_err(HybridSessionPreparationError::Aircraft)?;
+            let trim = definition
+                .trim()
+                .map_err(HybridSessionPreparationError::Aircraft)?;
+            let platform = launch_venue()
+                .map_err(HybridSessionPreparationError::Venue)?
+                .platform;
+            launch_cg_position(definition, trim, platform)
+        })
+        .clone()
 }
 
 /// Clears the complete validated aircraft hull from the deck's supporting plane.
@@ -455,7 +458,7 @@ fn cached_surfaces() -> Result<&'static [HybridSurface<'static>; 3], HybridSessi
     HYBRID_SURFACES
         .get_or_init(|| definition.surfaces())
         .as_ref()
-        .map_err(|error| HybridSessionPreparationError::Aircraft(*error))
+        .map_err(|error| HybridSessionPreparationError::Aircraft(error.clone()))
 }
 
 #[cfg(test)]

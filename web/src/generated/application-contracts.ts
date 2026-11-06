@@ -3849,6 +3849,10 @@ export interface GameUiHudLayout {
      */
     readonly height_px: number;
     /**
+     * Completed logical readout line advance.
+     */
+    readonly line_height_px: number;
+    /**
      * Left and bottom viewport insets; the bottom edge is the viewport anchor.
      *
      * @minItems 2
@@ -3977,6 +3981,10 @@ export interface GameUiControl {
      */
     readonly content: GameUiControlContent;
     /**
+     * Completed visible caption, including selection and readout decoration.
+     */
+    readonly display_label: string;
+    /**
      * Shared admission flag.
      */
     readonly enabled: boolean;
@@ -3985,7 +3993,7 @@ export interface GameUiControl {
      */
     readonly id: string;
     /**
-     * Shared visible label.
+     * Semantic label used by accessibility and input APIs.
      */
     readonly label: string;
     /**
@@ -4461,9 +4469,13 @@ export interface GameUiSection {
     readonly layout: GameUiSectionLayout;
 }
 /**
- * Engine-independent colors, opacity and minimum hit dimensions.
+ * Engine-independent colors, typography, spacing and minimum hit dimensions.
  */
 export interface GameUiTheme {
+    /**
+     * Ordinary control text.
+     */
+    readonly body_text: GameUiTextStyle;
     /**
      * Ordinary button minimum height.
      */
@@ -4473,6 +4485,20 @@ export interface GameUiTheme {
      */
     readonly choice_background: string;
     /**
+     * Gap within a control.
+     */
+    readonly control_gap_px: number;
+    /**
+     * Horizontal and vertical control padding.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly control_padding_px: readonly [
+        number,
+        number
+    ];
+    /**
      * Flight-path marker color.
      */
     readonly flight_path_marker: string;
@@ -4480,6 +4506,32 @@ export interface GameUiTheme {
      * Keyboard focus outline.
      */
     readonly focus_outline: string;
+    /**
+     * Frame-rate badge background.
+     */
+    readonly frame_rate_background: string;
+    /**
+     * Badge inset before platform safe-area adjustment.
+     */
+    readonly frame_rate_inset_px: number;
+    /**
+     * Frame-rate badge background opacity.
+     */
+    readonly frame_rate_opacity: number;
+    /**
+     * Frame-rate badge horizontal and vertical padding.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly frame_rate_padding_px: readonly [
+        number,
+        number
+    ];
+    /**
+     * Auxiliary frame-rate text.
+     */
+    readonly frame_rate_text: GameUiTextStyle;
     /**
      * Head-relative HUD background opacity, preserving forward visibility.
      */
@@ -4509,13 +4561,60 @@ export interface GameUiTheme {
      */
     readonly primary_min_height_px: number;
     /**
+     * Principal readout text, including the countdown.
+     */
+    readonly primary_status_text: GameUiTextStyle;
+    /**
+     * Secondary descriptive text.
+     */
+    readonly secondary_text: GameUiTextStyle;
+    /**
+     * Section headings.
+     */
+    readonly section_text: GameUiTextStyle;
+    /**
      * Main text color.
      */
     readonly text: string;
     /**
+     * Completed hard-edged foreground shadow color.
+     */
+    readonly text_shadow_color: string;
+    /**
+     * Shadow displacement in logical pixels, with no blur.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly text_shadow_offset_px: readonly [
+        number,
+        number
+    ];
+    /**
+     * Completed document heading typography.
+     */
+    readonly title_text: GameUiTextStyle;
+    /**
      * Mandatory warning text color.
      */
     readonly warning_text: string;
+}
+/**
+ * Completed logical-pixel typography; adapters retain their observed font resource.
+ */
+export interface GameUiTextStyle {
+    /**
+     * Completed logical-pixel font size.
+     */
+    readonly font_size_px: number;
+    /**
+     * Requested font weight, in the range 1 through 1000.
+     */
+    readonly font_weight: number;
+    /**
+     * Completed line advance in logical pixels.
+     */
+    readonly line_height_px: number;
 }
 /**
  * Lightweight per-frame UI observation associated with one published structural view.
@@ -4635,7 +4734,7 @@ export interface GameUiFlightTouchValue {
  */
 export interface GameUiRangeValue {
     /**
-     * Shared one-decimal display text.
+     * Completed visible range caption.
      */
     readonly display_value: string;
     /**
@@ -4656,7 +4755,7 @@ export interface GameUiReadoutValue {
      */
     readonly id: string;
     /**
-     * Shared formatted record or clock observation.
+     * Completed visible record or clock caption.
      */
     readonly value: string;
 }

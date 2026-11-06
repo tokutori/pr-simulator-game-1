@@ -11,6 +11,8 @@ fn off_grid_tail_contact_seals_record_and_score_at_the_first_fractional_time() {
         0.5,
         1.0,
         2.0,
+        [0.0; 3],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap();
     let coefficients = StaticPolarCoefficients::try_new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0).unwrap();

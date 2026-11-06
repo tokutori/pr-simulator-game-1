@@ -440,6 +440,8 @@ fn main() {
         0.5,
         1.0,
         1.0,
+        [0.0; 3],
+        [birdman_game_core::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap();
     wind_boundary_contact(&aircraft, &fixture);

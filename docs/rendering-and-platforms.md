@@ -20,11 +20,12 @@
 - 共通の長さはm、物理位置はlocal NED、機体座標はFRDである。
 - 描画basis、quaternion、眼位置、camera rigは[ゲームとUI](gameplay-and-ui.md#camera)に従う。
 
-## Screenの解像度とAuto
+## 描画解像度とAuto
 
 - Flight SetupとPause SettingsはAuto・100%・75%・50%・25%を提供する。
 - 既定はAuto。共有Rustが初期要求の基準として100%・影2048・水面Highを所有し、使用中の品質は実commit後に表示する。
 - 各軸50%は3D画素数のおよそ25%、25%はおよそ6.25%に対応し、UIの論理解像度、画角、入力座標、物理tick、記録を維持する。
+- Screenと設定済みPhone VRは同じ倍率から描画寸法を導出する。HMDはruntimeが所有する最終framebuffer寸法を使用し、解像度選択を無効化する一方、保持した選択値と影・水面・Autoの共通方針を継続する。
 
 | Scene | 有効な品質方針 |
 |---|---|
@@ -44,6 +45,7 @@
 - 明示ManualとAuto解除では保持した三値へ戻す。
 - 要求とACKはepochと三値を照合し、全資源を準備してからcommitする。品質とframebuffer寸法は同じ認可済みACKから保持し、resizeの生観測を旧commitの寸法へ上書きしない。
 - 準備失敗は既存資源と原因を保持する。
+- 計測の可否は実rendererのtimestamp観測から決め、未取得・非対応の計測は既定の非対応方針へ接続する。
 - commit後の旧資源cleanup失敗では新しい適用済み値と原因を保持し、準備失敗と区別する。
 
 初期窓は最初の有効GPU source時刻から2秒とする。8 ms区間ごとの最大GPU spanを代表値とし、そのp95を使用する。
@@ -83,9 +85,15 @@
 - 反射targetは有効3D寸法に追随する。shadowのみの変更では既存の解像度targetを保持する。
 - shadow調整はmap寸法だけを変更し、cascade、bias、太陽条件を保持する。
 
-- Phone VRは元の描画倍率、WebXRはruntimeのcompositor解像度を維持する。
-- VR中はScreen Autoを停止し、復帰時はepoch/readinessを再準備して保持設定へ戻る。
-- Webのrenderer共有shadow適用値はVR切替後も保持する。
+- Autoは全表示方式で実target・GPU計測能力・資源準備状態に従って動作する。寸法が固定されたtargetでは解像度を固定し、shadowと水面を同じ共有policyで調整する。
+- 表示先の交代では計測epochとreadinessを更新し、要求した品質と実寸法の交換ACKを受けてから新しい計測窓を開始する。
+
+## 表示の色調整
+
+- 明るさ・コントラスト・彩度は各0.5〜1.5、既定値は1.0とし、飛行設定と一時停止中の描画設定から選ぶ。共有Rustが検証・保存・復元と完成した調整値を所有する。
+- 3Dシーンの線型RGBへ、明るさの乗算、中間灰色0.18を基準とする線型コントラスト、線型輝度からの彩度混合を順に適用する。地形・機体・水面・天空と両眼が同じ式を使う。
+- Nativeは既存のカメラ別ColorGradingへ露出・全明度帯で同値のASC傾きと切片・彩度を転写し、シーン材質が適用する。Webは同じ値をシーン材質と天空のCustomToneMappingへ転写する。
+- 反射用の画像は調整前の値を保持し、表示シーンとの合成後に一度調整する。Menu・HUD・カーソルと通常画面のUIは固有の色を保つ。
 
 ## 共有水面モデル
 

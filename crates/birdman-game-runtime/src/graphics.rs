@@ -246,8 +246,7 @@ impl GraphicsOwner {
                 || context.screen_extent != observation.screen_extent_px
                 || context.xr_extent != observation.xr_extent_px
             {
-                let own_commit = scope != ScreenRenderScope::Immersive
-                    && context.screen_extent == observation.screen_extent_px
+                let own_commit = context.screen_extent == observation.screen_extent_px
                     && context.xr_extent == observation.xr_extent_px
                     && expected_extent == Some(observation.extent_px);
                 context.observed_extent = observation.extent_px;
@@ -479,7 +478,7 @@ impl GraphicsOwner {
             },
         );
         let extent_px = match mode {
-            GameUiPresentationMode::Screen => {
+            GameUiPresentationMode::Screen | GameUiPresentationMode::PhoneVr => {
                 if context.screen_extent.into_iter().any(|value| value == 0) {
                     return None;
                 }
@@ -487,7 +486,6 @@ impl GraphicsOwner {
                     .scale
                     .physical_size(context.screen_extent[0], context.screen_extent[1])
             }
-            GameUiPresentationMode::PhoneVr => context.screen_extent,
             GameUiPresentationMode::Hmd => context.xr_extent?,
         };
         extent_px
@@ -503,6 +501,17 @@ impl GraphicsOwner {
                     extent_px[1].div_ceil(2).clamp(128, 1024),
                 ],
             })
+    }
+
+    pub(super) fn resolution_constraint(
+        &mut self,
+        adjustable: bool,
+        now: f64,
+    ) -> Result<(), ScreenRenderAutoError> {
+        if let Some(policy) = &mut self.policy {
+            policy.set_resolution_adjustable(adjustable, now)?;
+        }
+        Ok(())
     }
 
     pub(super) fn synchronize(
@@ -736,7 +745,7 @@ mod tests {
                 .target(GameUiPresentationMode::PhoneVr)
                 .unwrap()
                 .extent_px,
-            [1283, 723]
+            [641, 361]
         );
         assert_eq!(
             owner.target(GameUiPresentationMode::Hmd).unwrap().extent_px,

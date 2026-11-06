@@ -46,12 +46,7 @@ pub fn flight_state_from_composite_cg_launch(
 ) -> Result<FlightState, DynamicsError> {
     let total_mass = aircraft.airframe_mass_kg() + aircraft.pilot_mass_kg();
     let pilot_mass_fraction = aircraft.pilot_mass_kg() / total_mass;
-    let composite_cg_offset_body = BodyVector::try_new(
-        pilot_mass_fraction * launch.pilot_position_m,
-        0.0,
-        pilot_mass_fraction * aircraft.pilot_vertical_offset_m(),
-    )
-    .map_err(map_math_error)?;
+    let composite_cg_offset_body = aircraft.composite_center_of_mass(launch.pilot_position_m)?;
     let composite_cg_position_offset_ned = launch
         .attitude_body_to_ned
         .body_to_ned(composite_cg_offset_body)
@@ -102,6 +97,89 @@ pub(crate) fn prepare_scenario_launch(
     launch: CompositeCgLaunchConditions,
 ) -> Result<FlightState, FlightScenarioError> {
     flight_state_from_composite_cg_launch(aircraft, launch).map_err(FlightScenarioError::Launch)
+}
+
+/// Derives the display state during the launch roll preceding the sealed launch.
+///
+/// The roll is the final segment of a virtual constant-acceleration run that
+/// starts from rest at the rear end of the launch platform and reaches the
+/// sealed initial state at the front lip. `seconds_until_launch` selects the
+/// segment: zero returns the initial state unchanged, and a value beyond the
+/// full roll duration holds the aircraft at rest at the rear end. The roll
+/// follows the deck direction defined by the platform heading and downward
+/// slope, its lip speed equals the initial velocity component along that
+/// direction, and the attitude and pilot state stay at the initial values,
+/// so the position is continuous with the sealed launch state.
+pub fn flight_state_during_launch_roll(
+    initial: FlightState,
+    platform_length_meters: f64,
+    heading_rad: f64,
+    downward_slope_rad: f64,
+    seconds_until_launch: f64,
+) -> Result<FlightState, FlightScenarioError> {
+    if !platform_length_meters.is_finite()
+        || platform_length_meters <= 0.0
+        || !heading_rad.is_finite()
+        || !downward_slope_rad.is_finite()
+        || !(0.0..core::f64::consts::FRAC_PI_2).contains(&downward_slope_rad)
+        || !seconds_until_launch.is_finite()
+        || seconds_until_launch < 0.0
+    {
+        return Err(FlightScenarioError::Launch(DynamicsError::NonFinite));
+    }
+    if seconds_until_launch == 0.0 {
+        return Ok(initial);
+    }
+    let map_error = |error: MathError| FlightScenarioError::Launch(map_math_error(error));
+    let (heading_sine, heading_cosine) = libm::sincos(heading_rad);
+    let (slope_sine, slope_cosine) = libm::sincos(downward_slope_rad);
+    let deck_forward = NedVector::try_new(
+        heading_cosine * slope_cosine,
+        heading_sine * slope_cosine,
+        slope_sine,
+    )
+    .map_err(map_error)?;
+    let lip_speed_mps = initial
+        .datum_velocity_ned()
+        .dot(deck_forward)
+        .map_err(map_error)?;
+    if !lip_speed_mps.is_finite() || lip_speed_mps <= 0.0 {
+        return Err(FlightScenarioError::Launch(DynamicsError::NonFinite));
+    }
+    let deck_length_meters = platform_length_meters / slope_cosine;
+    let acceleration_mps2 = lip_speed_mps * lip_speed_mps / (2.0 * deck_length_meters);
+    let full_duration_seconds = 2.0 * deck_length_meters / lip_speed_mps;
+    let virtual_elapsed_seconds = full_duration_seconds - seconds_until_launch;
+    let (distance_behind_lip_meters, speed_mps) = if virtual_elapsed_seconds <= 0.0 {
+        (deck_length_meters, 0.0)
+    } else {
+        (
+            deck_length_meters
+                - 0.5 * acceleration_mps2 * virtual_elapsed_seconds * virtual_elapsed_seconds,
+            acceleration_mps2 * virtual_elapsed_seconds,
+        )
+    };
+    if !distance_behind_lip_meters.is_finite() || !speed_mps.is_finite() {
+        return Err(FlightScenarioError::Launch(DynamicsError::NonFinite));
+    }
+    let position = initial
+        .datum_position_ned()
+        .translated(
+            deck_forward
+                .scaled(-distance_behind_lip_meters)
+                .map_err(map_error)?,
+        )
+        .map_err(map_error)?;
+    let velocity = deck_forward.scaled(speed_mps).map_err(map_error)?;
+    FlightState::try_new(
+        position,
+        velocity,
+        initial.attitude_body_to_ned(),
+        initial.angular_velocity_body(),
+        initial.pilot_position_m(),
+        initial.pilot_velocity_mps(),
+    )
+    .map_err(FlightScenarioError::Launch)
 }
 
 pub(crate) fn prepare_scenario_contact(
@@ -198,12 +276,9 @@ pub(crate) fn derive_flight_telemetry(
 ) -> Result<FlightTelemetry, FlightTelemetryError> {
     let mass_fraction =
         aircraft.pilot_mass_kg() / (aircraft.airframe_mass_kg() + aircraft.pilot_mass_kg());
-    let offset_body = BodyVector::try_new(
-        mass_fraction * state.pilot_position_m(),
-        0.0,
-        mass_fraction * aircraft.pilot_vertical_offset_m(),
-    )
-    .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+    let offset_body = aircraft
+        .composite_center_of_mass(state.pilot_position_m())
+        .map_err(FlightTelemetryError::Dynamics)?;
     let position_ned = state
         .datum_position_ned()
         .translated(
@@ -277,7 +352,8 @@ fn map_math_error(error: MathError) -> DynamicsError {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompositeCgLaunchConditions, derive_flight_telemetry, flight_state_from_composite_cg_launch,
+        CompositeCgLaunchConditions, derive_flight_telemetry, flight_state_during_launch_roll,
+        flight_state_from_composite_cg_launch,
     };
     use crate::dynamics::{AircraftModel, DynamicsError, FlightState};
     use crate::math::{BodyVector, InertiaTensor, NedPoint, NedVector, UnitQuaternion};
@@ -292,6 +368,8 @@ mod tests {
             0.5,
             1.0,
             2.0,
+            [0.0; 3],
+            [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
         )
         .unwrap()
     }
@@ -453,6 +531,8 @@ mod tests {
             f64::MAX,
             f64::MAX,
             f64::MAX,
+            [0.0; 3],
+            [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
         )
         .unwrap();
         let extreme_launch = CompositeCgLaunchConditions::try_new(
@@ -551,5 +631,109 @@ mod tests {
             telemetry.wind_velocity_ned_mps.components(),
             [2.0, 0.0, 0.0]
         );
+    }
+
+    fn roll_state(velocity: [f64; 3]) -> FlightState {
+        FlightState::try_new(
+            NedPoint::try_new(0.0, 0.0, -10.0).unwrap(),
+            NedVector::try_new(velocity[0], velocity[1], velocity[2]).unwrap(),
+            UnitQuaternion::IDENTITY,
+            BodyVector::zero(),
+            0.25,
+            0.0,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn launch_roll_returns_the_initial_state_at_zero_seconds_until_launch() {
+        let initial = roll_state([10.0, 0.0, 0.0]);
+        let rolled = flight_state_during_launch_roll(initial, 20.0, 0.0, 0.0, 0.0).unwrap();
+        assert_eq!(rolled, initial);
+    }
+
+    #[test]
+    fn launch_roll_follows_constant_acceleration_from_rest_at_the_rear_end() {
+        let initial = roll_state([10.0, 0.0, 0.0]);
+        // Lip speed 10 m/s over a 20 m deck: acceleration 2.5 m/s^2, full roll 4 s.
+        let rear = flight_state_during_launch_roll(initial, 20.0, 0.0, 0.0, 4.0).unwrap();
+        assert_vector_close(
+            rear.datum_position_ned().components(),
+            [-20.0, 0.0, -10.0],
+            1.0e-12,
+        );
+        assert_vector_close(
+            rear.datum_velocity_ned().components(),
+            [0.0, 0.0, 0.0],
+            1.0e-12,
+        );
+        // One second before launch the virtual roll has run for 3 s:
+        // 8.75 m behind the lip at 7.5 m/s.
+        let late = flight_state_during_launch_roll(initial, 20.0, 0.0, 0.0, 1.0).unwrap();
+        assert_vector_close(
+            late.datum_position_ned().components(),
+            [-8.75, 0.0, -10.0],
+            1.0e-12,
+        );
+        assert_vector_close(
+            late.datum_velocity_ned().components(),
+            [7.5, 0.0, 0.0],
+            1.0e-12,
+        );
+        // Beyond the full roll duration the aircraft waits at rest at the rear end.
+        let waiting = flight_state_during_launch_roll(initial, 20.0, 0.0, 0.0, 9.0).unwrap();
+        assert_eq!(waiting, rear);
+        // Attitude and pilot state stay at the sealed initial values.
+        assert_eq!(late.attitude_body_to_ned(), initial.attitude_body_to_ned());
+        assert_eq!(late.pilot_position_m(), initial.pilot_position_m());
+    }
+
+    #[test]
+    fn launch_roll_moves_parallel_to_a_sloped_deck() {
+        let slope = 3.5_f64.to_radians();
+        let heading = -core::f64::consts::FRAC_PI_4;
+        let forward = [
+            heading.cos() * slope.cos(),
+            heading.sin() * slope.cos(),
+            slope.sin(),
+        ];
+        let speed = 9.7;
+        let initial = roll_state([speed * forward[0], speed * forward[1], speed * forward[2]]);
+        // A countdown longer than the full roll leaves the aircraft at the rear
+        // end, one deck length behind the lip along the deck direction.
+        let rear = flight_state_during_launch_roll(initial, 20.0, heading, slope, 60.0).unwrap();
+        let deck_length = 20.0 / slope.cos();
+        assert_vector_close(
+            rear.datum_position_ned().components(),
+            [
+                -deck_length * forward[0],
+                -deck_length * forward[1],
+                -10.0 - deck_length * forward[2],
+            ],
+            1.0e-9,
+        );
+        assert_vector_close(
+            rear.datum_velocity_ned().components(),
+            [0.0, 0.0, 0.0],
+            1.0e-12,
+        );
+    }
+
+    #[test]
+    fn launch_roll_rejects_invalid_inputs() {
+        let initial = roll_state([10.0, 0.0, 0.0]);
+        for (length, slope, seconds) in [
+            (0.0, 0.0, 1.0),
+            (-1.0, 0.0, 1.0),
+            (20.0, core::f64::consts::FRAC_PI_2, 1.0),
+            (20.0, -0.1, 1.0),
+            (20.0, 0.0, -1.0),
+            (20.0, 0.0, f64::NAN),
+        ] {
+            assert!(flight_state_during_launch_roll(initial, length, 0.0, slope, seconds).is_err());
+        }
+        // A launch velocity with no component along the deck cannot drive a roll.
+        let sideways = roll_state([0.0, 10.0, 0.0]);
+        assert!(flight_state_during_launch_roll(sideways, 20.0, 0.0, 0.0, 1.0).is_err());
     }
 }

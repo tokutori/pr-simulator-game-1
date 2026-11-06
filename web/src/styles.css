@@ -44,16 +44,11 @@ body {
 
 .render-frame-rate {
   position: fixed;
-  top: max(0.5rem, env(safe-area-inset-top));
-  right: max(0.5rem, env(safe-area-inset-right));
   z-index: 10;
-  padding: 0.25rem 0.5rem;
   border-radius: 0.25rem;
-  background: rgb(2 10 18 / 75%);
-  color: #f3f4e8;
-  font: 600 14px/1.3 monospace;
   white-space: nowrap;
   pointer-events: none;
+  font-family: monospace;
 }
 
 .render-frame-rate[hidden] {
@@ -77,14 +72,14 @@ body {
 }
 
 .screen-ui-shell[data-shared="true"] {
+  font-size: var(--game-ui-body-font-size);
+  font-weight: var(--game-ui-body-font-weight);
+  line-height: var(--game-ui-body-line-height);
   color: var(--game-ui-text);
   background: color-mix(in srgb, var(--game-ui-panel) calc(var(--game-ui-opacity) * 100%), transparent);
 }
 
 .screen-ui-shell[data-shared="true"] .screen-ui-description,
-.screen-ui-shell[data-shared="true"] .screen-ui-choice small {
-  color: var(--game-ui-muted-text);
-}
 
 .screen-ui-shell[data-shared="true"] .screen-ui-controls,
 .screen-ui-section-controls {
@@ -174,7 +169,6 @@ body {
   display: block;
   border: 1px solid rgb(185 214 207 / 45%);
   border-radius: 0.75rem;
-  box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 28%);
 }
 
 .screen-ui-shell[data-shared="true"][data-shell="pause_settings"] > h1,
@@ -202,7 +196,11 @@ body {
 
 
 .screen-ui-shell[data-shared="true"][data-passthrough="true"] {
+  border: 0;
+  border-radius: 0;
   pointer-events: none;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .screen-ui-shell[data-shared="true"][data-passthrough="false"] {
@@ -230,7 +228,6 @@ body {
   border: 1px solid rgb(185 214 207 / 45%);
   border-radius: 1rem;
   background: rgb(16 36 43 / 92%);
-  box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 28%);
 }
 
 .build-version {
@@ -341,7 +338,7 @@ body {
   border: 0;
   background: transparent;
   color: #f3f4e8;
-  text-shadow: 0 1px 3px #10242b, 0 0 2px #10242b;
+  text-shadow: var(--hud-text-shadow);
   pointer-events: none;
 }
 
@@ -356,24 +353,24 @@ body {
 
 .flight-hud-content { position: relative; width: 100%; height: 100%; }
 .flight-hud-group { display: contents; }
-.flight-hud-node { position: absolute; box-sizing: border-box; display: grid; min-width: 0; align-content: start; overflow-wrap: anywhere; line-height: 1.5; }
+.flight-hud-node { position: absolute; box-sizing: border-box; display: grid; min-width: 0; align-content: start; overflow-wrap: anywhere; line-height: inherit; }
 .flight-hud-node:not([data-kind="text"]) { padding: var(--hud-padding-y) var(--hud-padding-x); border-radius: 0.3rem; background: var(--hud-card-background); }
 .flight-hud-node[data-kind="text"] { display: block; }
 .flight-hud-caption { color: var(--hud-muted-text); font-size: 1em; }
-.flight-hud-value { white-space: pre-line; font-variant-numeric: tabular-nums; line-height: 1.5; }
-.flight-hud-node[data-tone="warning"] { color: var(--hud-warning-text); font-weight: 700; }
+.flight-hud-value { white-space: pre-line; font-variant-numeric: tabular-nums; line-height: inherit; }
+.flight-hud-node[data-tone="warning"] { color: var(--hud-warning-text); font-weight: var(--hud-warning-font-weight); }
 .flight-hud-node[data-tone="muted"] { color: var(--hud-muted-text); }
 .flight-hud-node svg { display: block; width: 100%; max-width: 100%; justify-self: center; }
 
 .screen-ui-shell h1,
 .screen-ui-panel h2 {
   margin: 0;
-  line-height: 1.2;
+  line-height: inherit;
 }
 
 .screen-ui-description {
   margin: 0.75rem 0 1.5rem;
-  color: #c7d7d1;
+  color: var(--game-ui-muted-text);
 }
 
 @media (max-width: 600px) {
@@ -388,7 +385,9 @@ body {
 }
 
 .screen-ui-panel h2 {
-  font-size: 1rem;
+  font-size: var(--game-ui-section-font-size);
+  font-weight: var(--game-ui-section-font-weight);
+  line-height: var(--game-ui-section-line-height);
   color: #c7d7d1;
 }
 
@@ -442,7 +441,8 @@ body {
 
 .screen-ui-controls button.screen-ui-choice {
   display: grid;
-  gap: 0.35rem;
+  gap: var(--game-ui-control-gap);
+  white-space: pre-line;
   min-width: 0;
   height: 100%;
   text-align: left;
@@ -451,11 +451,6 @@ body {
   border-color: #547278;
 }
 
-.screen-ui-choice small {
-  font-size: 0.8rem;
-  line-height: 1.45;
-  color: #c7d7d1;
-}
 
 .screen-ui-controls button.screen-ui-choice[aria-pressed="true"] {
   background: #356d68;
@@ -464,7 +459,7 @@ body {
 
 .screen-ui-controls button[data-emphasis="primary"] {
   min-height: 3.25rem;
-  font-weight: 700;
+  font-weight: var(--game-ui-section-font-weight);
   background: #356d68;
   border-color: #d2e6c4;
 }
@@ -485,7 +480,6 @@ body {
 .screen-ui-shell[data-scene="FlightSetup"] .screen-ui-status,
 .screen-ui-shell[data-scene="Briefing"] .screen-ui-status {
   overflow-wrap: anywhere;
-  line-height: 1.6;
 }
 
 .screen-ui-controls button:focus-visible,
@@ -518,10 +512,11 @@ body {
 }
 
 .screen-ui-status[data-emphasis="primary"] {
-  color: var(--game-ui-text, #f3f4e8);
-  font-size: 2rem;
-  font-weight: 700;
+  font-size: var(--game-ui-primary-status-font-size);
+  font-weight: var(--game-ui-primary-status-font-weight);
+  line-height: var(--game-ui-primary-status-line-height);
   text-align: center;
+  color: var(--game-ui-text);
 }
 
 .screen-ui-shell[data-scene="Boot"] .screen-ui-status {
@@ -582,14 +577,16 @@ body {
 
 .screen-ui-field {
   min-width: 0;
-  padding: 0.5rem;
+  padding: var(--game-ui-control-padding-y) var(--game-ui-control-padding-x);
   border-radius: 0.35rem;
   background: var(--game-ui-choice);
 }
 
 .screen-ui-field dt {
   color: var(--game-ui-muted-text);
-  font-size: 0.85em;
+  font-size: var(--game-ui-secondary-font-size);
+  font-weight: var(--game-ui-secondary-font-weight);
+  line-height: var(--game-ui-secondary-line-height);
 }
 
 .screen-ui-field dd {
@@ -597,7 +594,7 @@ body {
   flex-wrap: wrap;
   justify-content: flex-end;
   align-items: baseline;
-  gap: 0.35em;
+  gap: var(--game-ui-control-gap);
   margin: 0;
 }
 
@@ -608,7 +605,9 @@ body {
 
 .screen-ui-field-unit {
   color: var(--game-ui-muted-text);
-  font-size: 0.85em;
+  font-size: var(--game-ui-secondary-font-size);
+  font-weight: var(--game-ui-secondary-font-weight);
+  line-height: var(--game-ui-secondary-line-height);
 }
 
 .screen-ui-chart svg {
@@ -700,4 +699,23 @@ body {
   height: var(--chart-legend-gradient-height);
   border-radius: var(--chart-legend-gradient-radius);
   background: linear-gradient(90deg, var(--chart-series-start), var(--chart-series-end));
+}
+
+.screen-ui-shell[data-shared="true"] .screen-ui-section > legend {
+  font-size: var(--game-ui-section-font-size);
+  line-height: var(--game-ui-section-line-height);
+  font-weight: var(--game-ui-section-font-weight);
+}
+.screen-ui-shell[data-shared="true"] .screen-ui-controls button,
+.screen-ui-shell[data-shared="true"] .screen-ui-toggle,
+.screen-ui-shell[data-shared="true"] .screen-ui-range,
+.screen-ui-shell[data-shared="true"] .screen-ui-status {
+  padding: var(--game-ui-control-padding-y) var(--game-ui-control-padding-x);
+  gap: var(--game-ui-control-gap);
+}
+
+.screen-ui-shell[data-shared="true"] > h1 {
+  font-size: var(--game-ui-title-font-size);
+  line-height: var(--game-ui-title-line-height);
+  font-weight: var(--game-ui-title-font-weight);
 }

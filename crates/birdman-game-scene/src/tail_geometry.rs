@@ -202,6 +202,7 @@ mod tests {
         .map(|(point, chord)| AircraftSectionDocument {
             quarter_chord_frd_m: point,
             chord_m: chord,
+            twist_rad: 0.0,
         })
         .collect();
         let mut document = birdman_game_app::registered_aircraft()

@@ -13,7 +13,7 @@ use crate::dynamics::{AircraftModel, ExternalLoadProvider, FlightState, LoadErro
 use crate::math::{BodyVector, NedPoint, NedVector, atan2, hypot2};
 use crate::wind_field::WindField;
 
-const MAXIMUM_ANGLE_RAD: f64 = 0.2;
+const MAXIMUM_CONTROLLED_FLOW_ANGLE_RAD: f64 = 0.2;
 
 /// Physical effective incidence of the horizontal and vertical tails.
 ///
@@ -29,7 +29,7 @@ pub struct TailIncidence {
 }
 
 impl TailIncidence {
-    /// Validates finite physical incidences in the inclusive +/-0.2 rad domain.
+    /// Validates finite principal angles; the aircraft actuator owns mechanical stops.
     pub fn try_new(elevator_rad: f64, rudder_rad: f64) -> Result<Self, HybridError> {
         if !elevator_rad.is_finite() || !rudder_rad.is_finite() {
             return Err(HybridError::new(
@@ -37,17 +37,13 @@ impl TailIncidence {
                 AeroError::NonFinite,
             ));
         }
-        if elevator_rad.abs() > MAXIMUM_ANGLE_RAD {
-            return Err(HybridError::outside(
-                HybridSite::TailIncidence,
-                HybridLimit::ElevatorIncidence,
-            ));
-        }
-        if rudder_rad.abs() > MAXIMUM_ANGLE_RAD {
-            return Err(HybridError::outside(
-                HybridSite::TailIncidence,
-                HybridLimit::RudderIncidence,
-            ));
+        for (angle, limit) in [
+            (elevator_rad, HybridLimit::ElevatorIncidence),
+            (rudder_rad, HybridLimit::RudderIncidence),
+        ] {
+            if angle.abs() > core::f64::consts::PI {
+                return Err(HybridError::outside(HybridSite::TailIncidence, limit));
+            }
         }
         Ok(Self {
             elevator_rad,
@@ -198,6 +194,7 @@ impl<'a> HybridAerodynamicLoad<'a> {
     pub(crate) fn tail_incidence_intervals(
         &self,
         state: &FlightState,
+        physical_limits: [crate::TailActuatorLimits; 2],
     ) -> Result<[[f64; 2]; 2], HybridError> {
         let mut intervals = [[0.0; 2]; 2];
         for surface in self.model.surfaces {
@@ -206,7 +203,7 @@ impl<'a> HybridAerodynamicLoad<'a> {
                 HybridSurfaceRole::HorizontalTail => 0,
                 HybridSurfaceRole::VerticalTail => 1,
             };
-            intervals[axis] = [-MAXIMUM_ANGLE_RAD, MAXIMUM_ANGLE_RAD];
+            intervals[axis] = physical_limits[axis].incidence_bounds_rad();
         }
         self.evaluate_hybrid_with_intervals(state, TailIncidence::neutral(), Some(&mut intervals))?;
         Ok(intervals)
@@ -308,7 +305,7 @@ impl<'a> HybridAerodynamicLoad<'a> {
             ));
         }
         let alpha = atan2(down, forward);
-        if atan2(side, alpha_speed).abs() > MAXIMUM_ANGLE_RAD {
+        if atan2(side, alpha_speed).abs() > MAXIMUM_CONTROLLED_FLOW_ANGLE_RAD {
             return Err(HybridError::outside(
                 HybridSite::Datum,
                 HybridLimit::GlobalBeta,
@@ -473,8 +470,8 @@ impl<'a> HybridAerodynamicLoad<'a> {
 }
 
 fn intersect_tail_incidence_interval(interval: &mut [f64; 2], alpha_difference: f64) {
-    interval[0] = interval[0].max(-MAXIMUM_ANGLE_RAD - alpha_difference);
-    interval[1] = interval[1].min(MAXIMUM_ANGLE_RAD - alpha_difference);
+    interval[0] = interval[0].max(-MAXIMUM_CONTROLLED_FLOW_ANGLE_RAD - alpha_difference);
+    interval[1] = interval[1].min(MAXIMUM_CONTROLLED_FLOW_ANGLE_RAD - alpha_difference);
 }
 
 impl ExternalLoadProvider for HybridAerodynamicLoad<'_> {
@@ -511,13 +508,13 @@ fn proxy_increment(
     let actual_alpha = local_alpha(proxy, actual, HybridFlowKind::Actual)?;
     let reference_alpha = local_alpha(proxy, reference.velocity, HybridFlowKind::Reference)?;
     let alpha_difference = actual_alpha - reference_alpha;
-    if alpha_difference.abs() > MAXIMUM_ANGLE_RAD {
+    if alpha_difference.abs() > MAXIMUM_CONTROLLED_FLOW_ANGLE_RAD {
         return Err(HybridError::outside(
             site,
             HybridLimit::LocalAlphaDifference,
         ));
     }
-    if (alpha_difference + delta).abs() > MAXIMUM_ANGLE_RAD {
+    if (alpha_difference + delta).abs() > MAXIMUM_CONTROLLED_FLOW_ANGLE_RAD {
         return Err(HybridError::outside(
             site,
             HybridLimit::ControlledAlphaDifference,
@@ -636,7 +633,7 @@ fn local_alpha(
     if forward <= 0.0 {
         return Err(HybridError::outside(site, HybridLimit::LocalForward(flow)));
     }
-    if atan2(span, hypot2(forward, down)).abs() > MAXIMUM_ANGLE_RAD {
+    if atan2(span, hypot2(forward, down)).abs() > MAXIMUM_CONTROLLED_FLOW_ANGLE_RAD {
         return Err(HybridError::outside(
             site,
             HybridLimit::LocalSpanAngle(flow),

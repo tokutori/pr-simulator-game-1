@@ -135,6 +135,8 @@ impl TestAircraft {
             0.4,
             0.3,
             0.8,
+            [0.0; 3],
+            [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
         )
         .map_err(TestAircraftError::Dynamics)?;
         let definition = Self {

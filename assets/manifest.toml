@@ -12,9 +12,9 @@ processing = "Original SVG vector artwork; no external source transformation; UT
 
 [[assets]]
 path = "assets/aircraft/playable-glider-v7.json"
-sha256 = "7b04c2918e79b17535a51b16ad2c4dfe5d1218b8729ac14ccfebb698c979a701"
+sha256 = "5f71fcf543afb8119ba05f9294bf0e09e485b3aa376ef28328da4d7fd2f42132"
 source = "Original fictional glider parameters and procedural structural definition"
-source_version = "Aircraft document schema 4; physical model 7"
+source_version = "Aircraft document schema 5; physical model 7"
 license = "MIT"
 license_url = "../LICENSE"
 attribution = "pr-simulator-game contributors"

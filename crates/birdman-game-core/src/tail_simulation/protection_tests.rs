@@ -518,6 +518,7 @@ pub(super) fn commands(
         input.desired_rate,
         previous.flight_state.angular_velocity_body(),
         PHYSICS_DT_SECONDS,
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap()
 }
@@ -592,7 +593,10 @@ fn full_inputs_protect_both_signed_tails_without_changing_authority_requests_or_
             -50.0,
         );
         let intervals = loads
-            .tail_incidence_intervals(&previous.flight_state)
+            .tail_incidence_intervals(
+                &previous.flight_state,
+                [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
+            )
             .unwrap();
         let bounds = intervals.map(|interval| if sign > 0.0 { interval[1] } else { interval[0] });
         previous.incidence =
@@ -693,7 +697,10 @@ fn current_valid_request_is_protected_at_later_stages_but_not_beyond_slew_reach(
         -50.0,
     );
     let intervals = loads
-        .tail_incidence_intervals(&previous.flight_state)
+        .tail_incidence_intervals(
+            &previous.flight_state,
+            [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
+        )
         .unwrap();
     previous.incidence =
         TailIncidence::try_new(intervals[0][1] - 0.0001, intervals[1][1] - 0.0001).unwrap();
@@ -781,7 +788,10 @@ fn failed_neutral_scan_preserves_original_requested_tail_failure() {
         -50.0,
     );
     let intervals = tail_loads
-        .tail_incidence_intervals(&previous.flight_state)
+        .tail_incidence_intervals(
+            &previous.flight_state,
+            [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
+        )
         .unwrap();
     previous.incidence =
         TailIncidence::try_new(intervals[0][1] - 0.005, intervals[1][1] - 0.005).unwrap();
@@ -807,7 +817,10 @@ fn failed_neutral_scan_preserves_original_requested_tail_failure() {
         }
     ));
     let scan = loads
-        .tail_incidence_intervals(&previous.flight_state)
+        .tail_incidence_intervals(
+            &previous.flight_state,
+            [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
+        )
         .unwrap_err();
     assert_eq!(scan.limit(), Some(HybridLimit::LocalSpeed));
     assert_eq!(scan.stage(), None);
@@ -852,7 +865,10 @@ fn empty_reachable_intersection_returns_nominal_error_without_clamping_panic() {
         TailPilotPositionCommand::Hold,
     );
     let intervals = loads
-        .tail_incidence_intervals(&previous.flight_state)
+        .tail_incidence_intervals(
+            &previous.flight_state,
+            [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
+        )
         .unwrap();
     assert!(intervals[0][1] < previous.incidence.elevator_rad() - 0.01);
     assert!(intervals[1][1] < previous.incidence.rudder_rad() - 0.01);

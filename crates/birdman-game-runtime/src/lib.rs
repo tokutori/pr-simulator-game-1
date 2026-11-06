@@ -341,20 +341,21 @@ impl ApplicationRuntime {
         {
             return Ok(self.output(None, Vec::new(), false));
         }
-        let projection_baseline = (self.display.state().active_mode()
-            == Some(GameUiPresentationMode::Screen)
-            && (matches!(
-                &input,
-                ApplicationInput::Graphics {
-                    observation: ApplicationGraphicsObservation::GpuCompleted { .. },
-                    ..
-                }
-            ) || matches!(&input, ApplicationInput::Platform { observation }
-                if observation.surface == self.surface_observation)))
+        let projection_baseline = (matches!(
+            &input,
+            ApplicationInput::Graphics {
+                observation: ApplicationGraphicsObservation::GpuCompleted { .. },
+                ..
+            }
+        ) || matches!(&input, ApplicationInput::Platform { observation }
+                if observation.surface == self.surface_observation))
         .then(|| {
             (
                 self.graphics.resource(),
-                self.graphics.target(GameUiPresentationMode::Screen),
+                self.display
+                    .state()
+                    .active_mode()
+                    .and_then(|mode| self.graphics.target(mode)),
                 self.graphics.epoch(),
             )
         });
@@ -1167,7 +1168,6 @@ impl ApplicationRuntime {
         }
         if !self.boot.active()
             && requests.is_empty()
-            && self.display.state().active_mode() == Some(GameUiPresentationMode::Screen)
             && self
                 .retained
                 .as_ref()
@@ -1175,7 +1175,10 @@ impl ApplicationRuntime {
             && projection_baseline
                 == Some((
                     self.graphics.resource(),
-                    self.graphics.target(GameUiPresentationMode::Screen),
+                    self.display
+                        .state()
+                        .active_mode()
+                        .and_then(|mode| self.graphics.target(mode)),
                     self.graphics.epoch(),
                 ))
         {
@@ -1213,7 +1216,6 @@ impl ApplicationRuntime {
             application: &self.application,
             ui: &self.ui,
             viewport: &self.platform.viewport,
-            layout: &self.retained.as_ref().unwrap().layout,
             display: self
                 .display
                 .state()
@@ -1362,7 +1364,6 @@ impl ApplicationRuntime {
                     repeat,
                 });
             } else if key == KeyboardKey::C
-                && self.platform.presentation_mode == GameUiPresentationMode::Screen
                 && !self.ui.credits_open
                 && pressed
                 && !repeat
@@ -1869,25 +1870,23 @@ impl ApplicationRuntime {
     }
 
     fn render_scope(&self) -> birdman_game_presentation::screen_render_auto::ScreenRenderScope {
-        if self
-            .display
-            .state()
-            .active_mode()
-            .is_some_and(|mode| mode != GameUiPresentationMode::Screen)
-        {
-            birdman_game_presentation::screen_render_auto::ScreenRenderScope::Immersive
-        } else {
-            birdman_game_presentation::game_ui::game_ui_scene(
-                self.application.core_session().snapshot().phase(),
-            )
-            .screen_render_scope()
-        }
+        birdman_game_presentation::game_ui::game_ui_scene(
+            self.application.core_session().snapshot().phase(),
+        )
+        .screen_render_scope()
     }
 
     fn synchronize_graphics(&mut self) -> Result<(), ApplicationRuntimeError> {
+        // HMD images have runtime-owned dimensions; configured Screen/Phone targets can scale.
+        self.graphics
+            .resolution_constraint(
+                self.display.state().active_mode() != Some(GameUiPresentationMode::Hmd),
+                self.observed_ms,
+            )
+            .map_err(ApplicationRuntimeError::Graphics)?;
         let eligible = self.page_visible
             && !self.display.state().pending()
-            && self.display.state().active_mode() == Some(GameUiPresentationMode::Screen);
+            && self.display.state().active_mode().is_some();
         self.graphics
             .synchronize(self.render_scope(), eligible, self.observed_ms)
             .map_err(ApplicationRuntimeError::Graphics)?;

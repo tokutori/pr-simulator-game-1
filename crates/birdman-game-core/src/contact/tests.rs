@@ -399,6 +399,8 @@ fn aircraft() -> AircraftModel {
         0.5,
         1.0,
         2.0,
+        [0.0; 3],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap()
 }

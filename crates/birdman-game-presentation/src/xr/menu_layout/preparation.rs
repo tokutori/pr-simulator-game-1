@@ -61,7 +61,7 @@ pub fn prepare_game_ui_menu(
             .iter()
             .find(|panel| panel.id == input.panel_id && panel.anchor == GameUiAnchor::Menu)
             .ok_or(MenuLayoutFailure::StaleView)?;
-        let source = source_from_view(panel, &view.description, frame, &input)?;
+        let source = source_from_view(panel, &view.description, frame, &input, &view.theme)?;
         let menu_from_panel = Pose {
             position: Vector3 {
                 x: panel.local_position[0],
@@ -92,6 +92,7 @@ fn source_from_view(
     caption: &str,
     frame: &GameUiFrame,
     input: &MenuPreparationInput<'_>,
+    theme: &crate::game_ui::GameUiTheme,
 ) -> Result<MenuLayoutSource, MenuLayoutFailure> {
     let controls = panel
         .controls
@@ -101,27 +102,26 @@ fn source_from_view(
                 GameUiControlContent::FlightTouch { .. } => {
                     return Err(MenuLayoutFailure::InvalidLayout);
                 }
-                GameUiControlContent::Button { presentation, .. } => MenuWidget::Button {
-                    presentation: presentation.clone(),
+                GameUiControlContent::Button { .. } => MenuWidget::Button {
+                    text_style: theme.control_text(&control.content),
                 },
                 GameUiControlContent::Toggle { value, .. } => MenuWidget::Toggle { value: *value },
-                GameUiControlContent::Range { display_value, .. } => MenuWidget::Range {
+                GameUiControlContent::Range { .. } => MenuWidget::Range {
                     display_value: frame
                         .ranges
                         .iter()
                         .find(|value| value.id == control.id)
-                        .map_or(display_value, |value| &value.display_value)
+                        .map_or(&control.display_label, |value| &value.display_value)
                         .clone(),
                 },
-                GameUiControlContent::Status {
-                    value, emphasis, ..
-                } => MenuWidget::Status {
+                GameUiControlContent::Status { emphasis, .. } => MenuWidget::Status {
                     emphasis: *emphasis,
+                    text_style: theme.status_text(*emphasis),
                     value: frame
                         .readouts
                         .iter()
                         .find(|readout| readout.id == control.id)
-                        .map_or(value, |readout| &readout.value)
+                        .map_or(&control.display_label, |readout| &readout.value)
                         .clone(),
                 },
                 GameUiControlContent::Fields { fields, .. } => MenuWidget::Fields {
@@ -214,12 +214,19 @@ fn source_from_view(
             Ok(MenuLayoutControl {
                 id: control.id.clone(),
                 section: Some(control.section.clone()),
-                label: frame
-                    .button_labels
-                    .iter()
-                    .find(|button| button.id == control.id)
-                    .map_or(&control.label, |button| &button.label)
-                    .clone(),
+                label: if matches!(
+                    control.content,
+                    GameUiControlContent::Range { .. } | GameUiControlContent::Status { .. }
+                ) {
+                    String::new()
+                } else {
+                    frame
+                        .button_labels
+                        .iter()
+                        .find(|button| button.id == control.id)
+                        .map_or(&control.display_label, |button| &button.label)
+                        .clone()
+                },
                 widget,
             })
         })
@@ -234,7 +241,17 @@ fn source_from_view(
             height: panel.size[1],
         },
         font_meters: 0.035,
-        font: input.font.clone(),
+        font_size_px: theme.body_text.font_size_px,
+        line_height_px: theme.body_text.line_height_px,
+        title_text: theme.title_text,
+        section_text: theme.section_text,
+        secondary_text: theme.secondary_text,
+        control_padding_px: theme.control_padding_px,
+        control_gap_px: theme.control_gap_px,
+        font: MenuFont {
+            weight: theme.body_text.font_weight,
+            ..input.font.clone()
+        },
         locale: input.locale.to_owned(),
         caption: caption.into(),
         previous_label: "前頁".into(),

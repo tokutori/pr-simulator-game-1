@@ -5,6 +5,34 @@ fn profile() -> TailControlProfile {
     TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap()
 }
 
+#[test]
+fn aircraft_stops_and_axis_rates_bound_controller_requests() {
+    let limits = [
+        TailActuatorLimits::try_new([-0.03, 0.08], 0.1).unwrap(),
+        TailActuatorLimits::try_new([-0.12, 0.02], 0.4).unwrap(),
+    ];
+    let mut previous = TailIncidence::neutral();
+    for _ in 0..20 {
+        let updated = advance_tail_control(
+            previous,
+            profile(),
+            ControlMode::Manual,
+            TailPilotIntent::try_new(1.0, -1.0).unwrap(),
+            target(0.0, 0.0),
+            BodyVector::zero(),
+            0.1,
+            limits,
+        )
+        .unwrap()
+        .incidence();
+        assert!((updated.elevator_rad() - previous.elevator_rad()).abs() <= 0.010000000000001);
+        assert!((updated.rudder_rad() - previous.rudder_rad()).abs() <= 0.040000000000001);
+        previous = updated;
+    }
+    assert_eq!(previous, TailIncidence::try_new(-0.03, 0.02).unwrap());
+    assert!(TailActuatorLimits::try_new([0.01, 0.2], 1.0).is_err());
+}
+
 fn guarded_profile() -> TailControlProfile {
     profile().with_angle_of_attack_guard(
         TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.04, 1.0, 1.6).unwrap(),
@@ -62,9 +90,17 @@ fn alpha_guard_projects_both_pitch_signs_in_every_mode_without_changing_requests
             let pilot = TailPilotIntent::try_new(sign, 0.6).unwrap();
             let desired = target(sign * 0.2, 0.12);
             let rate = observed(0.0, sign * 0.15, 0.0);
-            let nominal =
-                advance_tail_control(previous, profile(), mode, pilot, desired, rate, 0.01)
-                    .unwrap();
+            let nominal = advance_tail_control(
+                previous,
+                profile(),
+                mode,
+                pilot,
+                desired,
+                rate,
+                0.01,
+                [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
+            )
+            .unwrap();
             let guarded = advance_tail_control_at_alpha(
                 previous,
                 guarded_profile(),
@@ -74,6 +110,7 @@ fn alpha_guard_projects_both_pitch_signs_in_every_mode_without_changing_requests
                 rate,
                 0.01,
                 Some(sign * 0.08),
+                [TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
             )
             .unwrap();
             assert_eq!(guarded.commands(), nominal.commands());
@@ -105,6 +142,7 @@ fn alpha_guard_keeps_disabled_undefined_and_unrestricted_controls_identical() {
             desired,
             BodyVector::zero(),
             0.01,
+            [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
         )
         .unwrap();
         for (selected, alpha) in [
@@ -121,7 +159,8 @@ fn alpha_guard_keeps_disabled_undefined_and_unrestricted_controls_identical() {
                     desired,
                     BodyVector::zero(),
                     0.01,
-                    alpha
+                    alpha,
+                    [TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
                 )
                 .unwrap(),
                 nominal
@@ -138,6 +177,7 @@ fn alpha_guard_keeps_disabled_undefined_and_unrestricted_controls_identical() {
             BodyVector::zero(),
             0.01,
             Some(sign * 0.09),
+            [TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
         )
         .unwrap();
         assert_eq!(update.incidence().elevator_rad(), 0.0);
@@ -292,6 +332,7 @@ fn authority_endpoints_shared_blend_and_slew_are_two_axis_only() {
             target(0.0, 0.0),
             observed(50.0, 0.2, -0.2),
             1.0,
+            [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
         )
         .unwrap();
         assert!((update.mixed_target().elevator_rad() - expected[0]).abs() < 1.0e-16);
@@ -308,6 +349,7 @@ fn authority_endpoints_shared_blend_and_slew_are_two_axis_only() {
             target(0.0, 0.0),
             BodyVector::zero(),
             0.01,
+            [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
         )
         .unwrap();
         assert!(
@@ -345,7 +387,8 @@ fn invalid_profile_and_timestep_preserve_previous_incidence() {
                 TailPilotIntent::try_new(0.0, 0.0).unwrap(),
                 target(0.2, 0.2),
                 BodyVector::zero(),
-                timestep
+                timestep,
+                [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
             ),
             Err(TailControlError::Actuator(ActuatorError::InvalidTimeStep))
         );
@@ -460,6 +503,8 @@ fn pilot_position_inverse_rejects_targets_outside_software_travel() {
         0.6,
         0.5,
         1.0,
+        [0.0; 3],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap();
     let mapping = TailPilotPositionMapping::try_new(&aircraft, 0.12).unwrap();

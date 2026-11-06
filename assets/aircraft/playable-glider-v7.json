@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "configuration_id": "bpg041-playable-hybrid-mock",
   "model_version": 7,
   "mass": {
@@ -20,6 +20,11 @@
         0,
         980
       ]
+    ],
+    "airframe_center_of_mass_frd_m": [
+      0.0,
+      0.0,
+      0.0
     ]
   },
   "pilot": {
@@ -43,7 +48,8 @@
             -10.4315,
             0.3356893
           ],
-          "chord_m": 0.38
+          "chord_m": 0.38,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -51,7 +57,8 @@
             -10.105515624999999,
             0.3748074250000002
           ],
-          "chord_m": 0.41714695638985444
+          "chord_m": 0.41714695638985444,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -59,7 +66,8 @@
             -9.77953125,
             0.41392555000000003
           ],
-          "chord_m": 0.45358176692837204
+          "chord_m": 0.45358176692837204,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -67,7 +75,8 @@
             -9.453546875,
             0.4530436749999999
           ],
-          "chord_m": 0.4892950272618607
+          "chord_m": 0.4892950272618607,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -75,7 +84,8 @@
             -9.1275625,
             0.49216180000000004
           ],
-          "chord_m": 0.5242768834155951
+          "chord_m": 0.5242768834155951,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -83,7 +93,8 @@
             -8.801578124999999,
             0.5312799250000001
           ],
-          "chord_m": 0.5585169936296795
+          "chord_m": 0.5585169936296795,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -91,7 +102,8 @@
             -8.47559375,
             0.57039805
           ],
-          "chord_m": 0.592004485436123
+          "chord_m": 0.592004485436123,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -99,7 +111,8 @@
             -8.3452,
             0.5860453
           ],
-          "chord_m": 0.6051862045072264
+          "chord_m": 0.6051862045072264,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -107,7 +120,8 @@
             -8.149609375,
             0.5948468781249999
           ],
-          "chord_m": 0.6247279071797308
+          "chord_m": 0.6247279071797308,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -115,7 +129,8 @@
             -7.823625,
             0.609516175
           ],
-          "chord_m": 0.6566751730148845
+          "chord_m": 0.6566751730148845,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -123,7 +138,8 @@
             -7.497640625,
             0.624185471875
           ],
-          "chord_m": 0.6878335001947324
+          "chord_m": 0.6878335001947324,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -131,7 +147,8 @@
             -7.17165625,
             0.63885476875
           ],
-          "chord_m": 0.7181893371943926
+          "chord_m": 0.7181893371943926,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -139,7 +156,8 @@
             -6.845671875,
             0.653524065625
           ],
-          "chord_m": 0.7477282808557355
+          "chord_m": 0.7477282808557355,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -147,7 +165,8 @@
             -6.5196875,
             0.6681933624999999
           ],
-          "chord_m": 0.7764349802805568
+          "chord_m": 0.7764349802805568,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -155,7 +174,8 @@
             -6.2589,
             0.6799288
           ],
-          "chord_m": 0.798790134731975
+          "chord_m": 0.798790134731975,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -163,7 +183,8 @@
             -6.193703125,
             0.6804503749999999
           ],
-          "chord_m": 0.8042930245924557
+          "chord_m": 0.8042930245924557,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -171,7 +192,8 @@
             -5.86771875,
             0.68305825
           ],
-          "chord_m": 0.8312848108793474
+          "chord_m": 0.8312848108793474,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -179,7 +201,8 @@
             -5.541734375,
             0.685666125
           ],
-          "chord_m": 0.8573913875362862
+          "chord_m": 0.8573913875362862,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -187,7 +210,8 @@
             -5.21575,
             0.6882739999999999
           ],
-          "chord_m": 0.8825922667300823
+          "chord_m": 0.8825922667300823,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -195,7 +219,8 @@
             -4.889765625,
             0.690881875
           ],
-          "chord_m": 0.9068651976177409
+          "chord_m": 0.9068651976177409,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -203,7 +228,8 @@
             -4.56378125,
             0.69348975
           ],
-          "chord_m": 0.9301858889822163
+          "chord_m": 0.9301858889822163,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -211,7 +237,8 @@
             -4.237796875,
             0.6960976249999999
           ],
-          "chord_m": 0.9525276656431576
+          "chord_m": 0.9525276656431576,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -219,7 +246,8 @@
             -3.9118125,
             0.6987055
           ],
-          "chord_m": 0.9738610366069821
+          "chord_m": 0.9738610366069821,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -227,7 +255,8 @@
             -3.585828125,
             0.701313375
           ],
-          "chord_m": 0.994153143171843
+          "chord_m": 0.994153143171843,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -235,7 +264,8 @@
             -3.25984375,
             0.7039212499999999
           ],
-          "chord_m": 1.013367039876905
+          "chord_m": 1.013367039876905,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -243,7 +273,8 @@
             -2.933859375,
             0.706529125
           ],
-          "chord_m": 1.0314607362218193
+          "chord_m": 1.0314607362218193,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -251,7 +282,8 @@
             -2.607875,
             0.709137
           ],
-          "chord_m": 1.0483858846909884
+          "chord_m": 1.0483858846909884,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -259,7 +291,8 @@
             -2.281890625,
             0.7117448749999999
           ],
-          "chord_m": 1.0640859249569952
+          "chord_m": 1.0640859249569952,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -267,7 +300,8 @@
             -1.95590625,
             0.71435275
           ],
-          "chord_m": 1.0784933506557584
+          "chord_m": 1.0784933506557584,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -275,7 +309,8 @@
             -1.629921875,
             0.716960625
           ],
-          "chord_m": 1.0915254716151792
+          "chord_m": 1.0915254716151792,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -283,7 +318,8 @@
             -1.3039375,
             0.7195684999999999
           ],
-          "chord_m": 1.1030773823047568
+          "chord_m": 1.1030773823047568,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -291,7 +327,8 @@
             -0.977953125,
             0.722176375
           ],
-          "chord_m": 1.113009142183217
+          "chord_m": 1.113009142183217,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -299,7 +336,8 @@
             -0.65196875,
             0.72478425
           ],
-          "chord_m": 1.121118848243103
+          "chord_m": 1.121118848243103,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -307,7 +345,8 @@
             -0.325984375,
             0.727392125
           ],
-          "chord_m": 1.1270703125
+          "chord_m": 1.1270703125,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -315,7 +354,8 @@
             0,
             0.73
           ],
-          "chord_m": 1.13
+          "chord_m": 1.13,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -323,7 +363,8 @@
             0.325984375,
             0.727392125
           ],
-          "chord_m": 1.1270703125
+          "chord_m": 1.1270703125,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -331,7 +372,8 @@
             0.65196875,
             0.72478425
           ],
-          "chord_m": 1.121118848243103
+          "chord_m": 1.121118848243103,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -339,7 +381,8 @@
             0.977953125,
             0.722176375
           ],
-          "chord_m": 1.113009142183217
+          "chord_m": 1.113009142183217,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -347,7 +390,8 @@
             1.3039375,
             0.7195684999999999
           ],
-          "chord_m": 1.1030773823047568
+          "chord_m": 1.1030773823047568,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -355,7 +399,8 @@
             1.629921875,
             0.716960625
           ],
-          "chord_m": 1.0915254716151792
+          "chord_m": 1.0915254716151792,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -363,7 +408,8 @@
             1.95590625,
             0.71435275
           ],
-          "chord_m": 1.0784933506557584
+          "chord_m": 1.0784933506557584,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -371,7 +417,8 @@
             2.281890625,
             0.7117448749999999
           ],
-          "chord_m": 1.0640859249569952
+          "chord_m": 1.0640859249569952,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -379,7 +426,8 @@
             2.607875,
             0.709137
           ],
-          "chord_m": 1.0483858846909884
+          "chord_m": 1.0483858846909884,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -387,7 +435,8 @@
             2.933859375,
             0.706529125
           ],
-          "chord_m": 1.0314607362218193
+          "chord_m": 1.0314607362218193,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -395,7 +444,8 @@
             3.25984375,
             0.7039212499999999
           ],
-          "chord_m": 1.013367039876905
+          "chord_m": 1.013367039876905,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -403,7 +453,8 @@
             3.585828125,
             0.701313375
           ],
-          "chord_m": 0.994153143171843
+          "chord_m": 0.994153143171843,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -411,7 +462,8 @@
             3.9118125,
             0.6987055
           ],
-          "chord_m": 0.9738610366069821
+          "chord_m": 0.9738610366069821,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -419,7 +471,8 @@
             4.237796875,
             0.6960976249999999
           ],
-          "chord_m": 0.9525276656431576
+          "chord_m": 0.9525276656431576,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -427,7 +480,8 @@
             4.56378125,
             0.69348975
           ],
-          "chord_m": 0.9301858889822163
+          "chord_m": 0.9301858889822163,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -435,7 +489,8 @@
             4.889765625,
             0.690881875
           ],
-          "chord_m": 0.9068651976177409
+          "chord_m": 0.9068651976177409,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -443,7 +498,8 @@
             5.21575,
             0.6882739999999999
           ],
-          "chord_m": 0.8825922667300823
+          "chord_m": 0.8825922667300823,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -451,7 +507,8 @@
             5.541734375,
             0.685666125
           ],
-          "chord_m": 0.8573913875362862
+          "chord_m": 0.8573913875362862,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -459,7 +516,8 @@
             5.86771875,
             0.68305825
           ],
-          "chord_m": 0.8312848108793474
+          "chord_m": 0.8312848108793474,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -467,7 +525,8 @@
             6.193703125,
             0.6804503749999999
           ],
-          "chord_m": 0.8042930245924557
+          "chord_m": 0.8042930245924557,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -475,7 +534,8 @@
             6.2589,
             0.6799288
           ],
-          "chord_m": 0.798790134731975
+          "chord_m": 0.798790134731975,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -483,7 +543,8 @@
             6.5196875,
             0.6681933624999999
           ],
-          "chord_m": 0.7764349802805568
+          "chord_m": 0.7764349802805568,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -491,7 +552,8 @@
             6.845671875,
             0.653524065625
           ],
-          "chord_m": 0.7477282808557355
+          "chord_m": 0.7477282808557355,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -499,7 +561,8 @@
             7.17165625,
             0.63885476875
           ],
-          "chord_m": 0.7181893371943926
+          "chord_m": 0.7181893371943926,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -507,7 +570,8 @@
             7.497640625,
             0.624185471875
           ],
-          "chord_m": 0.6878335001947324
+          "chord_m": 0.6878335001947324,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -515,7 +579,8 @@
             7.823625,
             0.609516175
           ],
-          "chord_m": 0.6566751730148845
+          "chord_m": 0.6566751730148845,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -523,7 +588,8 @@
             8.149609375,
             0.5948468781249999
           ],
-          "chord_m": 0.6247279071797308
+          "chord_m": 0.6247279071797308,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -531,7 +597,8 @@
             8.3452,
             0.5860453
           ],
-          "chord_m": 0.6051862045072264
+          "chord_m": 0.6051862045072264,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -539,7 +606,8 @@
             8.47559375,
             0.57039805
           ],
-          "chord_m": 0.592004485436123
+          "chord_m": 0.592004485436123,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -547,7 +615,8 @@
             8.801578124999999,
             0.5312799250000001
           ],
-          "chord_m": 0.5585169936296795
+          "chord_m": 0.5585169936296795,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -555,7 +624,8 @@
             9.1275625,
             0.49216180000000004
           ],
-          "chord_m": 0.5242768834155951
+          "chord_m": 0.5242768834155951,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -563,7 +633,8 @@
             9.453546875,
             0.4530436749999999
           ],
-          "chord_m": 0.4892950272618607
+          "chord_m": 0.4892950272618607,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -571,7 +642,8 @@
             9.77953125,
             0.41392555000000003
           ],
-          "chord_m": 0.45358176692837204
+          "chord_m": 0.45358176692837204,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -579,7 +651,8 @@
             10.105515624999999,
             0.3748074250000002
           ],
-          "chord_m": 0.41714695638985444
+          "chord_m": 0.41714695638985444,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -587,7 +660,8 @@
             10.4315,
             0.3356893
           ],
-          "chord_m": 0.38
+          "chord_m": 0.38,
+          "twist_rad": 0.0
         }
       ],
       "strip_fractions": [
@@ -617,11 +691,18 @@
         "camber_ratio": 0.04,
         "camber_position_ratio": 0.4,
         "thickness_ratio": 0.12
-      }
+      },
+      "actuator": null
     },
     {
       "role": "horizontal_tail",
-      "tail_aerodynamics": {"zero_lift_drag_coefficient": 0.0038517428696657075, "span_efficiency": 0.7, "pitching_moment_coefficient": 0.0, "reference_airspeed_mps": 9.7, "reference_kinematic_viscosity_m2ps": 0.000015},
+      "tail_aerodynamics": {
+        "zero_lift_drag_coefficient": 0.0038517428696657075,
+        "span_efficiency": 0.7,
+        "pitching_moment_coefficient": 0.0,
+        "reference_airspeed_mps": 9.7,
+        "reference_kinematic_viscosity_m2ps": 1.5e-05
+      },
       "mirror_span": true,
       "sections": [
         {
@@ -630,7 +711,8 @@
             -1.7,
             0.1
           ],
-          "chord_m": 0.7352941176470589
+          "chord_m": 0.7352941176470589,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -638,7 +720,8 @@
             1.7,
             0.1
           ],
-          "chord_m": 0.7352941176470589
+          "chord_m": 0.7352941176470589,
+          "twist_rad": 0.0
         }
       ],
       "strip_fractions": [
@@ -660,11 +743,24 @@
         "camber_ratio": 0,
         "camber_position_ratio": 0.4,
         "thickness_ratio": 0
+      },
+      "actuator": {
+        "incidence_bounds_rad": [
+          -0.2,
+          0.2
+        ],
+        "maximum_slew_rad_per_second": 1.0
       }
     },
     {
       "role": "vertical_tail",
-      "tail_aerodynamics": {"zero_lift_drag_coefficient": 0.003907975667072787, "span_efficiency": 0.7, "pitching_moment_coefficient": 0.0, "reference_airspeed_mps": 9.7, "reference_kinematic_viscosity_m2ps": 0.000015},
+      "tail_aerodynamics": {
+        "zero_lift_drag_coefficient": 0.003907975667072787,
+        "span_efficiency": 0.7,
+        "pitching_moment_coefficient": 0.0,
+        "reference_airspeed_mps": 9.7,
+        "reference_kinematic_viscosity_m2ps": 1.5e-05
+      },
       "mirror_span": false,
       "sections": [
         {
@@ -673,7 +769,8 @@
             0,
             -0.45
           ],
-          "chord_m": 0.7142857142857143
+          "chord_m": 0.7142857142857143,
+          "twist_rad": 0.0
         },
         {
           "quarter_chord_frd_m": [
@@ -681,7 +778,8 @@
             0,
             0.25
           ],
-          "chord_m": 0.7142857142857143
+          "chord_m": 0.7142857142857143,
+          "twist_rad": 0.0
         }
       ],
       "strip_fractions": [
@@ -699,6 +797,13 @@
         "camber_ratio": 0,
         "camber_position_ratio": 0.4,
         "thickness_ratio": 0
+      },
+      "actuator": {
+        "incidence_bounds_rad": [
+          -0.2,
+          0.2
+        ],
+        "maximum_slew_rad_per_second": 1.0
       }
     }
   ],
@@ -890,37 +995,72 @@
     "members": {
       "wing": {
         "span_segments": 12,
-        "spar_radii_m": [0.055, 0.018],
+        "spar_radii_m": [
+          0.055,
+          0.018
+        ],
         "rib_count": 22,
         "rib_radius_m": 0.012,
-        "rib_chord_knots": [0.5, 0.75, 1.0],
-        "stringer_chord_fractions": [0.5, 0.995],
+        "rib_chord_knots": [
+          0.5,
+          0.75,
+          1.0
+        ],
+        "stringer_chord_fractions": [
+          0.5,
+          0.995
+        ],
         "stringer_radius_m": 0.006,
-        "foam_chord_fractions": [0.5, 0.75, 0.995],
+        "foam_chord_fractions": [
+          0.5,
+          0.75,
+          0.995
+        ],
         "foam_half_width_m": 0.013
       },
       "horizontal_tail": {
         "rib_intervals": 8,
         "rib_radius_m": 0.012,
-        "rib_chord_bounds": [0.5, 1.0],
-        "foam_chord_bounds": [0.5, 0.75],
+        "rib_chord_bounds": [
+          0.5,
+          1.0
+        ],
+        "foam_chord_bounds": [
+          0.5,
+          0.75
+        ],
         "foam_half_width_m": 0.012,
         "foam_normal_offset_m": 0.003
       },
       "vertical_tail": {
         "rib_intervals": 4,
         "rib_radius_m": 0.012,
-        "rib_chord_bounds": [0.5, 1.0],
-        "foam_chord_bounds": [0.5, 0.75],
+        "rib_chord_bounds": [
+          0.5,
+          1.0
+        ],
+        "foam_chord_bounds": [
+          0.5,
+          0.75
+        ],
         "foam_half_width_m": 0.012,
         "foam_normal_offset_m": 0.003
       },
       "tail_support_radius_m": 0.012,
       "cockpit": {
         "nose_station": 1,
-        "upper_station_fractions": [0.15, 0.75],
-        "lower_station_fractions": [0.2, 0.68],
-        "beam_attachment_fractions": [0.0, 0.09],
+        "upper_station_fractions": [
+          0.15,
+          0.75
+        ],
+        "lower_station_fractions": [
+          0.2,
+          0.68
+        ],
+        "beam_attachment_fractions": [
+          0.0,
+          0.09
+        ],
         "cross_radius_m": 0.008,
         "diagonal_radius_m": 0.007,
         "attachment_radius_m": 0.008,

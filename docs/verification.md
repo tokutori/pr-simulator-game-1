@@ -465,7 +465,7 @@ cargo run -p birdman-game-bevy --features verify-harness --locked -- --verify ta
 | `--verify-timing root` / `--verify-timing full` | `--verify-water` 必須。rootはRenderGraph区間、fullは各viewのCore3d opaque system区間も計測する。既定full |
 | `--verify-water-auto` | `--verify-water` 必須。実Auto policyで5 motionを観測する |
 
-- 採録ごとに新しい`DIR`を指定する。キーボード設定は`DIR/keyboard-controls`内へ保存先を隔離し、通常起動の利用者設定から独立した既定値で検証する。
+- 採録ごとに新しい`DIR`を指定する。キーボード設定と表示設定は`DIR/keyboard-controls`内へ保存先を隔離し、通常起動の利用者設定から独立した既定値で検証する。
 - Replay cameraとwater検査の同時指定は拒否する。
 - offscreenはWinitを登録せず、ScheduleRunnerと本番Image target/readbackを使用する。
 - 既定runnerの最小周期は16.67 ms、`--no-vsync` 併用で待機なしloopを要求する。

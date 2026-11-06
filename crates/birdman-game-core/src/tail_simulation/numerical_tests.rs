@@ -171,6 +171,7 @@ fn initial_state(
         TailRateTarget::try_new(0.0, 0.0).unwrap(),
         perturbed.angular_velocity_body(),
         PHYSICS_DT_SECONDS,
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap()
     .incidence();
@@ -213,6 +214,7 @@ fn integrate(
                 input.desired_rate,
                 previous.flight_state.angular_velocity_body(),
                 control_dt,
+                [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
             )
             .unwrap();
             if control.incidence() != control.mixed_target() {

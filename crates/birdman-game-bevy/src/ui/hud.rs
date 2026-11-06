@@ -164,6 +164,23 @@ pub(super) fn project_hud(
                 .get_mut::<TextColor>(retained.value)
                 .expect("HUD text color exists")
                 .set_if_neq(TextColor(tone_color));
+            world
+                .get_mut::<TextFont>(retained.value)
+                .expect("HUD text font exists")
+                .map_unchanged(|font| &mut font.weight)
+                .set_if_neq(bevy::text::FontWeight(
+                    if matches!(
+                        node.content,
+                        GameUiHudNodeContent::Text {
+                            tone: GameUiHudTone::Warning,
+                            ..
+                        }
+                    ) {
+                        theme.section_text.font_weight
+                    } else {
+                        theme.body_text.font_weight
+                    },
+                ));
             project_widget(
                 world,
                 retained,
@@ -179,6 +196,7 @@ pub(super) fn project_hud(
             )?;
         }
     }
+    super::projection::project_text_shadow(world, retained.shell, theme, true)?;
     retained.previous = Some(hud.clone());
     Ok(())
 }
@@ -298,6 +316,9 @@ fn project_structure(
                 .expect("HUD text font exists")
                 .map_unchanged(|font| &mut font.font_size)
                 .set_if_neq(FontSize::Px(layout.font_size_px as f32));
+            world
+                .entity_mut(retained_node.value)
+                .insert(bevy::text::LineHeight::Px(layout.line_height_px as f32));
             if let Some(surface) = retained_node.widget.surface() {
                 let surface_width = match retained_node.widget {
                     HudWidget::Attitude { .. } => {
@@ -967,6 +988,7 @@ mod tests {
                 gap_px: [4.0; 2],
                 attitude_size_px: [80.0, 48.0],
                 font_size_px: 12.0,
+                line_height_px: 18.0,
                 opacity: 0.48,
             },
             groups: Vec::new(),

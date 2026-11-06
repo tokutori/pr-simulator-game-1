@@ -14,6 +14,8 @@ fn aircraft(pilot_offset: f64) -> AircraftModel {
         1.0,
         0.5,
         1.0,
+        [0.0; 3],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap()
 }
@@ -152,6 +154,8 @@ fn a_wings_level_solution_rejects_unbalanced_lateral_loads() {
         1.0,
         0.5,
         1.0,
+        [0.0; 3],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap();
     let small_conditions = SteadyGlideConditions::try_new(
