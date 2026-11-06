@@ -203,6 +203,8 @@ body {
 
 .screen-ui-shell[data-shared="true"][data-passthrough="true"] {
   pointer-events: none;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .screen-ui-shell[data-shared="true"][data-passthrough="false"] {
