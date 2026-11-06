@@ -263,6 +263,7 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
         id: "fields".into(),
         section,
         label: "選択地点".into(),
+        display_label: "選択地点".into(),
         enabled: false,
         content: GameUiControlContent::Fields {
             source: birdman_game_presentation::game_ui::GameUiReadoutSource::AnalysisCursor,

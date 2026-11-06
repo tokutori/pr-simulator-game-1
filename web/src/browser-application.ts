@@ -118,6 +118,17 @@ export class BrowserApplication {
         try {
           if (drawing.ui.kind === "view") {
             this.view = drawing.ui.view;
+            const theme = drawing.ui.view.theme;
+            Object.assign(this.frameRate.style, {
+              fontSize: `${String(theme.frame_rate_text.font_size_px)}px`,
+              fontWeight: String(theme.frame_rate_text.font_weight),
+              lineHeight: `${String(theme.frame_rate_text.line_height_px)}px`,
+              color: theme.text,
+              backgroundColor: `color-mix(in srgb, ${theme.frame_rate_background} calc(${String(theme.frame_rate_opacity)} * 100%), transparent)`,
+              padding: `${String(theme.frame_rate_padding_px[1])}px ${String(theme.frame_rate_padding_px[0])}px`,
+              top: `max(${String(theme.frame_rate_inset_px)}px, env(safe-area-inset-top))`,
+              right: `max(${String(theme.frame_rate_inset_px)}px, env(safe-area-inset-right))`,
+            });
             this.screen.render(drawing.ui.view, drawing.presentation.screen_ui_visible);
           } else this.screen.renderFrame(drawing.ui.frame, drawing.presentation.screen_ui_visible);
         } catch (cause) { failed(drawing.graphics.renderer_resource_id, cause); }

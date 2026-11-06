@@ -770,7 +770,7 @@ pub struct GameUiRangeValue {
     pub id: String,
     /// Shared finite range value.
     pub value: f64,
-    /// Shared one-decimal display text.
+    /// Completed visible range caption.
     pub display_value: String,
 }
 
@@ -781,7 +781,7 @@ pub struct GameUiRangeValue {
 pub struct GameUiReadoutValue {
     /// Retained control identity.
     pub id: String,
-    /// Shared formatted record or clock observation.
+    /// Completed visible record or clock caption.
     pub value: String,
 }
 
@@ -1012,6 +1012,8 @@ pub struct GameUiHudLayout {
     pub attitude_size_px: [f64; 2],
     /// Readout font size.
     pub font_size_px: f64,
+    /// Completed logical readout line advance.
+    pub line_height_px: f64,
     /// Individual card background opacity; the surrounding rail is transparent.
     pub opacity: f64,
 }
@@ -1162,14 +1164,57 @@ pub enum GameUiSectionLayout {
 pub struct GameUiControl {
     /// Stable current Web control identifier.
     pub id: String,
-    /// Shared visible label.
+    /// Semantic label used by accessibility and input APIs.
     pub label: String,
+    /// Completed visible caption, including selection and readout decoration.
+    pub display_label: String,
     /// Shared admission flag.
     pub enabled: bool,
     /// Section identifier.
     pub section: String,
     /// Exclusive control data.
     pub content: GameUiControlContent,
+}
+
+/// Completes visible control text once at the shared presentation boundary.
+pub fn game_ui_display_label(label: &str, content: &GameUiControlContent) -> String {
+    match content {
+        GameUiControlContent::Button { presentation, .. } => match presentation {
+            GameUiButtonPresentation::Choice {
+                selected,
+                description,
+                ..
+            } => {
+                let mut caption = format!("{}{}", if *selected { "\u{25cf} " } else { "" }, label);
+                if !description.is_empty() {
+                    caption.push('\n');
+                    caption.push_str(description);
+                }
+                caption
+            }
+            GameUiButtonPresentation::Disclosure { expanded } => {
+                format!("{} {label}", if *expanded { "▾" } else { "▸" })
+            }
+            _ => label.to_owned(),
+        },
+        GameUiControlContent::Range { display_value, .. } => {
+            game_ui_readout_label(label, display_value)
+        }
+        GameUiControlContent::Status { value, .. } => game_ui_readout_label(label, value),
+        GameUiControlContent::Toggle { value, .. } => {
+            game_ui_readout_label(label, if *value { "有効" } else { "無効" })
+        }
+        _ => label.to_owned(),
+    }
+}
+
+/// Completes an already formatted value with its semantic caption.
+pub fn game_ui_readout_label(label: &str, value: &str) -> String {
+    if label.is_empty() {
+        value.to_owned()
+    } else {
+        format!("{label}: {value}")
+    }
 }
 
 /// Exclusive shared control representation.
@@ -1649,11 +1694,52 @@ pub enum GameUiShell {
     Cinematic,
 }
 
-/// Engine-independent colors, opacity and minimum hit dimensions.
+/// Completed logical-pixel typography; adapters retain their observed font resource.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiTextStyle {
+    /// Completed logical-pixel font size.
+    pub font_size_px: f64,
+    /// Completed line advance in logical pixels.
+    pub line_height_px: f64,
+    /// Requested font weight, in the range 1 through 1000.
+    pub font_weight: u16,
+}
+
+/// Engine-independent colors, typography, spacing and minimum hit dimensions.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct GameUiTheme {
+    /// Completed document heading typography.
+    pub title_text: GameUiTextStyle,
+    /// Ordinary control text.
+    pub body_text: GameUiTextStyle,
+    /// Principal readout text, including the countdown.
+    pub primary_status_text: GameUiTextStyle,
+    /// Secondary descriptive text.
+    pub secondary_text: GameUiTextStyle,
+    /// Section headings.
+    pub section_text: GameUiTextStyle,
+    /// Auxiliary frame-rate text.
+    pub frame_rate_text: GameUiTextStyle,
+    /// Frame-rate badge background.
+    pub frame_rate_background: String,
+    /// Frame-rate badge background opacity.
+    pub frame_rate_opacity: f64,
+    /// Frame-rate badge horizontal and vertical padding.
+    pub frame_rate_padding_px: [f64; 2],
+    /// Badge inset before platform safe-area adjustment.
+    pub frame_rate_inset_px: f64,
+    /// Horizontal and vertical control padding.
+    pub control_padding_px: [f64; 2],
+    /// Gap within a control.
+    pub control_gap_px: f64,
+    /// Completed hard-edged foreground shadow color.
+    pub text_shadow_color: String,
+    /// Shadow displacement in logical pixels, with no blur.
+    pub text_shadow_offset_px: [f64; 2],
     /// Main text color.
     pub text: String,
     /// Secondary text color.
@@ -1680,4 +1766,38 @@ pub struct GameUiTheme {
     pub button_min_height_px: f64,
     /// Principal button minimum height.
     pub primary_min_height_px: f64,
+}
+
+impl GameUiTheme {
+    /// Completes typography for the published semantic control role.
+    pub fn control_text(&self, content: &GameUiControlContent) -> GameUiTextStyle {
+        match content {
+            GameUiControlContent::Status { emphasis, .. } => self.status_text(*emphasis),
+            GameUiControlContent::Button {
+                presentation:
+                    GameUiButtonPresentation::Action {
+                        emphasis: GameUiEmphasis::Primary,
+                    },
+                ..
+            } => self.section_text,
+            _ => self.body_text,
+        }
+    }
+    /// Resolves the shared foreground for a read-only status role.
+    pub fn status_color(&self, emphasis: GameUiEmphasis) -> &str {
+        if emphasis == GameUiEmphasis::Primary {
+            &self.text
+        } else {
+            &self.muted_text
+        }
+    }
+
+    /// Resolves a semantic readout role to the completed typography.
+    pub fn status_text(&self, emphasis: GameUiEmphasis) -> GameUiTextStyle {
+        if emphasis == GameUiEmphasis::Primary {
+            self.primary_status_text
+        } else {
+            self.body_text
+        }
+    }
 }
