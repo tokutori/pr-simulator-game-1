@@ -1228,19 +1228,17 @@ impl GameSession {
     }
 
     /// Returns the telemetry retained with the latest committed physical sample.
-    pub fn telemetry(&self) -> Result<Option<FlightTelemetry>, FlightTelemetryError> {
-        let Some(configured) = self.configured() else {
-            return Ok(None);
-        };
+    pub fn telemetry(&self) -> Option<FlightTelemetry> {
+        let configured = self.configured()?;
         if !matches!(
             configured.phase,
             ConfiguredPhase::Flight(_)
                 | ConfiguredPhase::Result { .. }
                 | ConfiguredPhase::Replay { .. }
         ) {
-            return Ok(None);
+            return None;
         }
-        Ok(configured
+        configured
             .record
             .terminal_sample()
             .map(|sample| sample.telemetry)
@@ -1250,7 +1248,7 @@ impl GameSession {
                     .samples()
                     .last()
                     .map(|sample| sample.telemetry)
-            }))
+            })
     }
 
     /// Returns signed datum displacement for Flight or Paused without finalizing a score.

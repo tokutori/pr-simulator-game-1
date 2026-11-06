@@ -205,6 +205,7 @@ struct DetailAssets {
 }
 
 struct PreparedAssets {
+    aircraft_identity: [u8; 32],
     sunlight: LakeSunlight,
     venue_visible: bool,
     sky: Arc<SkyAsset>,
@@ -261,8 +262,8 @@ pub(super) struct AssetCompletion {
 #[derive(Default)]
 pub(super) struct AssetsOwner {
     neutral_detail: Option<ImageBuffer>,
-    geometry: Option<Box<crate::geometry::GeometryOwner>>,
-    geometry_renderer: Option<u32>,
+    geometry: BTreeMap<[u8; 32], Box<crate::geometry::GeometryOwner>>,
+    geometry_renderer: Option<([u8; 32], u32)>,
     next_buffer_id: u32,
     active: Option<PreparedAssets>,
     active_resource: Option<u32>,
@@ -285,15 +286,23 @@ impl AssetsOwner {
         &mut self,
         revision: u32,
         selection: EnvironmentSelection,
+        aircraft: &birdman_game_app::SelectedAircraft,
         target: ApplicationGraphicsTarget,
         policy_request: Option<ScreenRenderResourceRequest>,
     ) -> Result<ApplicationEnvironmentAssets, ApplicationAssetError> {
-        if self.geometry.is_none() {
-            let geometry = crate::geometry::GeometryOwner::prepare(&mut self.next_buffer_id)?;
-            self.geometry = Some(Box::new(geometry));
+        let aircraft_identity = aircraft.identity();
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            self.geometry.entry(aircraft_identity)
+        {
+            let geometry = crate::geometry::GeometryOwner::prepare(
+                &mut self.next_buffer_id,
+                aircraft.definition(),
+            )?;
+            entry.insert(Box::new(geometry));
         }
-        let scene = (self.geometry_renderer != Some(target.renderer_resource_id))
-            .then(|| self.geometry.as_ref().unwrap().assets().clone());
+        let scene = (self.geometry_renderer
+            != Some((aircraft_identity, target.renderer_resource_id)))
+        .then(|| self.geometry[&aircraft_identity].assets().clone());
         let quality = target.quality.water_quality;
         let EnvironmentProjection::Available {
             metadata, venue, ..
@@ -335,7 +344,7 @@ impl AssetsOwner {
         .map_err(ApplicationAssetError::Water)?;
         let projection = LakeWaveProjection::try_new(condition, quality)
             .map_err(ApplicationAssetError::Water)?;
-        let water_geometry = self.geometry.as_mut().unwrap().water(
+        let water_geometry = self.geometry.get_mut(&aircraft_identity).unwrap().water(
             &mut self.next_buffer_id,
             quality,
             &projection,
@@ -442,6 +451,7 @@ impl AssetsOwner {
             revision,
             PendingAssets {
                 bundle: PreparedAssets {
+                    aircraft_identity,
                     sunlight,
                     sky,
                     detail,
@@ -485,6 +495,7 @@ impl AssetsOwner {
         }
         self.schedule_commit(&mut requests);
         self.track_releases(&requests);
+        self.prune_geometry();
         requests
     }
 
@@ -514,7 +525,7 @@ impl AssetsOwner {
                     return output;
                 }
                 if let Some(pending) = self.pending.get_mut(&request_id) && matches!(pending.stage, PreparationStage::Building) && self.desired == Some(request_id) {
-                    self.geometry_renderer = Some(pending.target.renderer_resource_id);
+                    self.geometry_renderer = Some((pending.bundle.aircraft_identity, pending.target.renderer_resource_id));
                     pending.stage = PreparationStage::Candidate(resource_id);
                 } else {
                     output.requests.push(ApplicationRequest::ReleaseResources { resource_id });
@@ -524,7 +535,7 @@ impl AssetsOwner {
             ApplicationResourceObservation::Committed { resource_id, actual } => {
                 if self.committing == Some(request_id) && self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Committing(id) if id == resource_id)) {
                     let pending = self.pending.remove(&request_id).unwrap();
-                    if let Some(geometry) = &mut self.geometry { geometry.rebind(); }
+                    if let Some(geometry) = self.geometry.get_mut(&pending.bundle.aircraft_identity) { geometry.rebind(); }
                     output.committed = Some(AssetCommit { request_id, target: pending.target, policy_request: pending.policy_request, actual });
                     self.active = Some(pending.bundle);
                     if let Some(previous) = self.active_resource.replace(resource_id) && previous != resource_id {
@@ -554,6 +565,7 @@ impl AssetsOwner {
             }
         }
         self.track_releases(&output.requests);
+        self.prune_geometry();
         output
     }
 
@@ -633,19 +645,37 @@ impl AssetsOwner {
 
     pub(super) fn buffer(&self, buffer_id: u32) -> Option<crate::ApplicationBufferSlice<'_>> {
         self.geometry
-            .as_ref()
-            .and_then(|geometry| geometry.buffer(buffer_id))
+            .values()
+            .find_map(|geometry| geometry.buffer(buffer_id))
             .or_else(|| self.bytes(buffer_id).map(crate::ApplicationBufferSlice::U8))
     }
 
     pub(super) fn project_geometry(
         &mut self,
         pose: Option<birdman_game_presentation::render_pose::FlightRenderPose>,
+        aircraft: &birdman_game_app::SelectedAircraft,
     ) -> Result<Option<crate::ApplicationGeometryFrame>, ApplicationAssetError> {
+        let Some(active) = &self.active else {
+            return Ok(None);
+        };
+        if active.aircraft_identity != aircraft.identity() {
+            return Ok(None);
+        }
         self.geometry
-            .as_mut()
-            .map(|geometry| geometry.project(pose))
+            .get_mut(&active.aircraft_identity)
+            .map(|geometry| geometry.project(pose, aircraft.definition()))
             .transpose()
+    }
+
+    fn prune_geometry(&mut self) {
+        let active = self.active.as_ref().map(|bundle| bundle.aircraft_identity);
+        self.geometry.retain(|identity, _| {
+            Some(*identity) == active
+                || self
+                    .pending
+                    .values()
+                    .any(|pending| pending.bundle.aircraft_identity == *identity)
+        });
     }
 
     fn bundles(&self) -> impl Iterator<Item = &PreparedAssets> {

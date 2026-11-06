@@ -62,7 +62,7 @@ pub use scene::{
 pub use shutdown::ApplicationLifecycle;
 #[cfg(not(verus_only))]
 pub use storage::{
-    ApplicationDisplaySettingsLoad, ApplicationKeyboardControlsLoad,
+    ApplicationAircraftLoad, ApplicationDisplaySettingsLoad, ApplicationKeyboardControlsLoad,
     ApplicationRecordLoadCompletion,
 };
 #[cfg(not(verus_only))]
@@ -160,6 +160,7 @@ pub struct ApplicationRuntime {
 #[derive(Clone, Copy, PartialEq)]
 #[cfg(not(verus_only))]
 struct ResourceKey {
+    aircraft_identity: [u8; 32],
     graphics: ApplicationGraphicsTarget,
     environment: EnvironmentIdentity,
     mode: GameUiPresentationMode,
@@ -311,6 +312,8 @@ impl ApplicationRuntime {
                     | ApplicationInput::RecordPreviewObserved { .. }
                     | ApplicationInput::RecordLoaded { .. }
                     | ApplicationInput::DownloadCompleted { .. }
+                    | ApplicationInput::AircraftLoaded { .. }
+                    | ApplicationInput::AircraftSaved { .. }
                     | ApplicationInput::KeyboardControlsLoaded { .. }
                     | ApplicationInput::KeyboardControlsSaved { .. }
                     | ApplicationInput::DisplaySettingsLoaded { .. }
@@ -381,6 +384,37 @@ impl ApplicationRuntime {
         let mut spatial_frame = None;
         let mut render_spatial = false;
         match input {
+            ApplicationInput::AircraftLoaded {
+                request_id,
+                completion,
+            } => {
+                let write_id = self.allocate_request()?;
+                let (selected, request) = self.storage.aircraft_read_completed(
+                    request_id,
+                    completion,
+                    &self.application,
+                    write_id,
+                );
+                requests.extend(request);
+                if let Some(selected) = selected {
+                    self.application
+                        .select_aircraft(selected)
+                        .map_err(ApplicationRuntimeError::Session)?;
+                }
+            }
+            ApplicationInput::AircraftSaved {
+                request_id,
+                failure,
+            } => {
+                if let Some(selected) =
+                    self.storage
+                        .aircraft_saved(request_id, failure, &self.application)
+                {
+                    self.application
+                        .select_aircraft(selected)
+                        .map_err(ApplicationRuntimeError::Session)?;
+                }
+            }
             ApplicationInput::KeyboardControlsLoaded {
                 request_id,
                 completion,
@@ -1050,6 +1084,10 @@ impl ApplicationRuntime {
         if io_continuation {
             return Ok(self.output(None, requests, keyboard_consumed));
         }
+        if !self.shutdown.closed() && self.storage.aircraft_needs_read() {
+            let request_id = self.allocate_request()?;
+            requests.push(self.storage.read_aircraft(request_id));
+        }
         if !self.shutdown.closed() && self.storage.keyboard_needs_read() {
             let request_id = self.allocate_request()?;
             requests.push(self.storage.read_keyboard(request_id));
@@ -1084,7 +1122,9 @@ impl ApplicationRuntime {
         if matches!(self.boot, boot::BootOwner::Preparing) {
             match self.resource_readiness {
                 BackendReadiness::Ready
-                    if !self.storage.keyboard_loading() && !self.storage.display_loading() =>
+                    if !self.storage.aircraft_loading()
+                        && !self.storage.keyboard_loading()
+                        && !self.storage.display_loading() =>
                 {
                     self.boot = boot::BootOwner::Ready
                 }
@@ -1139,8 +1179,9 @@ impl ApplicationRuntime {
             .state()
             .active_mode()
             .unwrap_or(GameUiPresentationMode::Screen);
-        self.platform.operation_pending =
-            self.display.state().pending() || self.storage.load_pending();
+        self.platform.operation_pending = self.display.state().pending()
+            || self.storage.load_pending()
+            || self.storage.aircraft_pending();
         self.platform.stored_records_retry_available = self.platform.stored_records_available
             && self.storage.can_retry_preview(&self.application);
         self.platform.render_quality_confirmed = self.graphics.resource().is_some();
@@ -1228,7 +1269,16 @@ impl ApplicationRuntime {
         })?;
         scene_frame.projection.geometry = self
             .assets
-            .project_geometry(scene_frame.aircraft)
+            .project_geometry(
+                scene_frame.aircraft,
+                self.application.aircraft().map_err(|cause| {
+                    ApplicationRuntimeError::Application(
+                        birdman_game_app::application::ApplicationError::Preparation(
+                            birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
+                        ),
+                    )
+                })?,
+            )
             .map_err(ApplicationRuntimeError::Assets)?;
         let position = scene_frame.projection.world_from_aircraft.position;
         scene_frame.projection.lighting = self.assets.sunlight().and_then(|sunlight| {
@@ -1646,6 +1696,18 @@ impl ApplicationRuntime {
                         .map_err(ApplicationRuntimeError::Graphics)?;
                 }
                 GameUiEffect::Platform {
+                    command: GameUiPlatformCommand::LoadAircraft {},
+                } => {
+                    let request_id = self.allocate_request()?;
+                    requests.extend(self.storage.pick_aircraft(request_id, &self.application));
+                }
+                GameUiEffect::Platform {
+                    command: GameUiPlatformCommand::DeleteAircraft {},
+                } => {
+                    let request_id = self.allocate_request()?;
+                    requests.extend(self.storage.delete_aircraft(request_id, &self.application));
+                }
+                GameUiEffect::Platform {
                     command: GameUiPlatformCommand::SetPresentation { mode },
                 } => {
                     let request_id = self.allocate_request()?;
@@ -1904,7 +1966,8 @@ impl ApplicationRuntime {
                     | SessionPhase::BriefingReady
                     | SessionPhase::BriefingFailed { .. }
             ) && self.last_ready_resources.is_some_and(|ready| {
-                ready.environment == current.environment
+                ready.aircraft_identity == current.aircraft_identity
+                    && ready.environment == current.environment
                     && ready.mode == current.mode
                     && ready.display_resource_id == current.display_resource_id
                     && ready.graphics.renderer_resource_id == current.graphics.renderer_resource_id
@@ -1942,6 +2005,17 @@ impl ApplicationRuntime {
         let environment = EnvironmentSelection::for_session(&self.application)
             .map_err(ApplicationRuntimeError::Environment)?;
         let desired_key = ResourceKey {
+            aircraft_identity: self
+                .application
+                .aircraft()
+                .map_err(|cause| {
+                    ApplicationRuntimeError::Application(
+                        birdman_game_app::application::ApplicationError::Preparation(
+                            birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
+                        ),
+                    )
+                })?
+                .identity(),
             graphics,
             environment: environment.identity,
             mode,
@@ -1972,6 +2046,7 @@ impl ApplicationRuntime {
             }
         };
         let key = ResourceKey {
+            aircraft_identity: desired_key.aircraft_identity,
             environment: environment.identity,
             ..desired_key
         };
@@ -1995,7 +2070,8 @@ impl ApplicationRuntime {
             .map(|resources| resources.key)
             .or(self.last_ready_resources)
             .is_some_and(|previous| {
-                previous.environment != key.environment
+                previous.aircraft_identity != key.aircraft_identity
+                    || previous.environment != key.environment
                     || previous.mode != key.mode
                     || previous.display_resource_id != key.display_resource_id
                     || previous.graphics.renderer_resource_id != key.graphics.renderer_resource_id
@@ -2003,7 +2079,19 @@ impl ApplicationRuntime {
         let request_id = self.allocate_request()?;
         let assets = self
             .assets
-            .prepare(request_id, environment, graphics, self.graphics.requested())
+            .prepare(
+                request_id,
+                environment,
+                self.application.aircraft().map_err(|cause| {
+                    ApplicationRuntimeError::Application(
+                        birdman_game_app::application::ApplicationError::Preparation(
+                            birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
+                        ),
+                    )
+                })?,
+                graphics,
+                self.graphics.requested(),
+            )
             .map_err(ApplicationRuntimeError::Assets)?;
         requests.extend(self.assets.select(Some(request_id)));
         self.resources = Some(ResourcePreparation {
@@ -2069,11 +2157,31 @@ impl ApplicationRuntime {
             let scenario = HybridSessionPreparation::select_scenario(
                 self.application.difficulty().weather(),
                 self.application.seed(),
+                self.application
+                    .aircraft()
+                    .map_err(|cause| {
+                        ApplicationRuntimeError::Application(ApplicationError::Preparation(
+                            birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
+                        ))
+                    })?
+                    .definition()
+                    .document()
+                    .model_version,
             )
             .map_err(|error| {
                 ApplicationRuntimeError::Application(ApplicationError::Preparation(error))
             })?;
-            Ok(Some(identity_for_selection(scenario)))
+            let mut identity = identity_for_selection(scenario);
+            identity.aircraft_identity = self
+                .application
+                .aircraft()
+                .map_err(|cause| {
+                    ApplicationRuntimeError::Application(ApplicationError::Preparation(
+                        birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
+                    ))
+                })?
+                .identity();
+            Ok(Some(identity))
         } else {
             Ok(self.application.core_session().configuration_identity())
         }
@@ -2087,7 +2195,7 @@ impl ApplicationRuntime {
     fn context<'view>(
         &'view self,
         environment: &'view str,
-    ) -> Result<GameUiContext<'view, 'static>, ApplicationRuntimeError> {
+    ) -> Result<GameUiContext<'view>, ApplicationRuntimeError> {
         Ok(GameUiContext {
             record_notification: self.storage.save_notification(&self.application),
             session: self.application.core_session(),
@@ -2097,6 +2205,19 @@ impl ApplicationRuntime {
             difficulty: self.application.display_difficulty(),
             keyboard_controls: self.application.keyboard_controls(),
             keyboard_controls_notification: self.storage.keyboard_notification(),
+            aircraft_name: self
+                .application
+                .aircraft()
+                .map(|selected| {
+                    if selected.is_bundled() {
+                        "既定の機体"
+                    } else {
+                        selected.definition().document().configuration_id.as_str()
+                    }
+                })
+                .unwrap_or("機体を準備できない"),
+            aircraft_notification: self.storage.aircraft_notification(),
+            aircraft_can_delete: self.storage.aircraft_can_delete(),
             display_settings: self.application.display_settings(),
             display_settings_notification: self.storage.display_notification(),
             accepted_flight_keys: self.application.accepted_flight_keys(),

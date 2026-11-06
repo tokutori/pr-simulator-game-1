@@ -136,7 +136,11 @@ fn off_grid_tail_contact_seals_record_and_score_at_the_first_fractional_time() {
                 .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
                 .unwrap();
             let result = session
-                .advance_tail_flight_tick(input)
+                .advance_tail_flight_tick(
+                    input,
+                    &loads,
+                    WaterContactGeometry::try_new(&points).unwrap(),
+                )
                 .unwrap()
                 .result()
                 .unwrap();
@@ -166,7 +170,11 @@ fn off_grid_tail_contact_seals_record_and_score_at_the_first_fractional_time() {
             assert_eq!(terminal.flight_state, contact.flight_state());
             assert_eq!(terminal.fraction, contact.fraction());
             assert_eq!(
-                session.advance_tail_flight_tick(input),
+                session.advance_tail_flight_tick(
+                    input,
+                    &loads,
+                    WaterContactGeometry::try_new(&points).unwrap()
+                ),
                 Err(GameSessionError::InvalidTransition)
             );
             assert_eq!(

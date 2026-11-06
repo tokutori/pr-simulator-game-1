@@ -5,7 +5,7 @@ use super::{types::*, view};
 /// Observes only frame-varying values using a retained structural view.
 pub fn game_ui_frame(
     state: &GameUiState,
-    context: &GameUiContext<'_, '_>,
+    context: &GameUiContext<'_>,
     retained: &GameUiView,
     current_revision: u32,
 ) -> Result<GameUiFrame, GameUiError> {

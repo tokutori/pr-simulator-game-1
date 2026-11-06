@@ -93,7 +93,7 @@ fn tail_scenario_seals_composite_cg_launch_trim_and_shared_telemetry() {
     );
     assert_eq!(scenario.pilot_mapping(), trim.pilot_mapping().unwrap());
     let telemetry = scenario
-        .telemetry(scenario.initial_state().flight_state())
+        .telemetry(scenario.initial_state().flight_state(), &load)
         .unwrap();
     near(telemetry.altitude_m, 10.5, 1.0e-14);
     near(
@@ -113,13 +113,19 @@ fn tail_scenario_seals_composite_cg_launch_trim_and_shared_telemetry() {
         TailPilotPositionCommand::Set(TailPilotPositionIntent::try_new(0.5).unwrap()),
     );
     let report = scenario
-        .advance_tick_with_contact_report(scenario.initial_state(), ControlMode::Manual, command)
+        .advance_tick_with_contact_report(
+            scenario.initial_state(),
+            ControlMode::Manual,
+            command,
+            &load,
+            WaterContactGeometry::try_new(&contacts).unwrap(),
+        )
         .unwrap();
     let TailFlightTickOutcome::Advanced(next) = report.outcome() else {
         panic!("expected airborne tick");
     };
     assert_eq!(
-        scenario.telemetry(next.flight_state()).unwrap(),
+        scenario.telemetry(next.flight_state(), &load).unwrap(),
         derive_flight_telemetry(&scenario.aircraft(), next.flight_state(), |point| wind
             .velocity_at(point))
         .unwrap()
@@ -138,8 +144,8 @@ fn tail_scenario_seals_composite_cg_launch_trim_and_shared_telemetry() {
     assert_eq!(alternative.aircraft(), scenario.aircraft());
     assert_eq!(alternative.initial_state(), scenario.initial_state());
     assert_eq!(
-        alternative.telemetry(next.flight_state()).unwrap(),
-        scenario.telemetry(next.flight_state()).unwrap()
+        alternative.telemetry(next.flight_state(), &load).unwrap(),
+        scenario.telemetry(next.flight_state(), &load).unwrap()
     );
 }
 
@@ -166,7 +172,14 @@ fn tail_scenario_runner_is_deterministic_in_all_modes_and_scores_exact_terminal_
         ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
         ControlMode::Automatic,
     ] {
-        let short = scenario.run(mode, &inputs[..3]).unwrap();
+        let short = scenario
+            .run(
+                mode,
+                &inputs[..3],
+                &load,
+                WaterContactGeometry::try_new(&contacts).unwrap(),
+            )
+            .unwrap();
         let TailFlightRunOutcome::TimeLimit { state, score } = short else {
             panic!("expected time limit");
         };
@@ -184,8 +197,25 @@ fn tail_scenario_runner_is_deterministic_in_all_modes_and_scores_exact_terminal_
             )
             .unwrap()
         );
-        let terminal = scenario.run(mode, &inputs).unwrap();
-        assert_eq!(terminal, scenario.run(mode, &inputs).unwrap());
+        let terminal = scenario
+            .run(
+                mode,
+                &inputs,
+                &load,
+                WaterContactGeometry::try_new(&contacts).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            terminal,
+            scenario
+                .run(
+                    mode,
+                    &inputs,
+                    &load,
+                    WaterContactGeometry::try_new(&contacts).unwrap()
+                )
+                .unwrap()
+        );
         let TailFlightRunOutcome::WaterContact { sample, score } = terminal else {
             panic!("expected water contact");
         };
@@ -213,7 +243,12 @@ fn tail_scenario_runner_is_deterministic_in_all_modes_and_scores_exact_terminal_
         );
     }
     assert_eq!(
-        scenario.run(ControlMode::Manual, &[]),
+        scenario.run(
+            ControlMode::Manual,
+            &[],
+            &load,
+            WaterContactGeometry::try_new(&contacts).unwrap()
+        ),
         Err(TailFlightRunError::EmptyInput)
     );
 }

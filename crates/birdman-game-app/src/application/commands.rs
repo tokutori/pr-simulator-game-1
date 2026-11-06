@@ -179,32 +179,37 @@ pub struct PreparedFlight {
 }
 
 impl PreparedFlight {
+    pub(super) fn loads<'a>(
+        &self,
+        definition: &'a birdman_game_content::AircraftDefinition,
+        surfaces: &'a [birdman_game_core::HybridSurface<'a>],
+    ) -> Result<birdman_game_core::HybridAerodynamicLoad<'a>, GameSessionError> {
+        let model = birdman_game_core::HybridModel::try_new(
+            definition
+                .polar()
+                .map_err(|_| GameSessionError::InvalidTransition)?,
+            surfaces,
+        )
+        .map_err(|_| GameSessionError::InvalidTransition)?;
+        birdman_game_core::HybridAerodynamicLoad::try_new(
+            model,
+            definition.document().trim.air_density_kg_m3,
+            self.wind,
+        )
+        .map_err(|_| GameSessionError::InvalidTransition)
+    }
+
     pub(super) fn advance(
         &mut self,
         session: &mut GameSession,
         definition: &birdman_game_content::AircraftDefinition,
         input: TailFlightTickInput,
+        loads: &birdman_game_core::HybridAerodynamicLoad<'_>,
     ) -> Result<SessionSnapshot, GameSessionError> {
-        let surfaces = definition
-            .surfaces()
-            .map_err(|_| GameSessionError::InvalidTransition)?;
-        let model = birdman_game_core::HybridModel::try_new(
-            definition
-                .polar()
-                .map_err(|_| GameSessionError::InvalidTransition)?,
-            &surfaces,
-        )
-        .map_err(|_| GameSessionError::InvalidTransition)?;
-        let loads = birdman_game_core::HybridAerodynamicLoad::try_new(
-            model,
-            definition.document().trim.air_density_kg_m3,
-            self.wind,
-        )
-        .map_err(|_| GameSessionError::InvalidTransition)?;
         session.advance_tail_flight_tick_with_shape_provider(
             input,
             &mut self.contact_shape.bind(definition),
-            &loads,
+            loads,
         )
     }
 }

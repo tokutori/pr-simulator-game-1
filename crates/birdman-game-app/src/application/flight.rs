@@ -143,6 +143,25 @@ impl ApplicationSession {
             .as_ref()
             .map_err(|_| FlightFrameError::Session(GameSessionError::InvalidTransition))?
             .definition();
+        let surfaces = if self.session.snapshot().phase() == SessionPhase::FlightRunning {
+            Some(
+                definition
+                    .surfaces()
+                    .map_err(|_| FlightFrameError::Session(GameSessionError::InvalidTransition))?,
+            )
+        } else {
+            None
+        };
+        let loads = surfaces
+            .as_ref()
+            .map(|surfaces| {
+                self.prepared
+                    .as_ref()
+                    .ok_or(GameSessionError::InvalidTransition)?
+                    .loads(definition, surfaces)
+            })
+            .transpose()
+            .map_err(FlightFrameError::Session)?;
         let session = &mut self.session;
         let prepared = &mut self.prepared;
         let input = &mut self.flight_input;
@@ -183,7 +202,15 @@ impl ApplicationSession {
                     })
                     .map_err(FlightFrameError::Input)?;
                 let result = prepared
-                    .advance(session, definition, demand)
+                    .advance(
+                        session,
+                        definition,
+                        demand,
+                        loads
+                            .as_ref()
+                            .ok_or(GameSessionError::InvalidTransition)
+                            .map_err(FlightFrameError::Session)?,
+                    )
                     .map_err(FlightFrameError::Session);
                 let elapsed = result.as_ref().is_ok_and(|snapshot| {
                     snapshot

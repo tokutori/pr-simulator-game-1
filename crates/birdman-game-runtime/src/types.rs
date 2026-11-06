@@ -198,6 +198,21 @@ pub struct ApplicationSpatialObservation {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationInput {
+    /// Terminal original-byte result of an aircraft read or picker.
+    AircraftLoaded {
+        /// Owner-issued operation identity.
+        request_id: u32,
+        /// Unmodified I/O result.
+        completion: super::ApplicationAircraftLoad,
+    },
+    /// Terminal atomic aircraft write or delete result.
+    AircraftSaved {
+        /// Owner-issued operation identity.
+        request_id: u32,
+        /// Original I/O failure, absent after success.
+        failure: Option<String>,
+    },
+
     /// Terminal read of the requested user settings; never a flight record.
     KeyboardControlsLoaded {
         /// Owner-issued operation identity.
@@ -514,6 +529,33 @@ pub enum ApplicationInput {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ApplicationRequest {
+    /// Reads the persisted original aircraft document once at boot.
+    ReadAircraft {
+        /// Owner-issued operation identity.
+        request_id: u32,
+        /// Source-byte read budget.
+        maximum_bytes: u32,
+    },
+    /// Asks the player to select one aircraft source file.
+    PickAircraft {
+        /// Owner-issued operation identity.
+        request_id: u32,
+        /// Source-byte read budget.
+        maximum_bytes: u32,
+    },
+    /// Atomically persists the exact validated source bytes.
+    WriteAircraft {
+        /// Owner-issued operation identity.
+        request_id: u32,
+        /// Original validated source bytes.
+        bytes: Vec<u8>,
+    },
+    /// Removes only the user's aircraft document.
+    DeleteAircraft {
+        /// Owner-issued operation identity.
+        request_id: u32,
+    },
+
     /// Reads the platform user-settings location once during boot.
     ReadKeyboardControls {
         /// Owner-issued operation identity.

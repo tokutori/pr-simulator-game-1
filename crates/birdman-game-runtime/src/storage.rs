@@ -13,6 +13,10 @@ use super::{ApplicationRequest, ApplicationRuntimeError};
 
 #[derive(Default)]
 pub(super) struct StorageOwner {
+    aircraft_job: Option<AircraftJob>,
+    aircraft_loaded: bool,
+    aircraft_has_saved: bool,
+    aircraft_notification: String,
     keyboard_read: Option<u32>,
     keyboard_loaded: bool,
     keyboard_save: Option<(u32, birdman_game_app::flight_input::KeyboardControlSettings)>,
@@ -45,6 +49,45 @@ enum PreviewState {
     Unrequested,
     Ready,
     Failed,
+}
+
+enum AircraftJob {
+    Read(u32),
+    Pick {
+        request_id: u32,
+        source: [u8; 32],
+    },
+    Write {
+        request_id: u32,
+        source: [u8; 32],
+        candidate: birdman_game_app::SelectedAircraft,
+    },
+    Delete {
+        request_id: u32,
+        source: [u8; 32],
+        candidate: birdman_game_app::SelectedAircraft,
+    },
+}
+
+/// Original aircraft bytes produced by a requested storage or file-picker operation.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ApplicationAircraftLoad {
+    /// The persistent document does not exist.
+    Missing,
+    /// The user dismissed the file picker.
+    Cancelled,
+    /// Original bytes; shared Rust owns validation, hashing and selection.
+    Found {
+        /// Unmodified source document, including its encoding bytes.
+        bytes: Vec<u8>,
+    },
+    /// Original platform I/O failure.
+    Failed {
+        /// Diagnostic from the platform API.
+        cause: String,
+    },
 }
 
 struct LoadJob {
@@ -131,6 +174,195 @@ struct DisplaySettingsDocument {
 }
 
 impl StorageOwner {
+    pub(super) fn aircraft_needs_read(&self) -> bool {
+        !self.aircraft_loaded && self.aircraft_job.is_none()
+    }
+    pub(super) fn aircraft_loading(&self) -> bool {
+        !self.aircraft_loaded
+    }
+    pub(super) fn aircraft_pending(&self) -> bool {
+        self.aircraft_job.is_some()
+    }
+    pub(super) fn aircraft_can_delete(&self) -> bool {
+        self.aircraft_has_saved
+    }
+    pub(super) fn aircraft_notification(&self) -> &str {
+        &self.aircraft_notification
+    }
+
+    pub(super) fn read_aircraft(&mut self, request_id: u32) -> ApplicationRequest {
+        self.aircraft_job = Some(AircraftJob::Read(request_id));
+        ApplicationRequest::ReadAircraft {
+            request_id,
+            maximum_bytes: birdman_game_format::aircraft::MAX_AIRCRAFT_JSON_BYTES as u32,
+        }
+    }
+
+    pub(super) fn pick_aircraft(
+        &mut self,
+        request_id: u32,
+        application: &ApplicationSession,
+    ) -> Option<ApplicationRequest> {
+        if self.aircraft_pending()
+            || application.core_session().snapshot().phase() != SessionPhase::FlightSetup
+        {
+            return None;
+        }
+        let source = application.aircraft().ok()?.identity();
+        self.aircraft_job = Some(AircraftJob::Pick { request_id, source });
+        self.aircraft_notification = "機体ファイルを選択する。".to_owned();
+        Some(ApplicationRequest::PickAircraft {
+            request_id,
+            maximum_bytes: birdman_game_format::aircraft::MAX_AIRCRAFT_JSON_BYTES as u32,
+        })
+    }
+
+    pub(super) fn delete_aircraft(
+        &mut self,
+        request_id: u32,
+        application: &ApplicationSession,
+    ) -> Option<ApplicationRequest> {
+        if self.aircraft_pending()
+            || !self.aircraft_has_saved
+            || application.core_session().snapshot().phase() != SessionPhase::FlightSetup
+        {
+            return None;
+        }
+        let source = application.aircraft().ok()?.identity();
+        let candidate = birdman_game_app::SelectedAircraft::bundled().ok()?;
+        self.aircraft_job = Some(AircraftJob::Delete {
+            request_id,
+            source,
+            candidate,
+        });
+        self.aircraft_notification = "保存した機体を削除中".to_owned();
+        Some(ApplicationRequest::DeleteAircraft { request_id })
+    }
+
+    pub(super) fn aircraft_read_completed(
+        &mut self,
+        request_id: u32,
+        completion: ApplicationAircraftLoad,
+        application: &ApplicationSession,
+        write_id: u32,
+    ) -> (
+        Option<birdman_game_app::SelectedAircraft>,
+        Option<ApplicationRequest>,
+    ) {
+        let expected = match &self.aircraft_job {
+            Some(AircraftJob::Read(id)) => *id,
+            Some(AircraftJob::Pick { request_id, .. }) => *request_id,
+            _ => return (None, None),
+        };
+        if expected != request_id {
+            return (None, None);
+        }
+        let job = self.aircraft_job.take().unwrap();
+        let source = match job {
+            AircraftJob::Read(_) => {
+                self.aircraft_loaded = true;
+                None
+            }
+            AircraftJob::Pick { source, .. } => Some(source),
+            _ => unreachable!(),
+        };
+        if let Some(source) = source
+            && !Self::aircraft_admitted(application, source)
+        {
+            return (None, None);
+        }
+        let bytes = match completion {
+            ApplicationAircraftLoad::Missing | ApplicationAircraftLoad::Cancelled => {
+                self.aircraft_notification.clear();
+                return (None, None);
+            }
+            ApplicationAircraftLoad::Failed { cause } => {
+                self.aircraft_notification = format!("機体ファイルを読み込めない。原因: {cause}");
+                return (None, None);
+            }
+            ApplicationAircraftLoad::Found { bytes } => bytes,
+        };
+        if source.is_none() {
+            self.aircraft_has_saved = true;
+        }
+        let candidate = match birdman_game_app::SelectedAircraft::decode(bytes) {
+            Ok(candidate) => candidate,
+            Err(cause) => {
+                self.aircraft_notification =
+                    format!("機体定義を修正して読み込み直す。詳細: {cause:?}");
+                return (None, None);
+            }
+        };
+        let Some(source) = source else {
+            self.aircraft_notification = "保存済みの機体を復元した。".to_owned();
+            return (Some(candidate), None);
+        };
+        let bytes = candidate.original().to_vec();
+        self.aircraft_job = Some(AircraftJob::Write {
+            request_id: write_id,
+            source,
+            candidate,
+        });
+        self.aircraft_notification = "機体を保存中".to_owned();
+        (
+            None,
+            Some(ApplicationRequest::WriteAircraft {
+                request_id: write_id,
+                bytes,
+            }),
+        )
+    }
+
+    pub(super) fn aircraft_saved(
+        &mut self,
+        request_id: u32,
+        failure: Option<String>,
+        application: &ApplicationSession,
+    ) -> Option<birdman_game_app::SelectedAircraft> {
+        let (expected, source) = match &self.aircraft_job {
+            Some(
+                AircraftJob::Write {
+                    request_id, source, ..
+                }
+                | AircraftJob::Delete {
+                    request_id, source, ..
+                },
+            ) => (*request_id, *source),
+            _ => return None,
+        };
+        if expected != request_id {
+            return None;
+        }
+        let job = self.aircraft_job.take().unwrap();
+        if let Some(cause) = failure {
+            self.aircraft_notification = format!("保存操作を再試行する。原因: {cause}");
+            return None;
+        }
+        if !Self::aircraft_admitted(application, source) {
+            return None;
+        }
+        match job {
+            AircraftJob::Write { candidate, .. } => {
+                self.aircraft_has_saved = true;
+                self.aircraft_notification = "機体を読み込み、保存した。".to_owned();
+                Some(candidate)
+            }
+            AircraftJob::Delete { candidate, .. } => {
+                self.aircraft_has_saved = false;
+                self.aircraft_notification = "既定の機体へ戻した。".to_owned();
+                Some(candidate)
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn aircraft_admitted(application: &ApplicationSession, source: [u8; 32]) -> bool {
+        application.core_session().snapshot().phase() == SessionPhase::FlightSetup
+            && application
+                .aircraft()
+                .is_ok_and(|selected| selected.identity() == source)
+    }
+
     pub(super) fn keyboard_needs_read(&self) -> bool {
         !self.keyboard_loaded && self.keyboard_read.is_none()
     }

@@ -165,7 +165,8 @@ fn contact_provider_projects_the_registered_shape_into_its_borrowed_storage() {
     let pointer = output.as_ptr();
     let mut expected = output.clone();
     let incidence = TailIncidence::try_new(0.04, -0.03).unwrap();
-    let mut provider = crate::AircraftContactShape::try_new(&aircraft, &mut output).unwrap();
+    let mut storage = crate::AircraftContactBuffer::try_new(&aircraft, output).unwrap();
+    let mut provider = storage.bind(&aircraft);
     let factor = provider
         .wing_bending_factor(aircraft.document().trim.airspeed_mps)
         .unwrap();
@@ -183,10 +184,11 @@ fn contact_provider_rejects_mismatched_storage_and_invalid_load_law_inputs() {
     let aircraft = playable_aircraft().unwrap();
     let mut output = aircraft.contact_points().to_vec();
     assert!(matches!(
-        crate::AircraftContactShape::try_new(&aircraft, &mut output[..1]),
+        crate::AircraftContactBuffer::try_new(&aircraft, output[..1].to_vec()),
         Err(ShapeError::MismatchedContactPointCount)
     ));
-    let provider = crate::AircraftContactShape::try_new(&aircraft, &mut output).unwrap();
+    let mut storage = crate::AircraftContactBuffer::try_new(&aircraft, output).unwrap();
+    let provider = storage.bind(&aircraft);
     assert_eq!(
         provider.wing_bending_factor(-0.1),
         Err(birdman_game_core::ContactError::ShapeProjection)
@@ -203,7 +205,8 @@ fn retained_contact_projection_reuses_storage_and_recovers_after_a_failed_update
     let output = aircraft.contact_points().to_vec();
     let pointer = output.as_ptr();
     let mut expected = output.clone();
-    let mut provider = crate::AircraftContactShape::try_from_owned(&aircraft, output).unwrap();
+    let mut storage = crate::AircraftContactBuffer::try_new(&aircraft, output).unwrap();
+    let mut provider = storage.bind(&aircraft);
     let factor = WingBendingFactor::try_new(0.7).unwrap();
     for incidence in [
         TailIncidence::neutral(),

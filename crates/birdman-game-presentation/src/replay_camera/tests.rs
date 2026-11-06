@@ -97,6 +97,7 @@ fn view(record: &FlightRecord, time: f64, camera: GameUiReplayCamera) -> ReplayC
 fn render_pose_matches_the_same_record_sample_and_retains_unknown_geometry() {
     let record = fixture_record(0.4, SessionEndReason::TimeLimit);
     let identity = FlightRecordTailIdentityDocument {
+        aircraft_sha256: None,
         aircraft_configuration_id: birdman_game_app::registered_aircraft()
             .unwrap()
             .document()
@@ -211,6 +212,7 @@ fn replay_uses_adopted_interval_and_same_time_terminal_deformation() {
             .unwrap();
     let definition = birdman_game_app::registered_aircraft().unwrap();
     let identity = FlightRecordTailIdentityDocument {
+        aircraft_sha256: None,
         aircraft_configuration_id: definition.document().configuration_id.clone(),
         controller_profile_id: "camera-fixture".into(),
     };

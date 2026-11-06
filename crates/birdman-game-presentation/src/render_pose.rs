@@ -6,8 +6,6 @@ use birdman_game_core::{
     SessionTerminalState, TailIncidence, WingBendingFactor,
 };
 
-use std::sync::OnceLock;
-
 /// Physical control layout projected by the shared presentation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -94,12 +92,9 @@ pub fn live_render_pose(
         }
         _ => return Ok(None),
     };
-    let telemetry = core
-        .telemetry()
-        .map_err(|error| RenderPoseProjectionError::Session(GameSessionError::Telemetry(error)))?
-        .ok_or(RenderPoseProjectionError::Session(
-            GameSessionError::InvalidTransition,
-        ))?;
+    let telemetry = core.telemetry().ok_or(RenderPoseProjectionError::Session(
+        GameSessionError::InvalidTransition,
+    ))?;
     let exact = session_render_pose(session, state, incidence, time, Some(telemetry), bending)?;
     if !session.flight_interpolation_ready() {
         return Ok(Some(exact));
@@ -200,9 +195,16 @@ fn session_render_pose(
             (
                 identity.aircraft_configuration_id.as_str(),
                 scenario.aircraft_model_version,
+                identity.aircraft_sha256.as_deref(),
             )
         });
-    let geometry = render_tail_geometry(identity).map_err(RenderPoseProjectionError::Geometry)?;
+    let geometry = render_tail_geometry(
+        session
+            .aircraft()
+            .map_err(|_| RenderPoseProjectionError::Geometry("Selected aircraft unavailable"))?,
+        identity,
+    )
+    .map_err(RenderPoseProjectionError::Geometry)?;
     Ok(flight_render_pose(
         state,
         incidence,
@@ -389,41 +391,33 @@ pub fn render_wing_deformation(
     }
 }
 
-static RENDER_TAIL_GEOMETRY: OnceLock<Result<RenderTailGeometryValue, &'static str>> =
-    OnceLock::new();
-
-/// Resolves small presentation metadata without constructing tail meshes per frame.
+/// Resolves tail metadata from the same selected definition used by physics and meshes.
 pub fn render_tail_geometry(
-    identity: Option<(&str, u32)>,
+    selected: &birdman_game_app::SelectedAircraft,
+    identity: Option<(&str, u32, Option<&str>)>,
 ) -> Result<RenderTailGeometry, &'static str> {
-    let definition =
-        birdman_game_app::registered_aircraft().map_err(|_| "Invalid registered aircraft")?;
-    if identity
-        != Some((
-            definition.document().configuration_id.as_str(),
-            definition.document().model_version,
-        ))
-    {
+    let definition = selected.definition();
+    let matches = identity.is_some_and(|(id, version, sha)| {
+        id == definition.document().configuration_id
+            && version == definition.document().model_version
+            && sha.map_or_else(|| selected.is_bundled(), |sha| sha == selected.raw_sha256())
+    });
+    if !matches {
         return Ok(RenderTailGeometry::Unavailable {
             reason: RenderGeometryUnavailable::UnregisteredAircraftGeometry,
         });
     }
-    RENDER_TAIL_GEOMETRY
-        .get_or_init(|| {
-            let pivot = definition
-                .shape()
-                .surface(HybridSurfaceRole::HorizontalTail)
-                .incidence_pivot()
-                .map_err(|_| "Invalid registered tail pivot")?
-                .components();
-            Ok(RenderTailGeometryValue {
-                horizontal_tail_arm_meters: -pivot[0],
-            })
-        })
-        .as_ref()
-        .copied()
-        .map(|value| RenderTailGeometry::Available { value })
-        .map_err(|cause| *cause)
+    let pivot = definition
+        .shape()
+        .surface(HybridSurfaceRole::HorizontalTail)
+        .incidence_pivot()
+        .map_err(|_| "Invalid selected tail pivot")?
+        .components();
+    Ok(RenderTailGeometry::Available {
+        value: RenderTailGeometryValue {
+            horizontal_tail_arm_meters: -pivot[0],
+        },
+    })
 }
 
 /// Projects the same physical state and simulation time used by the owning session or record.

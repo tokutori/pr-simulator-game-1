@@ -222,6 +222,10 @@ pub enum GameUiWaterQualityOperation {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GameUiPlatformCommand {
+    /// Reads an externally selected aircraft through the shared owner.
+    LoadAircraft {},
+    /// Deletes the stored custom aircraft and restores the bundled definition.
+    DeleteAircraft {},
     /// Reloads the application after its current resources have been released.
     ReloadApplication {},
     /// Changes only the Screen 3D drawing resolution.
@@ -558,11 +562,11 @@ pub struct GameUiViewport {
 }
 
 /// Borrowed domain and query inputs. This value owns no game state.
-pub struct GameUiContext<'view, 'session> {
+pub struct GameUiContext<'view> {
     /// Save completion feedback belonging to the displayed record.
     pub record_notification: Option<&'view str>,
     /// Existing game session owner.
-    pub session: &'view GameSession<'session>,
+    pub session: &'view GameSession,
     /// Resume admission from the application-owned live driver and domain session.
     pub resume_available: bool,
     /// Original live-driver failure retained until the flight is replaced.
@@ -575,6 +579,12 @@ pub struct GameUiContext<'view, 'session> {
     pub keyboard_controls: birdman_game_app::flight_input::KeyboardControlSettings,
     /// Shared persistent-settings feedback, independent of a flight record.
     pub keyboard_controls_notification: &'view str,
+    /// Selected aircraft label supplied by its shared owner.
+    pub aircraft_name: &'view str,
+    /// Shared file validation and persistence feedback.
+    pub aircraft_notification: &'view str,
+    /// Whether the stored aircraft document can be explicitly removed.
+    pub aircraft_can_delete: bool,
     /// Selected display adjustment, editable on Title, Setup and while paused.
     pub display_settings: birdman_game_app::display_settings::DisplaySettings,
     /// Shared display-settings persistence feedback, independent of a flight record.

@@ -22,7 +22,7 @@ struct GameUiHudGeometry {
 
 pub(super) fn game_ui_hud(
     state: &GameUiState,
-    context: &GameUiContext<'_, '_>,
+    context: &GameUiContext<'_>,
 ) -> Result<Option<GameUiHud>, GameUiError> {
     let snapshot = context.session.snapshot();
     let phase = snapshot.phase();
@@ -35,9 +35,6 @@ pub(super) fn game_ui_hud(
             let telemetry = context
                 .session
                 .telemetry()
-                .map_err(|error| {
-                    GameUiError::Session(birdman_game_core::GameSessionError::Telemetry(error))
-                })?
                 .ok_or(GameUiError::ActionUnavailable)?;
             let distance = context
                 .session
@@ -392,7 +389,7 @@ pub(super) fn game_ui_hud(
     Ok(Some(GameUiHud { layout, groups }))
 }
 
-fn tail_incidence_rates(session: &GameSession<'_>, state: TailFlightTickState) -> Option<[f64; 2]> {
+fn tail_incidence_rates(session: &GameSession, state: TailFlightTickState) -> Option<[f64; 2]> {
     let [previous, current] = session.flight_record()?.samples().last_chunk::<2>()?;
     if current.tick_index != state.tick_index()
         || current.fraction != 0.0

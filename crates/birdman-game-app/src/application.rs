@@ -515,18 +515,20 @@ impl ApplicationSession {
         input: TailFlightTickInput,
     ) -> Result<SessionSnapshot, GameSessionError> {
         let previous = self.session.snapshot().phase();
-        let result = self
+        let definition = self
+            .aircraft
+            .as_ref()
+            .map_err(|_| GameSessionError::InvalidTransition)?
+            .definition();
+        let surfaces = definition
+            .surfaces()
+            .map_err(|_| GameSessionError::InvalidTransition)?;
+        let prepared = self
             .prepared
             .as_mut()
-            .ok_or(GameSessionError::InvalidTransition)?
-            .advance(
-                &mut self.session,
-                self.aircraft
-                    .as_ref()
-                    .map_err(|_| GameSessionError::InvalidTransition)?
-                    .definition(),
-                input,
-            );
+            .ok_or(GameSessionError::InvalidTransition)?;
+        let loads = prepared.loads(definition, &surfaces)?;
+        let result = prepared.advance(&mut self.session, definition, input, &loads);
         self.synchronize_flight_driver(previous);
         result
     }
@@ -689,8 +691,14 @@ fn build_demo_record(
         TailRateTarget::try_new(0.0, 0.0).map_err(ApplicationError::Input)?,
         TailPilotPositionCommand::Hold,
     );
+    let surfaces = aircraft.definition().surfaces().map_err(|cause| {
+        ApplicationError::Preparation(crate::HybridSessionPreparationError::Aircraft(cause))
+    })?;
+    let loads = prepared
+        .loads(aircraft.definition(), &surfaces)
+        .map_err(ApplicationError::Session)?;
     for _tick in 0..crate::DEFAULT_MAXIMUM_FLIGHT_TICKS {
-        if let Err(error) = prepared.advance(&mut builder, aircraft.definition(), input)
+        if let Err(error) = prepared.advance(&mut builder, aircraft.definition(), input, &loads)
             && builder.snapshot().phase() != SessionPhase::Result
         {
             return Err(ApplicationError::Session(error));

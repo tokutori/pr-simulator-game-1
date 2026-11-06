@@ -15,7 +15,7 @@ const TITLE_RETURN_LABEL: &str = "タイトルへ戻る";
 /// Projects shared menu content, action admission, groups, layout and record charts.
 pub fn game_ui_view(
     state: &GameUiState,
-    context: &GameUiContext<'_, '_>,
+    context: &GameUiContext<'_>,
 ) -> Result<GameUiView, GameUiError> {
     let phase = context.session.snapshot().phase();
     let scene = scene(phase);
@@ -731,7 +731,29 @@ fn flight_camera_choices(menu: &mut Menu, state: &GameUiState) {
     menu.automatic_sections();
 }
 
-fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+fn setup(menu: &mut Menu, context: &GameUiContext<'_>) {
+    menu.section("aircraft", "機体", GameUiSectionLayout::Column);
+    menu.status("game-setup-aircraft", "選択中", context.aircraft_name);
+    if !context.aircraft_notification.is_empty() {
+        menu.status(
+            "game-setup-aircraft-notification",
+            "",
+            context.aircraft_notification,
+        );
+    }
+    menu.platform(
+        "game-setup-load-aircraft",
+        "機体JSONを読み込む",
+        GameUiPlatformCommand::LoadAircraft {},
+        true,
+    );
+    menu.platform(
+        "game-setup-delete-aircraft",
+        "読み込んだ機体を削除する",
+        GameUiPlatformCommand::DeleteAircraft {},
+        context.aircraft_can_delete,
+    );
+    menu.automatic_sections();
     let difficulty = context.difficulty;
     progress(menu, SessionPhase::FlightSetup);
     menu.section(
@@ -967,7 +989,7 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     display_settings(menu, context);
 }
 
-fn briefing(menu: &mut Menu, context: &GameUiContext<'_, '_>, phase: SessionPhase) {
+fn briefing(menu: &mut Menu, context: &GameUiContext<'_>, phase: SessionPhase) {
     progress(menu, phase);
     menu.status(
         "game-briefing-conditions",
@@ -1017,7 +1039,7 @@ fn progress(menu: &mut Menu, phase: SessionPhase) {
     );
 }
 
-fn feedback(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+fn feedback(menu: &mut Menu, context: &GameUiContext<'_>) {
     if !context.platform.notification.is_empty() {
         menu.status(
             "game-preparation-feedback",
@@ -1102,7 +1124,7 @@ fn credits(menu: &mut Menu) {
     }
 }
 
-fn display_settings(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+fn display_settings(menu: &mut Menu, context: &GameUiContext<'_>) {
     use birdman_game_app::display_settings::DISPLAY_SETTING_STEPS;
     let current = context.display_settings;
     if !context.display_settings_notification.is_empty() {
@@ -1148,7 +1170,7 @@ fn display_setting_step_label(step: f64) -> &'static str {
     }
 }
 
-fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+fn water_quality(menu: &mut Menu, context: &GameUiContext<'_>) {
     menu.automatic_sections();
     use crate::screen_render_auto::{ScreenRenderAutoStatus, ScreenRenderSelection};
     let confirmed = context.platform.render_quality_confirmed;
@@ -1245,7 +1267,7 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     }
 }
 
-fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_>) {
     menu.automatic_sections();
     use crate::screen_render_auto::{
         ScreenRenderAutoStatus, ScreenRenderSelection, ScreenShadowMap,
@@ -1382,7 +1404,7 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     }
 }
 
-fn technical_configuration(context: &GameUiContext<'_, '_>) -> String {
+fn technical_configuration(context: &GameUiContext<'_>) -> String {
     let mut description = match context.identity {
         Some(identity) => format!(
             "Catalog: v{}\nScenario: {} / v{}\nAircraft: v{}\nEnvironment: v{}\nController: v{}\nSeed: {}:{}",
@@ -1461,7 +1483,7 @@ fn digest_hex(digest: [u8; 32]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn configuration(context: &GameUiContext<'_, '_>) -> String {
+fn configuration(context: &GameUiContext<'_>) -> String {
     format!(
         "{} / {} / {} / {}",
         catalog::preset(context.preset).0,
@@ -1471,7 +1493,7 @@ fn configuration(context: &GameUiContext<'_, '_>) -> String {
     )
 }
 
-fn notification(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+fn notification(menu: &mut Menu, context: &GameUiContext<'_>) {
     let mut message = context.platform.notification.clone();
     if let Some(notification) = context.record_notification {
         if !message.is_empty() {
@@ -1500,7 +1522,7 @@ fn notification(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     }
 }
 
-fn logs(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+fn logs(menu: &mut Menu, context: &GameUiContext<'_>) {
     menu.section("flight-log-actions", "飛行ログ", GameUiSectionLayout::Row);
     let enabled = context.platform.flight_log_available && context.record.is_some();
     menu.platform(
@@ -1527,7 +1549,7 @@ fn logs(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
 fn analysis(
     menu: &mut Menu,
     state: &GameUiState,
-    context: &GameUiContext<'_, '_>,
+    context: &GameUiContext<'_>,
     replay: bool,
 ) -> Result<(), GameUiError> {
     menu.section("analysis-tabs", "", GameUiSectionLayout::Row);
@@ -1675,7 +1697,7 @@ fn analysis(
 fn replay(
     menu: &mut Menu,
     state: &GameUiState,
-    context: &GameUiContext<'_, '_>,
+    context: &GameUiContext<'_>,
 ) -> Result<(), GameUiError> {
     if state.replay_view == GameUiReplayView::Analysis {
         analysis(menu, state, context, true)?;
@@ -1892,7 +1914,7 @@ fn description(
 
 pub(super) fn layout(
     state: &GameUiState,
-    context: &GameUiContext<'_, '_>,
+    context: &GameUiContext<'_>,
     phase: SessionPhase,
 ) -> Result<GameUiLayout, GameUiError> {
     let viewport = context.platform.viewport;

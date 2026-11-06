@@ -28,7 +28,7 @@ pub struct GameUiStructureKey {
 
 impl GameUiStructureKey {
     /// Derives structural dependencies from the same inputs as the shared view.
-    pub fn new(state: &GameUiState, context: &GameUiContext<'_, '_>) -> Self {
+    pub fn new(state: &GameUiState, context: &GameUiContext<'_>) -> Self {
         let snapshot = context.session.snapshot();
         let phase = match snapshot.phase() {
             SessionPhase::Countdown { .. } => SessionPhase::Countdown {

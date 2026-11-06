@@ -107,6 +107,7 @@ impl core::error::Error for ReplayCameraError {
 pub fn replay_camera_view(
     record: &FlightRecord,
     identity: Option<&FlightRecordTailIdentityDocument>,
+    aircraft: &birdman_game_app::SelectedAircraft,
     time_seconds: f64,
     selection: GameUiReplayCamera,
     attract: bool,
@@ -130,12 +131,16 @@ pub fn replay_camera_view(
         ))?
         .flight_state
         .pilot_position_m();
-    let tail_geometry = crate::render_pose::render_tail_geometry(identity.map(|identity| {
-        (
-            identity.aircraft_configuration_id.as_str(),
-            record.header().scenario.aircraft_model_version,
-        )
-    }))
+    let tail_geometry = crate::render_pose::render_tail_geometry(
+        aircraft,
+        identity.map(|identity| {
+            (
+                identity.aircraft_configuration_id.as_str(),
+                record.header().scenario.aircraft_model_version,
+                identity.aircraft_sha256.as_deref(),
+            )
+        }),
+    )
     .map_err(ReplayCameraError::Geometry)?;
     let mut view = ReplayCameraView {
         render_pose: crate::render_pose::flight_render_pose(

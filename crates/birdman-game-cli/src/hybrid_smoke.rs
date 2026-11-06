@@ -109,7 +109,7 @@ fn verify_mode(mode: ControlMode) -> Result<TailFlightRecordDocument, String> {
 #[cfg(test)]
 fn run_configuration(
     mode: ControlMode,
-    configuration: GameSessionConfiguration<'_>,
+    configuration: GameSessionConfiguration,
     record_identity: FlightRecordTailIdentityDocument,
 ) -> Result<TailFlightRecordDocument, String> {
     let mut session = GameSession::new();
@@ -277,6 +277,7 @@ fn verify_mode_at_speed(
         mode,
         configuration,
         FlightRecordTailIdentityDocument {
+            aircraft_sha256: None,
             aircraft_configuration_id: definition.document().configuration_id.clone(),
             controller_profile_id: "cli-low-speed-fixture".to_owned(),
         },

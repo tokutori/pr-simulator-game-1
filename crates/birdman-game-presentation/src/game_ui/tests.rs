@@ -47,11 +47,14 @@ pub(super) fn difficulty() -> DifficultySettings {
     birdman_game_app::default_difficulty(ControlMode::Manual)
 }
 pub(super) fn context<'view>(
-    session: &'view GameSession<'static>,
+    session: &'view GameSession,
     difficulty: DifficultySettings,
     platform: &'view GameUiPlatformInput,
-) -> GameUiContext<'view, 'static> {
+) -> GameUiContext<'view> {
     GameUiContext {
+        aircraft_name: "既定の機体",
+        aircraft_notification: "",
+        aircraft_can_delete: false,
         record_notification: None,
         archived_identity: None,
         session,
@@ -120,7 +123,7 @@ fn hud_node<'view>(hud: &'view GameUiHud, id: &str) -> &'view GameUiHudNode {
         .unwrap()
 }
 
-fn assert_touch_hud_lower_band(session: &GameSession<'static>, protected_cue: Option<&str>) {
+fn assert_touch_hud_lower_band(session: &GameSession, protected_cue: Option<&str>) {
     let snapshot = session.snapshot();
     for (width, height, font) in [
         (390.0, 844.0, 16.0),
@@ -741,7 +744,7 @@ fn stored_record_preview_bounds_the_rows_projected_by_the_shared_owner() {
         GAME_UI_SAVED_AT_CHARACTERS
     );
 }
-fn launched() -> GameSession<'static> {
+fn launched() -> GameSession {
     let mut session = GameSession::new();
     session.open_setup().unwrap();
     prepare_manual_flight(&mut session, WeatherClass::Calm, 3, 42).unwrap();
@@ -753,7 +756,7 @@ fn launched() -> GameSession<'static> {
     session
 }
 fn prepare_manual_flight(
-    session: &mut GameSession<'static>,
+    session: &mut GameSession,
     weather: WeatherClass,
     maximum_ticks: u64,
     seed: u64,
@@ -768,7 +771,7 @@ fn prepare_manual_flight(
     .into_parts();
     session.prepare_flight(configuration)
 }
-fn finalized() -> GameSession<'static> {
+fn finalized() -> GameSession {
     let mut session = launched();
     let input = TailFlightTickInput::new(
         TailPilotIntent::try_new(0.0, 0.0).unwrap(),
@@ -3293,7 +3296,7 @@ fn renderer_failure_preserves_last_valid_hud_and_exposes_reload_across_scenes() 
         platform.renderer_failure = Some("renderer submission failed".to_owned());
         let state = GameUiState::default();
         let settings = difficulty().with_information(InformationLevel::Minimal);
-        let assert_recovery = |session: &GameSession<'static>, state: &GameUiState| {
+        let assert_recovery = |session: &GameSession, state: &GameUiState| {
             let context = context(session, settings, &platform);
             let before = session.snapshot();
             let view = game_ui_view(state, &context).unwrap();
@@ -4058,7 +4061,7 @@ fn hud_scene_policy_is_shared_by_full_and_frame_projection_in_screen_and_vr() {
     ] {
         let mut platform = platform();
         platform.presentation_mode = mode;
-        let assert_presence = |session: &GameSession<'static>, state: &GameUiState, expected| {
+        let assert_presence = |session: &GameSession, state: &GameUiState, expected| {
             let snapshot = session.snapshot();
             let clock = session.playback_clock();
             let context = context(session, difficulty(), &platform);
@@ -4410,7 +4413,7 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
         hud_node(&paused, "hud-tail-incidence-rate").content.value(),
         rates
     );
-    let assert_pickup_indicator = |session: &GameSession<'static>, expected| {
+    let assert_pickup_indicator = |session: &GameSession, expected| {
         let mut touch_platform = platform.clone();
         touch_platform.touch_available = true;
         let context = context(session, difficulty(), &touch_platform);

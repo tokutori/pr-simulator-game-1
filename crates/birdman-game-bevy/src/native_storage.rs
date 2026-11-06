@@ -13,8 +13,8 @@ use birdman_game_app::record_persistence::{
 };
 use birdman_game_presentation::game_ui::game_ui_saved_record_timestamp;
 use birdman_game_runtime::{
-    ApplicationDisplaySettingsLoad, ApplicationInput, ApplicationKeyboardControlsLoad,
-    ApplicationRecordLoadCompletion, ApplicationRequest,
+    ApplicationAircraftLoad, ApplicationDisplaySettingsLoad, ApplicationInput,
+    ApplicationKeyboardControlsLoad, ApplicationRecordLoadCompletion, ApplicationRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -68,6 +68,61 @@ impl NativeStorage {
         request: &ApplicationRequest,
     ) -> Option<Vec<ApplicationInput>> {
         match request {
+            ApplicationRequest::ReadAircraft {
+                request_id,
+                maximum_bytes,
+            } => {
+                let completion = match self.read_aircraft(*maximum_bytes) {
+                    Ok(Some(bytes)) => ApplicationAircraftLoad::Found { bytes },
+                    Ok(None) => ApplicationAircraftLoad::Missing,
+                    Err(cause) => ApplicationAircraftLoad::Failed {
+                        cause: cause.to_string(),
+                    },
+                };
+                Some(vec![ApplicationInput::AircraftLoaded {
+                    request_id: *request_id,
+                    completion,
+                }])
+            }
+            ApplicationRequest::PickAircraft {
+                request_id,
+                maximum_bytes,
+            } => {
+                let completion = match rfd::FileDialog::new()
+                    .add_filter("機体JSON", &["json"])
+                    .pick_file()
+                {
+                    Some(path) => match Self::read_aircraft_file(&path, *maximum_bytes) {
+                        Ok(bytes) => ApplicationAircraftLoad::Found { bytes },
+                        Err(cause) => ApplicationAircraftLoad::Failed {
+                            cause: cause.to_string(),
+                        },
+                    },
+                    None => ApplicationAircraftLoad::Cancelled,
+                };
+                Some(vec![ApplicationInput::AircraftLoaded {
+                    request_id: *request_id,
+                    completion,
+                }])
+            }
+            ApplicationRequest::WriteAircraft { request_id, bytes } => {
+                let failure = std::str::from_utf8(bytes)
+                    .map_err(io::Error::other)
+                    .and_then(|json| self.write_settings("aircraft", *request_id, json))
+                    .err()
+                    .map(|cause| cause.to_string());
+                Some(vec![ApplicationInput::AircraftSaved {
+                    request_id: *request_id,
+                    failure,
+                }])
+            }
+            ApplicationRequest::DeleteAircraft { request_id } => {
+                let failure = self.delete_aircraft().err().map(|cause| cause.to_string());
+                Some(vec![ApplicationInput::AircraftSaved {
+                    request_id: *request_id,
+                    failure,
+                }])
+            }
             ApplicationRequest::ReadKeyboardControls {
                 request_id,
                 maximum_bytes,
@@ -371,6 +426,45 @@ impl NativeStorage {
         }
         let json = fs::read_to_string(self.directory.join(path))?;
         Ok(json!({ "id": id, "savedAt": row.saved_at, "json": json }))
+    }
+
+    fn read_aircraft_file(path: &Path, maximum_bytes: u32) -> io::Result<Vec<u8>> {
+        let file = File::open(path)?;
+        let mut bytes = Vec::new();
+        file.take(u64::from(maximum_bytes) + 1)
+            .read_to_end(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    fn read_aircraft(&self, maximum_bytes: u32) -> io::Result<Option<Vec<u8>>> {
+        let directory = self
+            .keyboard_directory
+            .as_ref()
+            .map_err(|cause| io::Error::other(cause.clone()))?;
+        match Self::read_aircraft_file(&directory.join("aircraft.json"), maximum_bytes) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(cause) if cause.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(cause) => Err(cause),
+        }
+    }
+
+    fn delete_aircraft(&self) -> io::Result<()> {
+        let directory = self
+            .keyboard_directory
+            .as_ref()
+            .map_err(|cause| io::Error::other(cause.clone()))?;
+        fs::create_dir_all(directory)?;
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(directory.join("aircraft.lock"))?;
+        lock.try_lock().map_err(io::Error::other)?;
+        match fs::remove_file(directory.join("aircraft.json")) {
+            Err(cause) if cause.kind() == io::ErrorKind::NotFound => Ok(()),
+            result => result,
+        }
     }
 
     fn read_keyboard(&self, maximum_bytes: u32) -> io::Result<Option<String>> {

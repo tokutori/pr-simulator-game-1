@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn result(
     menu: &mut Menu,
     state: &GameUiState,
-    context: &GameUiContext<'_, '_>,
+    context: &GameUiContext<'_>,
 ) -> Result<(), GameUiError> {
     notification(menu, context);
     menu.section("result-tabs", "", GameUiSectionLayout::Row);
@@ -99,7 +99,7 @@ pub(super) fn result(
     Ok(())
 }
 
-fn summary(menu: &mut Menu, context: &GameUiContext<'_, '_>) -> Result<(), GameUiError> {
+fn summary(menu: &mut Menu, context: &GameUiContext<'_>) -> Result<(), GameUiError> {
     menu.section("result-summary", "", GameUiSectionLayout::Column);
     let Some(record) = context.record else {
         menu.status("game-result-analysis", "", "飛行記録を読み込んでいる。");
