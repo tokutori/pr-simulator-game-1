@@ -140,20 +140,37 @@ pub fn live_render_pose(
 pub fn prepared_render_pose(
     session: &ApplicationSession,
 ) -> Result<Option<FlightRenderPose>, RenderPoseProjectionError> {
-    session
-        .core_session()
-        .prepared_launch_state()
-        .map(|state| {
-            session_render_pose(
-                session,
-                state.flight_state(),
-                state.incidence(),
-                0.0,
-                None,
-                state.wing_bending_factor(),
-            )
-        })
-        .transpose()
+    let core = session.core_session();
+    let Some(state) = core.prepared_launch_state() else {
+        return Ok(None);
+    };
+    let mut flight_state = state.flight_state();
+    if let (Some(elapsed_seconds), Some(duration_seconds)) = (
+        core.countdown_elapsed_seconds(),
+        core.countdown_duration_seconds(),
+    ) {
+        let platform = birdman_game_app::launch_venue()
+            .map_err(|_| RenderPoseProjectionError::Geometry("launch venue unavailable"))?
+            .platform;
+        let seconds_until_launch = (f64::from(duration_seconds) - elapsed_seconds).max(0.0);
+        flight_state = birdman_game_core::flight_state_during_launch_roll(
+            flight_state,
+            platform.length_meters,
+            platform.heading_rad(),
+            platform.downward_slope_degrees.to_radians(),
+            seconds_until_launch,
+        )
+        .map_err(|_| RenderPoseProjectionError::Geometry("launch roll state is invalid"))?;
+    }
+    session_render_pose(
+        session,
+        flight_state,
+        state.incidence(),
+        0.0,
+        None,
+        state.wing_bending_factor(),
+    )
+    .map(Some)
 }
 
 fn session_render_pose(
@@ -478,5 +495,84 @@ mod tests {
             render_tail_geometry(registered).unwrap(),
             RenderTailGeometry::Available { value }
         );
+    }
+
+    #[test]
+    fn prepared_pose_rolls_along_the_deck_during_countdown() {
+        use birdman_game_app::application::{BackendReadiness, SessionCommand};
+        use birdman_game_core::ControlMode;
+        use birdman_game_format::WeatherClass;
+
+        let mut application = ApplicationSession::new(ControlMode::Manual, 3, 42);
+        for command in [
+            SessionCommand::OpenSetup {},
+            SessionCommand::SelectWeather {
+                weather: WeatherClass::Calm,
+            },
+            SessionCommand::Prepare {},
+        ] {
+            application
+                .execute(command, BackendReadiness::Ready)
+                .unwrap();
+        }
+        let initial = application
+            .core_session()
+            .prepared_launch_state()
+            .unwrap()
+            .flight_state();
+        let lip = initial.datum_position_ned().components();
+        // During briefing the prepared pose stays at the sealed launch position.
+        let briefing = prepared_render_pose(&application).unwrap().unwrap();
+        assert_eq!(
+            [
+                briefing.datum_position_ned.north,
+                briefing.datum_position_ned.east,
+                briefing.datum_position_ned.down,
+            ],
+            lip
+        );
+
+        let platform = birdman_game_app::launch_venue().unwrap().platform;
+        let slope = platform.downward_slope_degrees.to_radians();
+        let heading = platform.heading_rad();
+        let forward = [
+            heading.cos() * slope.cos(),
+            heading.sin() * slope.cos(),
+            slope.sin(),
+        ];
+        let velocity = initial.datum_velocity_ned().components();
+        let lip_speed =
+            velocity[0] * forward[0] + velocity[1] * forward[1] + velocity[2] * forward[2];
+        let deck_length = platform.length_meters / slope.cos();
+        let acceleration = lip_speed * lip_speed / (2.0 * deck_length);
+        let distance_behind = |seconds_until_launch: f64| {
+            lip_speed * seconds_until_launch
+                - 0.5 * acceleration * seconds_until_launch * seconds_until_launch
+        };
+        let assert_pose_behind_lip = |application: &ApplicationSession, seconds: f64| {
+            let pose = prepared_render_pose(application).unwrap().unwrap();
+            let expected = distance_behind(seconds);
+            let offset = [
+                pose.datum_position_ned.north - lip[0],
+                pose.datum_position_ned.east - lip[1],
+                pose.datum_position_ned.down - lip[2],
+            ];
+            for (offset, forward) in offset.into_iter().zip(forward) {
+                assert!((offset + expected * forward).abs() < 1.0e-9);
+            }
+        };
+
+        application
+            .execute(SessionCommand::StartCountdown {}, BackendReadiness::Ready)
+            .unwrap();
+        let token = application.core_session().countdown_token().unwrap();
+        // At countdown start the aircraft already rolls: 3 s before launch it
+        // sits behind the lip on the virtual from-rest trajectory.
+        assert_pose_behind_lip(&application, 3.0);
+        application.observe_countdown(token, 1.5, true).unwrap();
+        assert_pose_behind_lip(&application, 1.5);
+        application.observe_countdown(token, 1.5, true).unwrap();
+        // Launch hands over to the live pose; the prepared pose disappears.
+        assert_eq!(prepared_render_pose(&application).unwrap(), None);
     }
 }

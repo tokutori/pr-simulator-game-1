@@ -1446,6 +1446,17 @@ impl<'a> GameSession<'a> {
         }
     }
 
+    /// Returns the sealed duration of the active countdown attempt.
+    pub const fn countdown_duration_seconds(&self) -> Option<u32> {
+        match self.configured() {
+            Some(ConfiguredSession {
+                phase: ConfiguredPhase::Countdown(countdown),
+                ..
+            }) => Some(countdown.duration_seconds()),
+            _ => None,
+        }
+    }
+
     /// Observes monotonic elapsed seconds separately from presentation availability.
     ///
     /// The adapter supplies consecutive nonnegative clock deltas in seconds.

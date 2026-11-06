@@ -108,6 +108,7 @@ u_{surface}=(1-a)u_{pilot,surface}+a u_{FBW,surface},\qquad 0\le a\le1
 
 - Briefingで解決済みconfiguration、seed、初期状態、環境・asset identityを確定する。
 - Countdown中は物理・controller・actuator時刻を固定し、操縦入力を取得・積分しない。
+- Countdown中の表示姿勢は、プラットフォーム後端から静止で等加速度し、前端で封印済み初期状態へ到達する仮想滑走の最終区間として、受理済みelapsedから純粋導出する。物理状態と記録は初期状態へ固定し、表示導出は物理へ影響しない。
 - launch時にtick 0の初期snapshotを記録してから最初の入力を適用する。
 - 開始前のkeyboard押下は破棄し、gamepadは新規飛行とPause復帰時に中立確認を行う。
 
