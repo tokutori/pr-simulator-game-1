@@ -1,4 +1,4 @@
-#![doc = "Registered OSM shoreline structure presentation, migrated from the Web reference. Coordinates are local NED metres and heights use the fixed gameplay water plane."]
+#![doc = "Shared registered OSM shoreline structure geometry. Coordinates are local NED metres; continuous raised footprints use the fixed gameplay water plane."]
 
 use std::sync::OnceLock;
 
@@ -57,7 +57,7 @@ impl ShoreStructureKind {
     }
 }
 
-#[doc = "One merged kind, preserving the Web top/side topology and shared palette."]
+#[doc = "One merged structure kind with triangulated tops, outer walls and a shared palette."]
 pub struct ShoreStructureMesh {
     #[doc = "Registered structure kind."]
     pub kind: ShoreStructureKind,
@@ -143,29 +143,107 @@ fn append_feature(
         };
         return append_footprint(mesh, outline, triangulator);
     }
-    for pair in path.windows(2) {
-        let [start, end] = pair else { unreachable!() };
-        let delta_east = end[1] - start[1];
-        let delta_south = start[0] - end[0];
-        let length = delta_east.hypot(delta_south);
+    if path.iter().flatten().any(|value| !value.is_finite()) {
+        return Err(VenueStructureError::InvalidGeometry(feature.kind.clone()));
+    }
+    // A skipped short segment separates runs instead of moving either neighbour's endpoint.
+    let mut run_start = 0;
+    for index in 0..path.len() - 1 {
+        let length =
+            (path[index + 1][0] - path[index][0]).hypot(path[index + 1][1] - path[index][1]);
         if length < 0.1 {
-            continue;
+            if index > run_start {
+                let outline = open_footprint(&path[run_start..=index], mesh.kind)?;
+                append_footprint(mesh, &outline, triangulator)?;
+            }
+            run_start = index + 1;
         }
-        let half_width = mesh.kind.width_m() / 2.0;
-        let offset_north = delta_east / length * half_width;
-        let offset_east = delta_south / length * half_width;
-        append_footprint(
-            mesh,
-            &[
-                [start[0] - offset_north, start[1] - offset_east],
-                [end[0] - offset_north, end[1] - offset_east],
-                [end[0] + offset_north, end[1] + offset_east],
-                [start[0] + offset_north, start[1] + offset_east],
-            ],
-            triangulator,
-        )?;
+    }
+    if run_start < path.len() - 1 {
+        let outline = open_footprint(&path[run_start..], mesh.kind)?;
+        append_footprint(mesh, &outline, triangulator)?;
     }
     Ok(())
+}
+
+fn open_footprint(
+    path: &[[f64; 2]],
+    kind: ShoreStructureKind,
+) -> Result<Vec<[f64; 2]>, VenueStructureError> {
+    let invalid = || VenueStructureError::InvalidGeometry(kind.name().into());
+    let normals: Vec<_> = path
+        .windows(2)
+        .map(|pair| {
+            let north = pair[1][0] - pair[0][0];
+            let east = pair[1][1] - pair[0][1];
+            let length = north.hypot(east);
+            [east / length, -north / length]
+        })
+        .collect();
+    let mut left = Vec::with_capacity(path.len());
+    let mut right = Vec::with_capacity(path.len());
+    for (index, point) in path.iter().enumerate() {
+        let offset = if index == 0 {
+            *normals.first().ok_or_else(invalid)?
+        } else if index == path.len() - 1 {
+            *normals.last().ok_or_else(invalid)?
+        } else {
+            let [a, b] = [normals[index - 1], normals[index]];
+            let denominator = 1.0 + a[0] * b[0] + a[1] * b[1];
+            if denominator <= f64::EPSILON {
+                return Err(invalid());
+            }
+            [(a[0] + b[0]) / denominator, (a[1] + b[1]) / denominator]
+        };
+        left.push(core::array::from_fn(|axis| {
+            point[axis] - offset[axis] * kind.width_m() / 2.0
+        }));
+        right.push(core::array::from_fn(|axis| {
+            point[axis] + offset[axis] * kind.width_m() / 2.0
+        }));
+    }
+    left.extend(right.into_iter().rev());
+    if left.iter().flatten().any(|value| !value.is_finite()) || !simple_outline(&left) {
+        return Err(invalid());
+    }
+    Ok(left)
+}
+
+fn simple_outline(outline: &[[f64; 2]]) -> bool {
+    fn cross(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
+        (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    }
+    fn on_segment(a: [f64; 2], b: [f64; 2], p: [f64; 2]) -> bool {
+        (0..2).all(|axis| p[axis] >= a[axis].min(b[axis]) && p[axis] <= a[axis].max(b[axis]))
+    }
+    let count = outline.len();
+    for i in 0..count {
+        let [a, b] = [outline[i], outline[(i + 1) % count]];
+        if a == b {
+            return false;
+        }
+        for j in i + 2..count {
+            if i == 0 && j == count - 1 {
+                continue;
+            }
+            let [c, d] = [outline[j], outline[(j + 1) % count]];
+            let [abc, abd, cda, cdb] = [
+                cross(a, b, c),
+                cross(a, b, d),
+                cross(c, d, a),
+                cross(c, d, b),
+            ];
+            if (abc * abd < 0.0 && cda * cdb < 0.0)
+                || (abc == 0.0 && on_segment(a, b, c))
+                || (abd == 0.0 && on_segment(a, b, d))
+                || (cda == 0.0 && on_segment(c, d, a))
+                || (cdb == 0.0 && on_segment(c, d, b))
+            {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn append_footprint(
@@ -252,6 +330,49 @@ mod tests {
             ShoreStructureKind::ALL.map(ShoreStructureKind::color_srgb),
             [0x85765d, 0x777a73, 0x696e6a]
         );
+        let source = birdman_game_app::registered_venue_features().unwrap();
+        let mut open_quays = 0;
+        for feature in &source.features {
+            if feature.kind != "quay" || feature.closed {
+                continue;
+            }
+            open_quays += 1;
+            let outline =
+                open_footprint(&feature.north_east_meters, ShoreStructureKind::Quay).unwrap();
+            assert_eq!(outline.len(), feature.north_east_meters.len() * 2);
+            let mut mesh = ShoreStructureMesh {
+                kind: ShoreStructureKind::Quay,
+                feature_count: 0,
+                positions_ned: Vec::new(),
+                indices: Vec::new(),
+            };
+            append_feature(&mut mesh, feature, &mut earcut::Earcut::new()).unwrap();
+            assert_eq!(mesh.positions_ned.len(), outline.len() * 3);
+            assert_eq!(
+                mesh.indices.len(),
+                (outline.len() - 2) * 3 + outline.len() * 6
+            );
+            let signed_area = outline
+                .iter()
+                .zip(outline.iter().cycle().skip(1))
+                .take(outline.len())
+                .map(|(a, b)| a[0] * b[1] - a[1] * b[0])
+                .sum::<f64>()
+                / 2.0;
+            assert!(signed_area.abs() > 0.0);
+            let top_area = mesh.indices[..(outline.len() - 2) * 3]
+                .chunks_exact(3)
+                .map(|tri| {
+                    let [a, b, c] = [tri[0], tri[1], tri[2]]
+                        .map(|i| mesh.positions_ned[i as usize].map(f64::from));
+                    let signed =
+                        ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) / 2.0;
+                    signed.abs()
+                })
+                .sum::<f64>();
+            assert!((top_area - signed_area.abs()).abs() < 0.01);
+        }
+        assert_eq!(open_quays, 3);
     }
 
     #[test]
@@ -289,6 +410,22 @@ mod tests {
 
     #[test]
     fn open_segments_keep_web_width_and_short_segment_threshold() {
+        fn coverage(mesh: &ShoreStructureMesh, point: [f32; 2]) -> usize {
+            mesh.indices
+                .chunks_exact(3)
+                .filter(|tri| {
+                    let points = [tri[0], tri[1], tri[2]].map(|i| mesh.positions_ned[i as usize]);
+                    if points.iter().any(|p| p[2] != -(mesh.kind.top_m() as f32)) {
+                        return false;
+                    }
+                    let signs = core::array::from_fn::<_, 3, _>(|i| {
+                        let [a, b] = [points[i], points[(i + 1) % 3]];
+                        (b[0] - a[0]) * (point[1] - a[1]) - (b[1] - a[1]) * (point[0] - a[0])
+                    });
+                    signs.iter().all(|v| *v > 0.0) || signs.iter().all(|v| *v < 0.0)
+                })
+                .count()
+        }
         for kind in ShoreStructureKind::ALL {
             let mut mesh = ShoreStructureMesh {
                 kind,
@@ -309,6 +446,31 @@ mod tests {
                 mesh.positions_ned[0],
                 [0.099, (kind.width_m() / 2.0) as f32, -(kind.top_m() as f32)]
             );
+            for turn in [-1.0, 1.0] {
+                let feature = VenueFeatureDocument {
+                    kind: kind.name().into(),
+                    name: None,
+                    north_east_meters: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0 * turn]],
+                    closed: false,
+                };
+                mesh.positions_ned.clear();
+                mesh.indices.clear();
+                append_feature(&mut mesh, &feature, &mut earcut::Earcut::new()).unwrap();
+                let h = kind.width_m() as f32 / 2.0;
+                assert_eq!(
+                    coverage(&mesh, [10.0 + h * 0.499, -h * 0.351 * turn as f32]),
+                    1
+                );
+                assert_eq!(
+                    coverage(&mesh, [10.0 - h * 0.389, h * 0.351 * turn as f32]),
+                    1
+                );
+                assert_eq!(mesh.positions_ned.len(), 18);
+                assert_eq!(mesh.indices.len(), 48);
+            }
+            let straight = open_footprint(&[[0.0, 0.0], [5.0, 0.0], [10.0, 0.0]], kind).unwrap();
+            assert!(straight.iter().all(|p| p[1].abs() == kind.width_m() / 2.0));
+            assert!(open_footprint(&[[0.0, 0.0], [10.0, 0.0], [0.0, 0.0]], kind).is_err());
         }
     }
 }
