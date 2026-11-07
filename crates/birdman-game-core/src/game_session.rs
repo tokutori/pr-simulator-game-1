@@ -1645,6 +1645,38 @@ impl GameSession {
         )
     }
 
+    /// Finalizes a failed physical observation at the current accepted boundary.
+    /// The original typed cause is returned after retaining the same tick and samples.
+    pub fn fail_tail_flight_observation(
+        &mut self,
+        cause: TailFlightTickError,
+    ) -> Result<SessionSnapshot, GameSessionError> {
+        let configured = self.configured_mut()?;
+        let previous = configured
+            .phase
+            .running_state()
+            .ok_or(GameSessionError::InvalidTransition)?;
+        let terminal = SessionTerminalState::TailTick(previous);
+        let configuration = &configured.configuration;
+        let score = course_distance_score(
+            configuration
+                .initial_state()
+                .flight_state()
+                .datum_position_ned(),
+            previous.flight_state().datum_position_ned(),
+            configuration.course_axis(),
+        );
+        configured.finalize_terminal(
+            cause.end_reason(),
+            terminal,
+            configuration.identity,
+            Some(cause),
+            None,
+            score,
+        )?;
+        Err(GameSessionError::TailTick(cause))
+    }
+
     /// Aborts at the current input boundary and retains the last valid tick.
     pub fn abort_flight(&mut self) -> Result<SessionSnapshot, GameSessionError> {
         self.abort_flight_with_score(|configuration, terminal| {

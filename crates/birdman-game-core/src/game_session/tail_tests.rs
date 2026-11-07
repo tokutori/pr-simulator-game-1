@@ -898,3 +898,37 @@ impl FixtureSession<'_> {
         )
     }
 }
+
+#[test]
+fn failed_physical_observation_finalizes_the_exact_accepted_boundary() {
+    let definition = TestAircraft::try_new().unwrap();
+    let surfaces = definition.surfaces().unwrap();
+    let mut session = launch(configuration(
+        &definition,
+        &surfaces,
+        WindField::uniform(NedVector::zero()),
+        -10.5,
+        10,
+        ControlMode::Manual,
+    ));
+    let previous = session.snapshot().tail_flight_state().unwrap();
+    let samples = session.flight_record().unwrap().samples().to_vec();
+    let cause = TailFlightTickError::Telemetry(FlightTelemetryError::Wind(WindError::OutsideGrid));
+    assert_eq!(
+        session.fail_tail_flight_observation(cause),
+        Err(GameSessionError::TailTick(cause))
+    );
+    let result = session.snapshot().result().unwrap();
+    assert_eq!(result.state, SessionTerminalState::TailTick(previous));
+    assert_eq!(result.failure, Some(cause));
+    let record = session.flight_record().unwrap();
+    assert_eq!(record.samples(), samples);
+    let finalization = record.finalization().unwrap();
+    assert_eq!(finalization.terminal_tick, previous.tick_index());
+    assert_eq!(finalization.terminal_fraction, 0.0);
+    assert_eq!(finalization.failure, Some(cause));
+    assert_eq!(
+        session.fail_tail_flight_observation(cause),
+        Err(GameSessionError::InvalidTransition)
+    );
+}
