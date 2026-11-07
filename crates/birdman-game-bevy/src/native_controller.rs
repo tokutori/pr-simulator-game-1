@@ -11,7 +11,7 @@ use std::{
     io::{self, Read, Write},
     process::{Command, Stdio},
     sync::{
-        Arc,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
@@ -27,6 +27,62 @@ const COMPLETION_CAPACITY: usize = 32;
 const MAX_CONNECTIONS: usize = 2;
 const SERIAL_POLL: Duration = Duration::from_millis(2);
 const STDERR_BYTES: usize = 8192;
+
+/// OS I/O notification only; the shared owner continues to authorize every wake/input.
+#[derive(Default)]
+pub(crate) struct NativeIoSignal {
+    version: Mutex<u64>,
+    changed: Condvar,
+}
+impl NativeIoSignal {
+    pub(crate) fn snapshot(&self) -> u64 {
+        *self.version.lock().expect("Native I/O signal poisoned")
+    }
+    pub(crate) fn notify(&self) {
+        let mut version = self.version.lock().expect("Native I/O signal poisoned");
+        *version = version.wrapping_add(1);
+        self.changed.notify_all();
+    }
+    pub(crate) fn wait(&self, observed: u64, timeout: Option<Duration>) {
+        let version = self.version.lock().expect("Native I/O signal poisoned");
+        match timeout {
+            Some(timeout) => drop(
+                self.changed
+                    .wait_timeout_while(version, timeout, |version| *version == observed)
+                    .expect("Native I/O signal poisoned"),
+            ),
+            None => drop(
+                self.changed
+                    .wait_while(version, |version| *version == observed)
+                    .expect("Native I/O signal poisoned"),
+            ),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct CompletionPublisher {
+    sender: mpsc::Sender<NativeControllerCompletion>,
+    signal: Arc<NativeIoSignal>,
+}
+impl CompletionPublisher {
+    async fn send(
+        &self,
+        value: NativeControllerCompletion,
+    ) -> Result<(), mpsc::error::SendError<NativeControllerCompletion>> {
+        self.sender.send(value).await?;
+        self.signal.notify();
+        Ok(())
+    }
+    fn blocking_send(
+        &self,
+        value: NativeControllerCompletion,
+    ) -> Result<(), mpsc::error::SendError<NativeControllerCompletion>> {
+        self.sender.blocking_send(value)?;
+        self.signal.notify();
+        Ok(())
+    }
+}
 
 pub(crate) struct NativeControllerCompletion {
     pub(crate) observed_ms: f64,
@@ -50,12 +106,13 @@ impl Worker {
 pub(crate) struct NativeControllerIo {
     epoch: Instant,
     workers: BTreeMap<u64, Worker>,
-    sender: mpsc::Sender<NativeControllerCompletion>,
+    sender: CompletionPublisher,
     completions: mpsc::Receiver<NativeControllerCompletion>,
 }
 impl NativeControllerIo {
-    pub(crate) fn new(epoch: Instant) -> Self {
+    pub(crate) fn new(epoch: Instant, signal: Arc<NativeIoSignal>) -> Self {
         let (sender, completions) = mpsc::channel(COMPLETION_CAPACITY);
+        let sender = CompletionPublisher { sender, signal };
         Self {
             epoch,
             workers: BTreeMap::new(),
@@ -194,7 +251,7 @@ fn completion(epoch: Instant, observation: ControllerIoObservation) -> NativeCon
     }
 }
 async fn emit(
-    output: &mpsc::Sender<NativeControllerCompletion>,
+    output: &CompletionPublisher,
     value: NativeControllerCompletion,
     stop: &mut oneshot::Receiver<()>,
 ) -> bool {
@@ -301,7 +358,7 @@ async fn run(
     requests: mpsc::Receiver<(u64, Vec<u8>)>,
     mut stop: oneshot::Receiver<()>,
     stopping: Arc<AtomicBool>,
-    output: mpsc::Sender<NativeControllerCompletion>,
+    output: CompletionPublisher,
     epoch: Instant,
 ) {
     let terminal = match connection {
@@ -402,7 +459,7 @@ async fn stdio(
     mut requests: mpsc::Receiver<(u64, Vec<u8>)>,
     stop: &mut oneshot::Receiver<()>,
     stopping: &AtomicBool,
-    output: &mpsc::Sender<NativeControllerCompletion>,
+    output: &CompletionPublisher,
     epoch: Instant,
 ) -> (bool, Option<String>) {
     let child = verified_command(program, arguments, expected_hash, stopping).and_then(|command| {
@@ -549,7 +606,7 @@ async fn serial(
     baud: u32,
     mut requests: mpsc::Receiver<(u64, Vec<u8>)>,
     stop: &mut oneshot::Receiver<()>,
-    output: &mpsc::Sender<NativeControllerCompletion>,
+    output: &CompletionPublisher,
     epoch: Instant,
 ) -> (bool, Option<String>) {
     let mut port = match serialport::new(name, baud)
@@ -780,7 +837,9 @@ mod tests {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
-        let mut io = NativeControllerIo::new(Instant::now());
+        let signal = Arc::new(NativeIoSignal::default());
+        let prior_notification = signal.snapshot();
+        let mut io = NativeControllerIo::new(Instant::now(), signal.clone());
         io.submit(ControllerIoRequest::Open {
             generation: 4,
             connection: NativeControllerConnection::Sitl {
@@ -814,6 +873,8 @@ mod tests {
             );
             thread::sleep(Duration::from_millis(2));
         }
+        assert_ne!(signal.snapshot(), prior_notification);
+        signal.wait(prior_notification, Some(Duration::ZERO));
         thread::sleep(Duration::from_millis(20));
         assert!(
             io.poll().is_empty(),

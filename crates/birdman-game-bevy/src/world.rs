@@ -1,3 +1,4 @@
+use super::native_runtime::NativeRuntime;
 #[path = "world/environment.rs"]
 mod environment;
 #[path = "world/readiness.rs"]
@@ -31,7 +32,7 @@ use birdman_game_runtime::{
     ApplicationDrawingOutput, ApplicationEnvironmentAssets, ApplicationGeometryAssets,
     ApplicationGpuTimingCapability, ApplicationGraphicsTarget, ApplicationInput,
     ApplicationMeshAttachment, ApplicationRendererObservation, ApplicationRequest,
-    ApplicationResourceCommit, ApplicationResourceObservation, ApplicationRuntime,
+    ApplicationResourceCommit, ApplicationResourceObservation,
 };
 use std::collections::BTreeMap;
 
@@ -270,7 +271,7 @@ pub(crate) fn xr_output(
 
 pub(crate) fn execute(
     world: &mut World,
-    runtime: &ApplicationRuntime,
+    runtime: &NativeRuntime,
     request: &ApplicationRequest,
 ) -> Result<Option<Vec<ApplicationInput>>, String> {
     let Some(mut gpu) = world.remove_resource::<NativeGpu>() else {
@@ -523,7 +524,7 @@ impl NativeGpu {
     fn prepare(
         &mut self,
         world: &mut World,
-        runtime: &ApplicationRuntime,
+        runtime: &NativeRuntime,
         target: ApplicationGraphicsTarget,
         assets: &ApplicationEnvironmentAssets,
         copy_display: Option<u32>,
@@ -1081,7 +1082,7 @@ pub(crate) fn submit_transform(world: &mut World, entity: Entity, transform: Tra
 
 pub(crate) fn submit(
     world: &mut World,
-    runtime: &ApplicationRuntime,
+    runtime: &NativeRuntime,
     drawing: &ApplicationDrawingOutput,
 ) -> Result<(), String> {
     let mut gpu = world
@@ -1716,22 +1717,25 @@ mod tests {
             observation: ApplicationResourceObservation::Committed { resource_id: 3, actual } }] if actual.extent_px == [640, 360])
         );
         assert!(poll(&mut world).is_empty());
-        let mut runtime = ApplicationRuntime::new(
-            birdman_game_app::application::ApplicationSession::default(),
-            birdman_game_runtime::ApplicationPlatformObservation {
-                gpu_timing_requested: false,
-                renderer: None,
-                surface: None,
-                viewport: birdman_game_presentation::game_ui::GameUiViewport {
-                    width: 1280.0,
-                    height: 720.0,
-                    root_font_size: 16.0,
+        let runtime = NativeRuntime::from_runtime(
+            birdman_game_runtime::ApplicationRuntime::new(
+                birdman_game_app::application::ApplicationSession::default(),
+                birdman_game_runtime::ApplicationPlatformObservation {
+                    gpu_timing_requested: false,
+                    renderer: None,
+                    surface: None,
+                    viewport: birdman_game_presentation::game_ui::GameUiViewport {
+                        width: 1280.0,
+                        height: 720.0,
+                        root_font_size: 16.0,
+                    },
+                    capabilities: Default::default(),
                 },
-                capabilities: Default::default(),
-            },
-        )
-        .unwrap();
+            )
+            .unwrap(),
+        );
         let mut initial = runtime
+            .lock()
             .update(
                 birdman_game_runtime::ApplicationObservation {
                     observed_ms: 0.0,
@@ -2295,12 +2299,12 @@ mod tests {
                 image.texture_descriptor.format,
                 bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb
             );
-            let Some(birdman_game_runtime::ApplicationBufferSlice::U8(bytes)) =
+            let Some(crate::app::native_runtime::NativeBuffer::U8(bytes)) =
                 runtime.asset_buffer(texture.buffer.buffer_id)
             else {
                 panic!("Prepared wing upload")
             };
-            assert_eq!(image.data.as_deref(), Some(bytes));
+            assert_eq!(image.data.as_deref(), Some(bytes.as_slice()));
         }
         assert!(
             execute(
