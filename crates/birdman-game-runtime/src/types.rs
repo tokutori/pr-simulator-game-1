@@ -198,6 +198,11 @@ pub struct ApplicationSpatialObservation {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationInput {
+    /// Raw completion from the requested controller transport.
+    ControllerIo {
+        /// One bounded operation and its OS-completion timestamp.
+        observation: birdman_game_app::ControllerIoObservation,
+    },
     /// Terminal original-byte result of a configuration read or picker.
     ConfigurationLoaded {
         /// Independently selected original document kind.
@@ -533,6 +538,11 @@ pub enum ApplicationInput {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ApplicationRequest {
+    /// Requested controller I/O; executed outside the sole application owner lock.
+    ControllerIo {
+        /// Bounded open, exchange or terminal retirement operation.
+        request: birdman_game_app::ControllerIoRequest,
+    },
     /// Reads a persisted original configuration document once at boot.
     ReadConfiguration {
         /// Independently selected original document kind.
@@ -672,6 +682,8 @@ pub enum ApplicationRequest {
         request_id: u32,
         /// Deadline on the shared receipt clock, in milliseconds.
         at_ms: f64,
+        /// Routes controller deadlines to Native background I/O.
+        realtime: bool,
     },
     /// Cancel a timer whose observation is no longer needed.
     CancelWake {

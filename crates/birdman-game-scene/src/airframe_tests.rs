@@ -821,7 +821,7 @@ fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revisio
                     scenario,
                     difficulty,
                     identity: &document.control_identity,
-                    control_mode: ControlMode::Manual,
+                    execution: birdman_game_core::ControllerExecution::BuiltIn { mode: ControlMode::Manual },
                 },
                 course,
                 birdman_game_app::record_archive::record_build_provenance(),

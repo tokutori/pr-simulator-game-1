@@ -790,8 +790,39 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_>) {
         },
         context.controller_can_delete,
     );
+    menu.status(
+        "game-setup-controller-execution",
+        "実行方式",
+        context.controller_execution_name,
+    );
+    if !context.controller_execution_notification.is_empty() {
+        menu.status(
+            "game-setup-controller-execution-notification",
+            "",
+            context.controller_execution_notification,
+        );
+    }
+    menu.platform(
+        "game-setup-load-controller-execution",
+        "制御プログラム・接続設定を読み込む",
+        GameUiPlatformCommand::LoadConfiguration {
+            document: birdman_game_format::ConfigurationDocumentKind::ControllerExecution,
+        },
+        true,
+    );
+    menu.platform(
+        "game-setup-delete-controller-execution",
+        "組み込み制御に戻す",
+        GameUiPlatformCommand::DeleteConfiguration {
+            document: birdman_game_format::ConfigurationDocumentKind::ControllerExecution,
+        },
+        context.controller_execution_can_delete,
+    );
     if let Some(diagnostic) = &context.controller_pair_diagnostic {
         menu.status("game-setup-controller-pair", "開始条件", diagnostic);
+    }
+    if let Some(status) = &context.controller_execution_status {
+        menu.status("game-controller-execution-status", "制御器", status);
     }
     menu.automatic_sections();
     let difficulty = context.difficulty;

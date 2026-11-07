@@ -825,15 +825,15 @@ mod tests {
         let mut foreign_nan = frame.as_bytes().to_vec();
         foreign_nan[24..32].copy_from_slice(&(frame.header().sequence + 1).to_le_bytes());
         foreign_nan[64..72].copy_from_slice(&f64::NAN.to_le_bytes());
-        assert_eq!(
+        assert!(matches!(
             ControllerFrame::decode_reply(&foreign_nan, &frame),
             Err(ProtocolError::Unauthorized)
-        );
+        ));
         foreign_nan[24..32].copy_from_slice(&frame.header().sequence.to_le_bytes());
-        assert_eq!(
+        assert!(matches!(
             ControllerFrame::decode_reply(&foreign_nan, &frame),
             Err(ProtocolError::NonFiniteValue)
-        );
+        ));
         assert_eq!(crc32c(b"123456789"), 0xe3069283);
     }
     #[test]

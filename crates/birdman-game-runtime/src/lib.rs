@@ -119,6 +119,69 @@ use std::sync::Arc;
 #[cfg(not(verus_only))]
 mod tests;
 
+/// Exclusive, owned spatial painting work; it carries no runtime guard or engine references.
+#[cfg(not(verus_only))]
+pub struct PresentationWork {
+    id: u64,
+    scope: PresentationScope,
+    owner: surface::SurfaceOwner,
+    view: Arc<GameUiView>,
+    frame: birdman_game_presentation::game_ui::GameUiFrame,
+    scene: scene::SceneFrame,
+    font: Option<ApplicationSurfaceObservation>,
+    display: surface::SurfaceDisplay,
+    drawing: ApplicationDrawingOutput,
+}
+
+/// Painting result retaining its unique owner on both success and font failure.
+#[cfg(not(verus_only))]
+pub struct PresentationResult {
+    id: u64,
+    scope: PresentationScope,
+    owner: surface::SurfaceOwner,
+    drawing: Result<ApplicationDrawingOutput, ApplicationRuntimeError>,
+}
+
+#[cfg(not(verus_only))]
+#[derive(PartialEq)]
+struct PresentationScope {
+    structure: GameUiStructureKey,
+    resource: Option<ResourceKey>,
+    display: Option<(GameUiPresentationMode, Option<u32>)>,
+    font: Option<ApplicationSurfaceObservation>,
+    closed: bool,
+}
+
+#[cfg(not(verus_only))]
+impl PresentationWork {
+    /// Executes the existing shared surface projection outside the application lock.
+    pub fn project(
+        mut self,
+        measure: &mut impl FnMut(
+            &ApplicationTextProbe,
+        ) -> Result<ApplicationGlyphMetrics, MenuLayoutFailure>,
+    ) -> PresentationResult {
+        let result = self.owner.project(
+            &self.view,
+            &self.frame,
+            &self.scene,
+            self.font.as_ref(),
+            self.display,
+            measure,
+        );
+        let drawing = result.map(|spatial| {
+            self.drawing.spatial = Some(spatial);
+            self.drawing
+        });
+        PresentationResult {
+            id: self.id,
+            scope: self.scope,
+            owner: self.owner,
+            drawing,
+        }
+    }
+}
+
 /// Owns the application and its presentation state across all platform adapters.
 #[cfg(not(verus_only))]
 pub struct ApplicationRuntime {
@@ -133,6 +196,9 @@ pub struct ApplicationRuntime {
     next_touch_generation: u32,
     display: display::DisplayWorkflow,
     previous_frame_ms: Option<f64>,
+    controller_gamepads: Vec<FlightGamepadObservation>,
+    controller_wake: Option<(u32, f64)>,
+    controller_next_tick_ms: Option<f64>,
     next_request_id: u32,
     replay_supported: bool,
     resource_readiness: BackendReadiness,
@@ -149,6 +215,9 @@ pub struct ApplicationRuntime {
     xr_input_focused: bool,
     scene: scene::SceneOwner,
     surface: surface::SurfaceOwner,
+    presentation_lease: Option<u64>,
+    next_presentation_lease: u64,
+    presentation_work: Option<PresentationWork>,
     surface_observation: Option<ApplicationSurfaceObservation>,
     graphics: graphics::GraphicsOwner,
     last_ready_resources: Option<ResourceKey>,
@@ -238,6 +307,9 @@ impl ApplicationRuntime {
             next_touch_generation: 0,
             display: display::DisplayWorkflow::new(GameUiPresentationMode::Screen),
             previous_frame_ms: None,
+            controller_gamepads: Vec::new(),
+            controller_wake: None,
+            controller_next_tick_ms: None,
             next_request_id: 1,
             replay_supported: capabilities.replay_available,
             resource_readiness: BackendReadiness::Preparing,
@@ -254,6 +326,9 @@ impl ApplicationRuntime {
             xr_input_focused: false,
             scene: scene::SceneOwner::default(),
             surface: surface::SurfaceOwner::default(),
+            presentation_lease: None,
+            next_presentation_lease: 0,
+            presentation_work: None,
             surface_observation,
             graphics,
             last_ready_resources: None,
@@ -282,7 +357,7 @@ impl ApplicationRuntime {
         self.asset_buffer(buffer_id).map(|buffer| buffer.to_bytes())
     }
 
-    /// Processes one observation; adapters execute only the returned I/O requests.
+    /// Processes one observation with the same owned painting lease used by Native.
     pub fn update(
         &mut self,
         observation: ApplicationObservation,
@@ -290,20 +365,136 @@ impl ApplicationRuntime {
             &ApplicationTextProbe,
         ) -> Result<ApplicationGlyphMetrics, MenuLayoutFailure>,
     ) -> Result<ApplicationOutput, ApplicationRuntimeError> {
+        let (output, work) = self.begin_update(observation)?;
+        Ok(match work {
+            Some(work) => self.complete_presentation_update(output, work.project(measure)),
+            None => output,
+        })
+    }
+
+    fn complete_presentation_update(
+        &mut self,
+        mut output: ApplicationOutput,
+        result: PresentationResult,
+    ) -> ApplicationOutput {
+        match self.admit_presentation(result) {
+            Ok(drawing) => output.drawing = drawing,
+            Err(cause) => {
+                output.drawing = None;
+                output.diagnostic.get_or_insert_with(|| cause.to_string());
+            }
+        }
+        output
+    }
+
+    /// Admits input and returns effects once, before potentially expensive font I/O.
+    pub fn begin_update(
+        &mut self,
+        observation: ApplicationObservation,
+    ) -> Result<(ApplicationOutput, Option<PresentationWork>), ApplicationRuntimeError> {
+        if self.presentation_lease.is_some()
+            && matches!(&observation.input, ApplicationInput::Wake {request_id}
+                if !self.controller_wake.is_some_and(|(current,_)| current == *request_id))
+        {
+            return Ok((self.output(None, Vec::new(), false), None));
+        }
+        if self.presentation_lease.is_some()
+            && !matches!(
+                &observation.input,
+                ApplicationInput::ControllerIo { .. }
+                    | ApplicationInput::Wake { .. }
+                    | ApplicationInput::Dispose
+                    | ApplicationInput::PageHide { .. }
+                    | ApplicationInput::ResourcesReleased { .. }
+                    | ApplicationInput::RendererReleased { .. }
+                    | ApplicationInput::DisplayReleased { .. }
+                    | ApplicationInput::RecordIoCancelled { .. }
+            )
+        {
+            return Err(ApplicationRuntimeError::SpatialInput(
+                "presentation lease is active",
+            ));
+        }
+        let output = self.update_input(observation)?;
+        Ok((output, self.presentation_work.take()))
+    }
+
+    /// Returns the unique surface owner and admits painting only within its original scope.
+    pub fn admit_presentation(
+        &mut self,
+        result: PresentationResult,
+    ) -> Result<Option<ApplicationDrawingOutput>, ApplicationRuntimeError> {
+        let PresentationResult {
+            id,
+            scope,
+            mut owner,
+            drawing,
+        } = result;
+        if self.presentation_lease != Some(id) {
+            return Ok(None);
+        }
+        self.presentation_lease = None;
+        let current = match self.presentation_scope() {
+            Ok(current) => current,
+            Err(cause) => {
+                owner.retire_input();
+                self.surface = owner;
+                return Err(cause);
+            }
+        };
+        if current != scope {
+            owner.retire_lease();
+            self.surface = owner;
+            return Ok(None);
+        }
+        self.surface = owner;
+        match drawing {
+            Ok(drawing) => Ok(Some(drawing)),
+            Err(cause) => {
+                self.surface.retire_input();
+                Err(cause)
+            }
+        }
+    }
+
+    fn presentation_scope(&self) -> Result<PresentationScope, ApplicationRuntimeError> {
+        let environment = self.environment()?;
+        Ok(PresentationScope {
+            structure: GameUiStructureKey::new(&self.ui, &self.context(&environment)?),
+            resource: self.last_ready_resources,
+            display: self
+                .display
+                .state()
+                .active_mode()
+                .map(|mode| (mode, self.display.active_resource())),
+            font: self.surface_observation.clone(),
+            closed: self.shutdown.closed(),
+        })
+    }
+
+    fn update_input(
+        &mut self,
+        observation: ApplicationObservation,
+    ) -> Result<ApplicationOutput, ApplicationRuntimeError> {
         let ApplicationObservation { observed_ms, input } = observation;
         if !observed_ms.is_finite() || observed_ms < self.observed_ms {
             return Err(ApplicationRuntimeError::InvalidTimestamp);
         }
         self.observed_ms = observed_ms;
+        self.application.observe_controller_time(observed_ms);
         let input = match input {
             ApplicationInput::PageHide { persisted: false } => ApplicationInput::Dispose,
             input => input,
         };
         let admitted_terminal = self.shutdown.observe(&input);
+        let current_controller_wake = matches!(&input,ApplicationInput::Wake {request_id}
+            if self.controller_wake.is_some_and(|(id,_)|id==*request_id));
         let input = if self.shutdown.closed()
+            && !current_controller_wake
             && !matches!(
                 input,
-                ApplicationInput::Resources { .. }
+                ApplicationInput::ControllerIo { .. }
+                    | ApplicationInput::Resources { .. }
                     | ApplicationInput::ResourcesReleased { .. }
                     | ApplicationInput::RendererCreated { .. }
                     | ApplicationInput::RendererReleased { .. }
@@ -366,20 +557,29 @@ impl ApplicationRuntime {
                 self.graphics.epoch(),
             )
         });
-        let io_continuation = match &input {
-            ApplicationInput::RecordSaveOpened { .. } => true,
-            ApplicationInput::RecordSaveObserved { observation, .. } => !matches!(
-                observation,
-                birdman_game_app::record_persistence::RecordWriteObservation::Committed
-                    | birdman_game_app::record_persistence::RecordWriteObservation::Failed { .. }
-            ),
-            ApplicationInput::RecordPreviewObserved { observation, .. } => !matches!(
-                observation,
-                birdman_game_app::record_persistence::RecordPreviewObservation::Committed
-                    | birdman_game_app::record_persistence::RecordPreviewObservation::Failed { .. }
-            ),
-            _ => false,
-        };
+        let io_continuation = self.presentation_lease.is_some()
+            || match &input {
+                ApplicationInput::ControllerIo { .. }
+                | ApplicationInput::RecordSaveOpened { .. } => true,
+                ApplicationInput::Wake { request_id }
+                    if self
+                        .controller_wake
+                        .is_some_and(|(id, _)| id == *request_id) =>
+                {
+                    true
+                }
+                ApplicationInput::RecordSaveObserved { observation, .. } => !matches!(
+                    observation,
+                    birdman_game_app::record_persistence::RecordWriteObservation::Committed
+                        | birdman_game_app::record_persistence::RecordWriteObservation::Failed { .. }
+                ),
+                ApplicationInput::RecordPreviewObserved { observation, .. } => !matches!(
+                    observation,
+                    birdman_game_app::record_persistence::RecordPreviewObservation::Committed
+                        | birdman_game_app::record_persistence::RecordPreviewObservation::Failed { .. }
+                ),
+                _ => false,
+            };
         if !io_continuation {
             self.phone.observe_time(observed_ms);
         }
@@ -388,6 +588,25 @@ impl ApplicationRuntime {
         let mut spatial_frame = None;
         let mut render_spatial = false;
         match input {
+            ApplicationInput::ControllerIo { observation } => {
+                self.application
+                    .observe_controller_io(observation)
+                    .map_err(ApplicationRuntimeError::Application)?;
+                if !self.shutdown.closed()
+                    && self.application.controller_realtime()
+                    && self.application.controller_has_candidate()
+                    && self.application.core_session().snapshot().phase()
+                        == SessionPhase::FlightRunning
+                {
+                    self.application
+                        .advance_flight_frame(
+                            observed_ms,
+                            &self.controller_gamepads,
+                            self.presentation_input_focused(),
+                        )
+                        .map_err(ApplicationRuntimeError::Flight)?;
+                }
+            }
             ApplicationInput::ConfigurationLoaded {
                 document,
                 request_id,
@@ -740,7 +959,40 @@ impl ApplicationRuntime {
                 self.phone.screen_changed(resource_id, angle_degrees);
             }
             ApplicationInput::Wake { request_id } => {
-                if self.phone_wake == Some(request_id) {
+                if let Some((id, at_ms)) = self.controller_wake
+                    && id == request_id
+                {
+                    self.controller_wake = None;
+                    if observed_ms >= at_ms {
+                        self.application
+                            .observe_controller_deadline()
+                            .map_err(ApplicationRuntimeError::Application)?;
+                        if !self.shutdown.closed()
+                            && self.application.controller_realtime()
+                            && self.application.core_session().snapshot().phase()
+                                == SessionPhase::FlightRunning
+                            && let Some(tick_at) = self.controller_next_tick_ms
+                            && observed_ms >= tick_at
+                        {
+                            let next=tick_at+birdman_game_format::external_controller::HITL_INTERVAL_MILLISECONDS;
+                            if observed_ms > next {
+                                self.application
+                                    .miss_controller_clock()
+                                    .map_err(ApplicationRuntimeError::Application)?;
+                            } else {
+                                self.controller_next_tick_ms = Some(next);
+                                self.application.arm_controller_tick_deadline(next);
+                                self.application
+                                    .advance_flight_frame(
+                                        observed_ms,
+                                        &self.controller_gamepads,
+                                        self.presentation_input_focused(),
+                                    )
+                                    .map_err(ApplicationRuntimeError::Flight)?;
+                            }
+                        }
+                    }
+                } else if self.phone_wake == Some(request_id) {
                     self.phone_wake = None;
                 }
             }
@@ -788,6 +1040,7 @@ impl ApplicationRuntime {
                             .filter(|_| self.document_focused)
                             .filter_map(ApplicationGamepadObservation::flight)
                             .collect();
+                        self.controller_gamepads.clone_from(&flight_gamepads);
                         self.advance_frame(
                             progression_ms,
                             &flight_gamepads,
@@ -1091,12 +1344,20 @@ impl ApplicationRuntime {
                 }
             }
         }
+        self.synchronize_controller_wake(&mut requests)?;
+        requests.extend(
+            self.application
+                .take_controller_io()
+                .into_iter()
+                .map(|request| ApplicationRequest::ControllerIo { request }),
+        );
         if io_continuation {
             return Ok(self.output(None, requests, keyboard_consumed));
         }
         for document in [
             ConfigurationDocumentKind::Aircraft,
             ConfigurationDocumentKind::Controller,
+            ConfigurationDocumentKind::ControllerExecution,
         ] {
             if !self.shutdown.closed() && self.storage.configuration_needs_read(document) {
                 let request_id = self.allocate_request()?;
@@ -1347,27 +1608,21 @@ impl ApplicationRuntime {
             ApplicationUiProjection::View { .. } => structural_frame.as_ref().unwrap(),
             ApplicationUiProjection::Frame { frame } => frame.as_ref(),
         };
-        let spatial = if render_spatial {
-            Some(
-                self.surface.project(
-                    view,
-                    frame,
-                    &scene_frame,
-                    self.surface_observation.as_ref(),
-                    surface::SurfaceDisplay {
-                        resource: self
-                            .display
-                            .state()
-                            .active_mode()
-                            .map(|mode| (mode, self.display.active_resource())),
-                        frame_rate_label: self.frame_rate.label(),
-                    },
-                    measure,
-                )?,
+        let spatial = None;
+        let paint_inputs = render_spatial.then(|| {
+            (
+                Arc::clone(view),
+                frame.clone(),
+                surface::SurfaceDisplay {
+                    resource: self
+                        .display
+                        .state()
+                        .active_mode()
+                        .map(|mode| (mode, self.display.active_resource())),
+                    frame_rate_label: self.frame_rate.label(),
+                },
             )
-        } else {
-            None
-        };
+        });
         let graphics = self
             .graphics
             .projection(render_spatial, observed_ms)
@@ -1392,11 +1647,33 @@ impl ApplicationRuntime {
                     && scene_frame.projection.camera.is_some(),
             },
             graphics,
-            scene: scene_frame.projection,
+            scene: scene_frame.projection.clone(),
             spatial,
             ui: projection,
         };
-        Ok(self.output(Some(drawing), requests, keyboard_consumed))
+        if let Some((view, frame, display)) = paint_inputs {
+            let id = self
+                .next_presentation_lease
+                .checked_add(1)
+                .ok_or(ApplicationRuntimeError::PresentationExhausted)?;
+            let scope = self.presentation_scope()?;
+            self.next_presentation_lease = id;
+            self.presentation_lease = Some(id);
+            self.presentation_work = Some(PresentationWork {
+                id,
+                scope,
+                owner: std::mem::take(&mut self.surface),
+                view,
+                frame,
+                scene: scene_frame,
+                font: self.surface_observation.clone(),
+                display,
+                drawing,
+            });
+            Ok(self.output(None, requests, keyboard_consumed))
+        } else {
+            Ok(self.output(Some(drawing), requests, keyboard_consumed))
+        }
     }
 
     fn observe_keyboard(
@@ -1485,6 +1762,7 @@ impl ApplicationRuntime {
     }
 
     fn close(&mut self, requests: &mut Vec<ApplicationRequest>) {
+        self.application.shutdown_controller();
         let renderer = self.graphics.retire();
         requests.extend(self.shutdown.begin(renderer));
         self.boot = boot::BootOwner::Closed;
@@ -1947,7 +2225,11 @@ impl ApplicationRuntime {
             (Some(at_ms), None) => {
                 let request_id = self.allocate_request()?;
                 self.phone_wake = Some(request_id);
-                requests.push(ApplicationRequest::ScheduleWake { request_id, at_ms });
+                requests.push(ApplicationRequest::ScheduleWake {
+                    request_id,
+                    at_ms,
+                    realtime: false,
+                });
             }
             (None, Some(request_id)) => {
                 self.phone_wake = None;
@@ -2148,6 +2430,62 @@ impl ApplicationRuntime {
         Ok(())
     }
 
+    fn synchronize_controller_wake(
+        &mut self,
+        requests: &mut Vec<ApplicationRequest>,
+    ) -> Result<(), ApplicationRuntimeError> {
+        let running = !self.shutdown.closed()
+            && self.application.controller_realtime()
+            && self.application.controller_fault().is_none()
+            && self.application.core_session().snapshot().phase() == SessionPhase::FlightRunning;
+        if !running {
+            self.controller_next_tick_ms = None;
+        } else if self.controller_next_tick_ms.is_none() {
+            self.application
+                .advance_flight_frame(
+                    self.observed_ms,
+                    &self.controller_gamepads,
+                    self.presentation_input_focused(),
+                )
+                .map_err(ApplicationRuntimeError::Flight)?;
+            if self.application.controller_fault().is_none()
+                && self.application.core_session().snapshot().phase() == SessionPhase::FlightRunning
+            {
+                self.controller_next_tick_ms = Some(
+                    self.observed_ms
+                        + birdman_game_format::external_controller::HITL_INTERVAL_MILLISECONDS,
+                );
+            }
+        }
+        let desired = match (
+            self.controller_next_tick_ms,
+            self.application.controller_next_deadline(),
+        ) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(at), None) | (None, Some(at)) => Some(at),
+            (None, None) => None,
+        };
+        if self
+            .controller_wake
+            .is_some_and(|(_, at)| Some(at) != desired)
+            && let Some((request_id, _)) = self.controller_wake.take()
+        {
+            requests.push(ApplicationRequest::CancelWake { request_id });
+        }
+        if self.controller_wake.is_none()
+            && let Some(at_ms) = desired
+        {
+            let request_id = self.allocate_request()?;
+            self.controller_wake = Some((request_id, at_ms));
+            requests.push(ApplicationRequest::ScheduleWake {
+                request_id,
+                at_ms,
+                realtime: true,
+            });
+        }
+        Ok(())
+    }
+
     fn advance_frame(
         &mut self,
         timestamp_ms: f64,
@@ -2167,9 +2505,16 @@ impl ApplicationRuntime {
             .map_or(0.0, |previous| (timestamp_ms - previous) / 1000.0);
         let phase = self.application.core_session().snapshot().phase();
         let countdown = self.application.core_session().countdown_token();
-        self.application
-            .advance_flight_frame(timestamp_ms, gamepads, available)
-            .map_err(ApplicationRuntimeError::Flight)?;
+        if !(self.application.controller_realtime()
+            && matches!(
+                phase,
+                SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+            ))
+        {
+            self.application
+                .advance_flight_frame(timestamp_ms, gamepads, available)
+                .map_err(ApplicationRuntimeError::Flight)?;
+        }
         if let Some(token) = countdown {
             self.application
                 .observe_countdown(token, elapsed, available)
@@ -2216,11 +2561,7 @@ impl ApplicationRuntime {
                     ))
                 })?
                 .identity();
-            identity.controller_identity = self
-                .application
-                .controller()
-                .ok()
-                .map(|selected| selected.identity());
+            identity.controller_identity = self.application.selected_execution_identity();
             Ok(Some(identity))
         } else {
             Ok(self.application.core_session().configuration_identity())
@@ -2293,6 +2634,22 @@ impl ApplicationRuntime {
             controller_can_delete: self
                 .storage
                 .configuration_can_delete(ConfigurationDocumentKind::Controller),
+            controller_execution_name: self.application.controller_execution().label(),
+            controller_execution_notification: self
+                .storage
+                .configuration_notification(ConfigurationDocumentKind::ControllerExecution),
+            controller_execution_can_delete: self
+                .storage
+                .configuration_can_delete(ConfigurationDocumentKind::ControllerExecution),
+            controller_execution_status: self
+                .application
+                .controller_fault()
+                .map(|fault| format!("制御器の異常（tick {}）: {}", fault.tick, fault.cause))
+                .or_else(|| {
+                    self.application
+                        .controller_waiting()
+                        .then(|| "制御器の応答を待っている。".into())
+                }),
             controller_pair_diagnostic: self
                 .application
                 .controller_pair()
