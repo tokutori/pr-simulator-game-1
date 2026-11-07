@@ -68,12 +68,12 @@ it("runs the same real controller bytes and accepted flight to termination on Na
       fixture.activate({ kind: "session", command });
     }
     let observedMs = 0;
-    for (let now = 0; now <= 43_020 && fixture.view.scene !== "result"; now += 10) {
+    for (let now = 0; now <= 43_020 && fixture.view.scene !== "Result"; now += 10) {
       observedMs = now;
       fixture.observe({ kind: "frame", timestamp_ms: now, gamepads: [], display_resource_id: null,
         xr: null, spatial: { gamepads: [], sources: [], presented_id: null } }, now);
     }
-    expect(fixture.view.scene).toBe("result");
+    expect(fixture.view.scene).toBe("Result");
     fixture.activate({ kind: "toggle_technical" }, observedMs);
     const download = fixture.activate({ kind: "platform", command: { kind: "download_record_json" } }, observedMs)
       .requests.find(request => request.kind === "download_file");

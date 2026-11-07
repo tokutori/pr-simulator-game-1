@@ -206,6 +206,7 @@ struct ActiveExecution {
     tick_deadline_ms: Option<f64>,
     angles: Option<(TailFlightTickInput, [f64; 2])>,
     fault: Option<ControllerExecutionFault>,
+    cleanup_diagnostic: Option<(String, bool)>,
     last_accepted: Option<(u64, u64, [f64; 8])>,
     latest_tick: u64,
     init: ControllerFrame,
@@ -228,6 +229,25 @@ impl ControllerExecutionState {
     }
     pub(crate) fn fault(&self) -> Option<&ControllerExecutionFault> {
         self.active.as_ref().and_then(|a| a.fault.as_ref())
+    }
+    pub(crate) fn take_cleanup_diagnostic(&mut self) -> Option<String> {
+        let (cause, reported) = self.active.as_mut()?.cleanup_diagnostic.as_mut()?;
+        if *reported {
+            return None;
+        }
+        *reported = true;
+        Some(cause.clone())
+    }
+    fn note_cleanup(active: &mut ActiveExecution, cause: String) {
+        if active.cleanup_diagnostic.is_none() {
+            active.cleanup_diagnostic = Some((
+                format!("制御器の終了処理: {cause}")
+                    .chars()
+                    .take(1024)
+                    .collect(),
+                false,
+            ));
+        }
     }
     pub(crate) fn ready(&self) -> bool {
         self.active.as_ref().is_none_or(|a| a.ready)
@@ -316,6 +336,7 @@ impl ControllerExecutionState {
             tick_deadline_ms: None,
             angles: None,
             fault: None,
+            cleanup_diagnostic: None,
             last_accepted: None,
             latest_tick: 0,
             init,
@@ -376,6 +397,11 @@ impl ControllerExecutionState {
         cause: String,
         requests: &mut Vec<ControllerIoRequest>,
     ) {
+        if active.closing == Closing::Finishing {
+            Self::note_cleanup(active, cause);
+            Self::close_native(active, requests);
+            return;
+        }
         if active.fault.is_none() {
             active.fault = Some(ControllerExecutionFault {
                 fault,
@@ -385,9 +411,6 @@ impl ControllerExecutionState {
         }
         active.pending = None;
         active.angles = None;
-        if active.closing == Closing::Finishing {
-            Self::close_native(active, requests);
-        }
     }
     fn send(
         active: &mut ActiveExecution,
@@ -456,9 +479,15 @@ impl ControllerExecutionState {
         let Some(active) = self.active.as_mut() else {
             return;
         };
-        if let ControllerIoObservation::Closed { generation, .. } = &observation
+        if let ControllerIoObservation::Closed {
+            generation,
+            failure,
+        } = &observation
             && *generation == active.generation
         {
+            if let Some(cause) = failure {
+                Self::note_cleanup(active, cause.clone());
+            }
             active.opened = false;
             active.closing = Closing::Closed;
             active.pending = None;
@@ -778,6 +807,7 @@ impl ControllerExecutionState {
             .is_some_and(|at| now >= at)
         {
             if active.closing == Closing::Finishing {
+                Self::note_cleanup(active, "制御器の終了応答が期限に間に合わない。".into());
                 Self::close_native(active, &mut self.requests);
             } else {
                 Self::latch(
@@ -876,6 +906,7 @@ impl ControllerExecutionState {
         if active.closing != Closing::Open {
             return;
         }
+        active.closing = Closing::Finishing;
         let Some(sequence) = active.sequence.checked_add(1) else {
             Self::latch(
                 active,
@@ -927,7 +958,9 @@ impl ControllerExecutionState {
             return;
         };
         if let Some(wasm) = active.wasm.as_mut() {
-            let _ = wasm.exchange(&frame);
+            if let Err(fault) = wasm.exchange(&frame) {
+                Self::note_cleanup(active, format!("制御器の終了通知に失敗した: {fault:?}"));
+            }
             active.closing = Closing::Closed;
         } else if active.opened && (active.ready || active.probe.is_some()) {
             active.closing = Closing::Finishing;

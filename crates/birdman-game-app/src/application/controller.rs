@@ -58,6 +58,10 @@ impl ApplicationSession {
             .observe(observation, self.controller_observed_ms);
         self.progress_controller_preparation()
     }
+    /// Returns the first bounded cleanup diagnostic once, independently of the immutable flight fault.
+    pub fn take_controller_cleanup_diagnostic(&mut self) -> Option<String> {
+        self.controller_execution.take_cleanup_diagnostic()
+    }
     /// Current owner-issued Native exchange or bounded shutdown deadline.
     pub fn controller_next_deadline(&self) -> Option<f64> {
         self.controller_execution.next_deadline()

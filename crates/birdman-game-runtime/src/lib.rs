@@ -1352,6 +1352,9 @@ impl ApplicationRuntime {
                 }
             }
         }
+        if let Some(cause) = self.application.take_controller_cleanup_diagnostic() {
+            self.diagnostic.get_or_insert(cause);
+        }
         self.synchronize_controller_wake(&mut requests)?;
         requests.extend(
             self.application
