@@ -183,8 +183,6 @@ pub(super) fn encode(
             "external_requested_vertical_tail_rad",
             "external_structural_horizontal_tail_rad",
             "external_structural_vertical_tail_rad",
-            "external_actual_horizontal_tail_rad",
-            "external_actual_vertical_tail_rad",
             "external_obstruction_mask",
         ]);
     }
@@ -526,16 +524,9 @@ pub(super) fn encode(
                         report.structural_target.vertical_tail_rad,
                     ],
                 );
-                numbers(
-                    &mut row,
-                    [
-                        report.actual.horizontal_tail_rad,
-                        report.actual.vertical_tail_rad,
-                    ],
-                );
                 row.push(report.obstruction_mask.to_string());
             } else {
-                row.extend(core::iter::repeat_n(String::new(), 7));
+                row.extend(core::iter::repeat_n(String::new(), 5));
             }
         }
         if row.len() != columns.len() {

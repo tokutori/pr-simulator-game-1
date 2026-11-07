@@ -1051,7 +1051,7 @@ fn schema_seven_boundary_event_roundtrips_and_exports_a_distinct_same_time_csv_r
     let terminal = record.sample_at_seconds(0.0).unwrap();
     assert_eq!(terminal.wing_bending_factor.unwrap().value(), 2.0);
     assert_eq!(terminal.actuators, physical_incidence.to_core().unwrap());
-    assert_eq!(terminal.input, Some(input.to_core().unwrap()));
+    assert_eq!(terminal.input, Some(input.to_core(physical_incidence).unwrap()));
     let rows = tail_csv_rows(&decoded);
     assert_eq!(rows.len(), 3);
     assert!(rows.iter().all(|row| row.len() == rows[0].len()));
@@ -1816,7 +1816,6 @@ fn external_record_retains_real_hardware_report_and_excludes_hitl_from_personal_
                     physical_incidence.vertical_tail_rad,
                 ],
                 structural_target: *physical_incidence,
-                actual: *physical_incidence,
                 obstruction_mask: 0,
             });
         }
@@ -1837,6 +1836,34 @@ fn external_record_retains_real_hardware_report_and_excludes_hitl_from_personal_
     )
     .unwrap();
     assert_eq!(restored.samples, source.samples);
+    let mut mismatched_header = external.header();
+    let Some(birdman_game_core::ControllerExecution::External { identity, .. }) =
+        &mut mismatched_header.execution
+    else {
+        unreachable!()
+    };
+    identity[0] ^= 1;
+    let mismatched_record = FlightRecord::try_from_finalized_samples(
+        mismatched_header,
+        external.samples().to_vec(),
+        external.finalization().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        TailFlightRecordDocument::from_record(
+            &mismatched_record,
+            source.header.difficulty.resolved_settings(),
+            source.control_identity.clone()
+        ),
+        Err(FlightRecordFormatError::InvalidRecord)
+    );
+    let mut duplicate_actual = serde_json::to_value(&restored).unwrap();
+    duplicate_actual["samples"][1]["controls"]["input_from_previous"]["external_report"]["actual"] =
+        serde_json::json!({"horizontal_tail_rad":0.5,"vertical_tail_rad":0.5});
+    assert_eq!(
+        TailFlightRecordDocument::decode_json(&serde_json::to_vec(&duplicate_actual).unwrap()),
+        Err(FlightRecordFormatError::InvalidJson)
+    );
     let csv = String::from_utf8(restored.encode_csv().unwrap()).unwrap();
     assert!(csv.contains("external_requested_horizontal_tail_rad"));
     let execution = source.recorded_execution().unwrap().unwrap();
@@ -1862,15 +1889,20 @@ fn external_record_retains_real_hardware_report_and_excludes_hitl_from_personal_
         )
         .unwrap();
     assert!(ranked.header.personal_best_key.is_some());
+    let mut source = ranked;
     source.control_identity.execution.as_mut().unwrap().artifact =
         ControllerArtifactIdentity::Hitl {
             hardware_id: "test-device".into(),
             firmware_id: "v1".into(),
             baud_rate: 115200,
         };
+    assert!(matches!(
+        source.identity_metadata,
+        crate::FlightRecordIdentityMetadata::Resolved(_)
+    ));
+    source.header.personal_best_key = crate::canonical_tail_personal_best_key(&source)
+        .unwrap()
+        .map(PersonalBestKey::digest);
     source.validate().unwrap();
-    assert_eq!(
-        crate::canonical_tail_personal_best_key(&source).unwrap(),
-        None
-    );
+    assert_eq!(source.header.personal_best_key, None);
 }

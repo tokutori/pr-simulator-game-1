@@ -128,7 +128,7 @@ impl TailFlightRecordBoundaryEventDocument {
     fn to_core(self) -> Result<FlightRecordBoundaryEvent, FlightRecordFormatError> {
         Ok(FlightRecordBoundaryEvent {
             incidence: self.physical_incidence.to_core()?,
-            input: self.input.to_core()?,
+            input: self.input.to_core(self.physical_incidence)?,
             wing_bending_factor: WingBendingFactor::try_new(self.wing_bending_factor)
                 .map_err(|_| FlightRecordFormatError::InvalidRecord)?,
             tail_wrenches: wrenches_to_core(self.tail_wrenches)?,
@@ -290,8 +290,6 @@ pub struct ExternalTailControlDocument {
     pub requested_rad: [f64; 2],
     /// Request after the aircraft's mechanical stops.
     pub structural_target: TailIncidenceDocument,
-    /// Actual slew-limited actuator angles adopted by physics.
-    pub actual: TailIncidenceDocument,
     /// Axis-specific lower/upper stop and slew obstruction bits.
     pub obstruction_mask: u8,
 }
@@ -471,6 +469,9 @@ impl TailFlightRecordDocument {
                 .collect::<Result<Vec<_>, _>>()?,
             finalization,
         };
+        if document.recorded_execution()? != core_header.execution {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
         document.validate()?;
         Ok(document)
     }
@@ -991,7 +992,7 @@ impl TailFlightRecordSampleDocument {
             controls: FlightRecordControls {
                 incidence: physical_incidence.to_core()?,
                 input_from_previous: input_from_previous
-                    .map(TailFlightRecordInputDocument::to_core)
+                    .map(|input| input.to_core(*physical_incidence))
                     .transpose()?,
             },
             wind_at_cg_ned_mps: vector(state.wind_at_cg_ned_mps)?,
@@ -1036,7 +1037,6 @@ impl TailFlightRecordInputDocument {
                         update.requested().rudder_rad(),
                     ],
                     structural_target: TailIncidenceDocument::from_core(update.structural_target()),
-                    actual: TailIncidenceDocument::from_core(update.incidence()),
                     obstruction_mask: update.obstruction_mask(),
                 }),
             ),
@@ -1059,7 +1059,10 @@ impl TailFlightRecordInputDocument {
             external_report: external,
         }
     }
-    fn to_core(self) -> Result<FlightRecordTailInput, FlightRecordFormatError> {
+    fn to_core(
+        self,
+        actual: TailIncidenceDocument,
+    ) -> Result<FlightRecordTailInput, FlightRecordFormatError> {
         let invalid = || FlightRecordFormatError::InvalidRecord;
         let command = match self.pilot_position_command {
             TailPilotPositionCommandDocument::Hold {} => TailPilotPositionCommand::Hold,
@@ -1088,7 +1091,7 @@ impl TailFlightRecordInputDocument {
             let update = birdman_game_core::TailActuatorUpdate::try_from_recorded(
                 request,
                 external.structural_target.to_core()?,
-                external.actual.to_core()?,
+                actual.to_core()?,
                 external.obstruction_mask,
             )
             .map_err(|_| invalid())?;
