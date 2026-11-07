@@ -1051,7 +1051,10 @@ fn schema_seven_boundary_event_roundtrips_and_exports_a_distinct_same_time_csv_r
     let terminal = record.sample_at_seconds(0.0).unwrap();
     assert_eq!(terminal.wing_bending_factor.unwrap().value(), 2.0);
     assert_eq!(terminal.actuators, physical_incidence.to_core().unwrap());
-    assert_eq!(terminal.input, Some(input.to_core(physical_incidence).unwrap()));
+    assert_eq!(
+        terminal.input,
+        Some(input.to_core(physical_incidence).unwrap())
+    );
     let rows = tail_csv_rows(&decoded);
     assert_eq!(rows.len(), 3);
     assert!(rows.iter().all(|row| row.len() == rows[0].len()));

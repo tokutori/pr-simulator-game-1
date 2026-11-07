@@ -113,7 +113,7 @@ fn render_pose_matches_the_same_record_sample_and_retains_unknown_geometry() {
     let selected = birdman_game_app::SelectedAircraft::bundled().unwrap();
     let record = fixture_record(&selected, 0.4, SessionEndReason::TimeLimit);
     let identity = FlightRecordTailIdentityDocument {
-        execution:None,
+        execution: None,
         aircraft_sha256: None,
         aircraft_configuration_id: selected.definition().document().configuration_id.clone(),
         controller_profile_id: "camera-fixture".into(),
@@ -228,7 +228,7 @@ fn replay_uses_adopted_interval_and_same_time_terminal_deformation() {
             .unwrap();
     let definition = selected.definition();
     let identity = FlightRecordTailIdentityDocument {
-        execution:None,
+        execution: None,
         aircraft_sha256: None,
         aircraft_configuration_id: definition.document().configuration_id.clone(),
         controller_profile_id: "camera-fixture".into(),
