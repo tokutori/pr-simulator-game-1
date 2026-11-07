@@ -134,13 +134,13 @@ jobs:
         shell: bash
         env:
           WGPU_BACKEND: vulkan
-          VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.json
           XDG_RUNTIME_DIR: ${{ runner.temp }}/cross-target-xdg
         run: |
           set -euo pipefail
           output="target/cross-target-check-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           test ! -e "$output"
-          test -r "$VK_DRIVER_FILES"
+          test -r "$VK_DRIVER_FILES" || { echo "Missing software Vulkan ICD: $VK_DRIVER_FILES" >&2; exit 1; }
           install -d -m 700 "$XDG_RUNTIME_DIR"
           record_result() {
             status=$?
