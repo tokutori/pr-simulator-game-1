@@ -115,6 +115,9 @@ impl Session {
                 if self.pending.is_some() || header.sequence != self.next_sequence {
                     return Err(());
                 }
+                // A valid request consumes its sequence even if numerical evaluation fails.
+                // Finish closes that failed exchange at the host's next sequence.
+                self.next_sequence = self.next_sequence.checked_add(1).ok_or(())?;
                 let p = frame.evaluate_payload().map_err(|_| ())?;
                 let v = p.values;
                 let q = UnitQuaternion::try_new(v[3], v[4], v[5], v[6]).map_err(|_| ())?;
@@ -176,20 +179,13 @@ impl Session {
                             .map_err(|_| ())?
                     }
                 };
-                let next_sequence = self.next_sequence.checked_add(1).ok_or(())?;
                 self.memory = next_memory;
                 self.pending = None;
-                self.next_sequence = next_sequence;
                 ControllerFrame::acknowledgement(header).map_err(|_| ())
             }
             ExchangeKind::Finish => {
                 frame.finish_payload().map_err(|_| ())?;
-                let finish_sequence = if self.pending.is_some() {
-                    self.next_sequence.checked_add(1).ok_or(())?
-                } else {
-                    self.next_sequence
-                };
-                if header.sequence != finish_sequence {
+                if header.sequence != self.next_sequence {
                     return Err(());
                 }
                 ControllerFrame::acknowledgement(header).map_err(|_| ())
@@ -484,22 +480,53 @@ mod tests {
             }
             last_dt = dt;
         }
+        let before_failure = guest.session.as_ref().unwrap().memory;
+        let mut values = [0.0; 40];
+        values[0..4].copy_from_slice(&[time, 0.01, last_dt, 2.0]);
+        values[22] = 10.0;
+        values[39] = 0.5;
+        // Finite wire values with a non-unit quaternion fail numerical admission.
+        let failed = ControllerFrame::evaluate(
+            FrameHeader {
+                kind: ExchangeKind::Evaluate,
+                sequence: 6,
+                ..header
+            },
+            EvaluatePayload {
+                tick: 5,
+                valid_mask: REQUIRED_OBSERVATIONS,
+                pilot_command_kind: 0,
+                values,
+            },
+        )
+        .unwrap();
+        guest.bytes[..failed.as_bytes().len()].copy_from_slice(failed.as_bytes());
+        let length = guest.exchange(failed.as_bytes().len());
+        let failure =
+            ControllerFrame::decode(&guest.bytes[MAX_FRAME_BYTES..MAX_FRAME_BYTES + length])
+                .unwrap();
+        assert_eq!(failure.header().status, PeerStatus::GuestFailure);
+        assert_eq!(failure.header().sequence, 6);
+        assert_eq!(guest.session.as_ref().unwrap().memory, before_failure);
+        assert!(guest.session.as_ref().unwrap().pending.is_none());
+        // Host neutral continuation may advance physical time after this failure;
+        // its current tick differs from the last successful controller sequence.
         call(
             &mut guest,
             ControllerFrame::finish(
                 FrameHeader {
                     kind: ExchangeKind::Finish,
-                    sequence: 6,
+                    sequence: 7,
                     ..header
                 },
                 FinishPayload {
-                    tick: 5,
+                    tick: 20,
                     reason: FinishReason::TimeLimit,
                     fault: ControllerFault::None,
                     fault_tick: 0,
                     accepted_sequence: 5,
                     values: [
-                        time,
+                        time + 0.15,
                         last_dt,
                         0.0,
                         0.0,
