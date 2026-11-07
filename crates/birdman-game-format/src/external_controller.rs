@@ -44,6 +44,10 @@ pub enum ProtocolError {
     InvalidValue,
     /// The response belongs to another pending exchange.
     Unauthorized,
+    /// A binary64 field contains NaN or infinity.
+    NonFiniteValue,
+    /// The peer explicitly rejected the exchange.
+    PeerRejected,
 }
 impl core::fmt::Display for ProtocolError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -52,6 +56,8 @@ impl core::fmt::Display for ProtocolError {
             Self::UnsupportedAbi => "Controller ABI version is unsupported",
             Self::InvalidValue => "Controller frame contains an invalid value",
             Self::Unauthorized => "Controller response belongs to another exchange",
+            Self::NonFiniteValue => "Controller frame contains a non-finite value",
+            Self::PeerRejected => "Controller peer rejected the exchange",
         })
     }
 }
@@ -110,6 +116,8 @@ wire_enum! {
         ExistingBoundary = 2,
         /// New controls caused contact at the same physical time.
         AppliedBoundary = 3,
+        /// Pause retired an evaluated candidate before physical adoption.
+        CancelledCandidate = 4,
     }
 }
 wire_enum! {
@@ -331,6 +339,28 @@ impl ControllerFrame {
         }
         Ok(frame)
     }
+    /// Admits only the response direction of the pending exchange.
+    pub fn decode_reply(bytes: &[u8], request: &Self) -> Result<Self, ProtocolError> {
+        if bytes.len() < HEADER_BYTES {
+            return Err(ProtocolError::InvalidFrame);
+        }
+        let status = PeerStatus::try_from(u32::from_le_bytes(bytes[12..16].try_into().unwrap()))?;
+        let expected =
+            if status == PeerStatus::Success && request.header().kind == ExchangeKind::Evaluate {
+                ANGLES_BYTES
+            } else {
+                HEADER_BYTES
+            };
+        if bytes.len() != expected {
+            return Err(ProtocolError::InvalidFrame);
+        }
+        let reply = Self::decode(bytes)?;
+        reply.header().authorize(request.header())?;
+        if status != PeerStatus::Success {
+            return Err(ProtocolError::PeerRejected);
+        }
+        Ok(reply)
+    }
     fn require(&self, kind: ExchangeKind, length: usize) -> Result<(), ProtocolError> {
         let h = self.header();
         if h.kind != kind || self.length != length || h.status != PeerStatus::Success {
@@ -450,13 +480,17 @@ impl ControllerFrame {
             || p.values[1] < 0.0
             || matches!(
                 p.admission,
-                Admission::ExistingBoundary | Admission::AppliedBoundary
+                Admission::ExistingBoundary
+                    | Admission::AppliedBoundary
+                    | Admission::CancelledCandidate
             ) != (p.values[0] == 0.0)
         {
             return Err(ProtocolError::InvalidValue);
         }
-        if p.admission == Admission::ExistingBoundary
-            && (p.obstruction_mask != 0 || p.values[2..6].iter().any(|v| v.to_bits() != 0))
+        if matches!(
+            p.admission,
+            Admission::ExistingBoundary | Admission::CancelledCandidate
+        ) && (p.obstruction_mask != 0 || p.values[2..6].iter().any(|v| v.to_bits() != 0))
         {
             return Err(ProtocolError::InvalidValue);
         }
@@ -522,7 +556,7 @@ impl ControllerFrame {
         for (i, v) in values.iter_mut().enumerate() {
             *v = f64::from_bits(self.get64(at + i * 8));
             if !v.is_finite() {
-                return Err(ProtocolError::InvalidValue);
+                return Err(ProtocolError::NonFiniteValue);
             }
         }
         Ok(values)
@@ -591,6 +625,16 @@ pub struct ControllerExecutionDescriptor {
     pub artifact: ControllerArtifactIdentity,
 }
 impl ControllerExecutionDescriptor {
+    /// Describes a known built-in producer with its exact selected JSON settings.
+    pub fn builtin(controller_id: String, controller_sha256: String) -> Self {
+        Self {
+            abi_version: ABI_VERSION,
+            resource_policy_version: RESOURCE_POLICY_VERSION,
+            controller_id,
+            controller_sha256,
+            artifact: ControllerArtifactIdentity::BuiltInJson,
+        }
+    }
     /// Stable versioned digest of the closed descriptor, used in frames and comparison keys.
     pub fn digest(&self) -> [u8; 32] {
         let mut hash = Sha256::new();
@@ -648,15 +692,30 @@ pub struct NativeControllerDocument {
 }
 impl NativeControllerConnection {
     /// Parses the fixed Native connection contract without platform I/O.
-    pub fn decode(bytes: &[u8]) -> Result<Self, ProtocolError> {
+    pub fn decode(bytes: &[u8]) -> Result<Self, crate::controller::ControllerFormatError> {
+        use crate::controller::{
+            ControllerFormatError, ControllerValidationCode, ControllerValidationIssue,
+        };
         if bytes.len() > MAX_CONNECTION_BYTES {
-            return Err(ProtocolError::InvalidValue);
+            return Err(ControllerFormatError::InputTooLarge);
         }
-        let document: NativeControllerDocument =
-            serde_json::from_slice(bytes).map_err(|_| ProtocolError::InvalidFrame)?;
-        if document.schema_version != 1 {
-            return Err(ProtocolError::UnsupportedAbi);
+        let text = core::str::from_utf8(bytes)
+            .map_err(|cause| ControllerFormatError::Json(alloc::format!("{cause}")))?;
+        let version = crate::json_version::declared_schema_version(text)
+            .map_err(|cause| ControllerFormatError::Json(alloc::format!("{cause}")))?;
+        if version != 1 {
+            return Err(ControllerFormatError::Validation(alloc::vec![
+                ControllerValidationIssue {
+                    code: ControllerValidationCode::SchemaVersion,
+                    path: "/schema_version".into(),
+                    value: alloc::format!("{version}"),
+                    expected: "schema_version == 1".into(),
+                    aircraft: None
+                }
+            ]));
         }
+        let document: NativeControllerDocument = serde_json::from_slice(bytes)
+            .map_err(|cause| ControllerFormatError::Json(alloc::format!("{cause}")))?;
         let value = document.connection;
         let text = |s: &str| !s.is_empty() && s.len() <= 4096 && !s.contains('\0');
         let identity = |s: &str| !s.is_empty() && s.len() <= 128 && !s.contains('\0');
@@ -685,14 +744,12 @@ impl NativeControllerConnection {
                 baud_rate,
                 hardware_id,
                 firmware_id,
-            } => {
-                text(port) && *baud_rate > 712000 && identity(hardware_id) && identity(firmware_id)
-            }
+            } => text(port) && *baud_rate > 0 && identity(hardware_id) && identity(firmware_id),
         };
         if valid {
             Ok(value)
         } else {
-            Err(ProtocolError::InvalidValue)
+            Err(ControllerFormatError::Validation(alloc::vec![ControllerValidationIssue{code:ControllerValidationCode::Transport,path:"/connection".into(),value:"invalid connection parameters".into(),expected:"bounded identities, source hash, path/arguments and positive serial line coding".into(),aircraft:None}]))
         }
     }
     /// Identity fixed by the validated connection document and checked by its I/O adapter.
@@ -780,5 +837,62 @@ mod tests {
         let mut truncated = f.as_bytes().to_vec();
         truncated.pop();
         assert!(ControllerFrame::decode(&truncated).is_err());
+    }
+}
+
+/// First external software/transport failure retained alongside a physical record.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ControllerExecutionFault {
+    /// Original classified external failure.
+    pub fault: ControllerFault,
+    /// Physical boundary at which the failure was observed.
+    pub tick: u64,
+    /// Bounded original diagnostic formatted by shared Rust.
+    pub cause: String,
+}
+impl ControllerExecutionDescriptor {
+    /// Validates versioned identities before accepting an external archive.
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        let text = |s: &str| !s.is_empty() && s.len() <= 128 && !s.contains('\0');
+        let sha = |s: &str| {
+            s.len() == 64
+                && s.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        };
+        let artifact = match &self.artifact {
+            ControllerArtifactIdentity::BuiltInJson => true,
+            ControllerArtifactIdentity::Wasm { sha256 } => sha(sha256),
+            ControllerArtifactIdentity::Sitl {
+                program_id,
+                version,
+                binary_sha256,
+                arguments,
+            } => {
+                text(program_id)
+                    && text(version)
+                    && sha(binary_sha256)
+                    && arguments.len() <= 32
+                    && arguments
+                        .iter()
+                        .all(|s| s.len() <= 4096 && !s.contains('\0'))
+            }
+            ControllerArtifactIdentity::Hitl {
+                hardware_id,
+                firmware_id,
+                baud_rate,
+            } => text(hardware_id) && text(firmware_id) && *baud_rate > 0,
+        };
+        if self.abi_version != ABI_VERSION
+            || self.resource_policy_version != RESOURCE_POLICY_VERSION
+            || !text(&self.controller_id)
+            || !sha(&self.controller_sha256)
+            || !artifact
+        {
+            Err(ProtocolError::InvalidValue)
+        } else {
+            Ok(())
+        }
     }
 }

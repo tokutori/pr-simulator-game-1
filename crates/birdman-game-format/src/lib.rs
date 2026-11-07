@@ -39,6 +39,7 @@ extern crate alloc;
 pub mod aircraft;
 pub mod controller;
 pub mod external_controller;
+mod json_version;
 
 /// Independent original JSON sources selectable by the application.
 #[derive(
@@ -97,7 +98,7 @@ pub use flight_record::{
     TailFlightRecordBoundaryEventDocument, TailFlightRecordControlsDocument,
     TailFlightRecordDocument, TailFlightRecordFinalizationDocument, TailFlightRecordInputDocument,
     TailFlightRecordSampleDocument, TailIncidenceDocument, TailPilotPositionCommandDocument,
-    TailTickFailureDocument, TailWrenchDocument, WindFailureDocument,
+    TailTickFailureDocument, TailWrenchDocument, TelemetryFailureDocument, WindFailureDocument,
     compare_tail_personal_best_records,
 };
 pub use personal_best::{

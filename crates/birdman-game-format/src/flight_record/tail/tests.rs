@@ -348,6 +348,7 @@ fn tail_csv_keeps_fractional_stamps_when_acceleration_is_unrepresentable() {
 
 fn identity() -> FlightRecordTailIdentityDocument {
     FlightRecordTailIdentityDocument {
+        execution: None,
         aircraft_sha256: None,
         controller_sha256: None,
         aircraft_configuration_id: "bpg041-playable-hybrid-mock".into(),
@@ -357,6 +358,12 @@ fn identity() -> FlightRecordTailIdentityDocument {
 
 fn current_identity() -> FlightRecordTailIdentityDocument {
     FlightRecordTailIdentityDocument {
+        execution: Some(
+            crate::external_controller::ControllerExecutionDescriptor::builtin(
+                identity().controller_profile_id,
+                "22".repeat(32),
+            ),
+        ),
         aircraft_sha256: Some("11".repeat(32)),
         controller_sha256: Some("22".repeat(32)),
         ..identity()
@@ -467,24 +474,27 @@ fn document() -> TailFlightRecordDocument {
             desired_yaw_rate_rad_s: -0.1,
             pilot_position_command: TailPilotPositionCommandDocument::Set { normalized: 0.2 },
             resolved_pilot_position_target_m: 0.072,
-            manual_incidence_target: TailIncidenceDocument {
+            external_report: None,
+            manual_incidence_target: Some(TailIncidenceDocument {
                 horizontal_tail_rad: -0.1,
                 vertical_tail_rad: 0.05,
-            },
-            fbw_incidence_target: TailIncidenceDocument {
+            }),
+            fbw_incidence_target: Some(TailIncidenceDocument {
                 horizontal_tail_rad: -0.01,
                 vertical_tail_rad: 0.0,
-            },
-            mixed_incidence_target: TailIncidenceDocument {
+            }),
+            mixed_incidence_target: Some(TailIncidenceDocument {
                 horizontal_tail_rad: -0.055,
                 vertical_tail_rad: 0.025,
-            },
+            }),
         }),
     };
     TailFlightRecordDocument {
+        controller_fault: None,
         identity_metadata: crate::FlightRecordIdentityMetadata::Unspecified,
         schema_version: 6,
         header: FlightRecordHeaderDocument {
+            requested_control_mode: None,
             catalog_version: 1,
             scenario_id: 1,
             scenario_version: 1,
@@ -685,7 +695,13 @@ fn v6_archive_round_trip_keeps_named_physical_controls_and_saved_outputs() {
         document.finalization
     );
     assert_eq!(restored.header().scenario.controller_identity, None);
-    assert_eq!(restored.header().control_mode, None);
+    assert_eq!(
+        restored
+            .header()
+            .execution
+            .and_then(birdman_game_core::ControllerExecution::builtin_mode),
+        None
+    );
     assert_eq!(
         archive.encode_json().unwrap(),
         document.encode_json().unwrap()
@@ -701,11 +717,11 @@ fn v6_archive_round_trip_keeps_named_physical_controls_and_saved_outputs() {
     assert_eq!(incidence, TailIncidence::try_new(0.008, -0.018).unwrap());
     assert_eq!(
         input.fbw_incidence_target(),
-        TailIncidence::try_new(-0.01, 0.0).unwrap()
+        Some(TailIncidence::try_new(-0.01, 0.0).unwrap())
     );
     assert_eq!(
         input.mixed_incidence_target(),
-        TailIncidence::try_new(-0.055, 0.025).unwrap()
+        Some(TailIncidence::try_new(-0.055, 0.025).unwrap())
     );
     assert_eq!(
         input.pilot_position_command(),
@@ -789,10 +805,12 @@ fn schema_seven_retains_held_coefficients_and_preserves_unrecorded_schema_six() 
     assert_eq!(csv_value(&csv, 2, "wing_bending_factor"), "1.5");
     for invalid in [
         TailFlightRecordDocument {
+            controller_fault: None,
             schema_version: 6,
             ..current.clone()
         },
         TailFlightRecordDocument {
+            controller_fault: None,
             schema_version: 7,
             ..legacy
         },
@@ -864,7 +882,10 @@ fn schema_eight_tail_wrenches_roundtrip_and_keep_recorded_times() {
     let exact_record = exact.to_finalized_core_record().unwrap();
     assert_eq!(exact_record.header().scenario.controller_identity, None);
     assert_eq!(
-        exact_record.header().control_mode,
+        exact_record
+            .header()
+            .execution
+            .and_then(birdman_game_core::ControllerExecution::builtin_mode),
         Some(birdman_game_core::ControlMode::Shared(
             birdman_game_core::FbwAuthority::try_new(0.3).unwrap(),
         ))
@@ -1048,12 +1069,18 @@ fn schema_seven_boundary_event_roundtrips_and_exports_a_distinct_same_time_csv_r
         ""
     );
     assert_eq!(decoded.encode_json().unwrap(), json);
-    assert_eq!(record.header().control_mode, None);
+    assert_eq!(
+        record
+            .header()
+            .execution
+            .and_then(birdman_game_core::ControllerExecution::builtin_mode),
+        None
+    );
 }
 
 #[test]
 fn unknown_corrupt_or_surplus_control_schemas_are_rejected() {
-    for version in [0, 11, u32::MAX] {
+    for version in [0, TAIL_FLIGHT_RECORD_SCHEMA_VERSION + 1, u32::MAX] {
         let mut value = serde_json::to_value(document()).unwrap();
         value["schema_version"] = version.into();
         assert_eq!(
@@ -1121,7 +1148,9 @@ fn model_controller_and_physics_identity_gate_reintegration() {
             &current_identity(),
             scenario,
             birdman_game_core::PHYSICS_MODEL_VERSION,
-            different_mode,
+            birdman_game_core::ControllerExecution::BuiltIn {
+                mode: different_mode
+            },
         ),
         Err(FlightRecordFormatError::IncompatibleReintegration)
     );
@@ -1130,7 +1159,7 @@ fn model_controller_and_physics_identity_gate_reintegration() {
             &current_identity(),
             scenario,
             birdman_game_core::PHYSICS_MODEL_VERSION,
-            document.header.control_mode.unwrap().to_core().unwrap(),
+            document.recorded_execution().unwrap().unwrap(),
         ),
         Ok(())
     );
@@ -1141,7 +1170,7 @@ fn model_controller_and_physics_identity_gate_reintegration() {
             &other,
             scenario,
             birdman_game_core::PHYSICS_MODEL_VERSION,
-            document.header.control_mode.unwrap().to_core().unwrap(),
+            document.recorded_execution().unwrap().unwrap(),
         ),
         Err(FlightRecordFormatError::IncompatibleReintegration)
     );
@@ -1152,7 +1181,7 @@ fn model_controller_and_physics_identity_gate_reintegration() {
             &current_identity(),
             other_scenario,
             birdman_game_core::PHYSICS_MODEL_VERSION,
-            document.header.control_mode.unwrap().to_core().unwrap(),
+            document.recorded_execution().unwrap().unwrap(),
         ),
         Err(FlightRecordFormatError::IncompatibleReintegration)
     );
@@ -1161,7 +1190,7 @@ fn model_controller_and_physics_identity_gate_reintegration() {
             &current_identity(),
             scenario,
             birdman_game_core::PHYSICS_MODEL_VERSION + 1,
-            document.header.control_mode.unwrap().to_core().unwrap(),
+            document.recorded_execution().unwrap().unwrap(),
         ),
         Err(FlightRecordFormatError::IncompatibleReintegration)
     );
@@ -1226,7 +1255,9 @@ fn previous_physics_archives_retain_original_bytes_and_use_current_model_accepta
                 &identity(),
                 restored.scenario_identity(),
                 birdman_game_core::PHYSICS_MODEL_VERSION,
-                birdman_game_core::ControlMode::Manual,
+                birdman_game_core::ControllerExecution::BuiltIn {
+                    mode: birdman_game_core::ControlMode::Manual
+                },
             ),
             Err(FlightRecordFormatError::IncompatibleReintegration)
         );
@@ -1307,7 +1338,7 @@ fn tail_key(
             scenario: record.scenario_identity(),
             difficulty,
             identity: &record.control_identity,
-            control_mode: mode,
+            execution: birdman_game_core::ControllerExecution::BuiltIn { mode },
         },
         birdman_game_core::CourseAxis::try_new(1.0, 0.0).unwrap(),
         test_build(hashes),
@@ -1328,13 +1359,19 @@ fn test_build(
     }
 }
 
-fn keyed(record: TailFlightRecordDocument) -> TailFlightRecordDocument {
+fn keyed(mut record: TailFlightRecordDocument) -> TailFlightRecordDocument {
+    if let Some(descriptor) = record.control_identity.execution.as_mut() {
+        descriptor.controller_id = record.control_identity.controller_profile_id.clone();
+        descriptor.controller_sha256 = record.control_identity.controller_sha256.clone().unwrap();
+    }
     let difficulty = record.header.difficulty.resolved_settings();
     let configuration = crate::TailPersonalBestConfiguration {
         scenario: record.scenario_identity(),
         difficulty,
         identity: &record.control_identity,
-        control_mode: birdman_game_core::ControlMode::Manual,
+        execution: birdman_game_core::ControllerExecution::BuiltIn {
+            mode: birdman_game_core::ControlMode::Manual,
+        },
     };
     record
         .clone()
@@ -1401,7 +1438,7 @@ fn current_producer_seals_controller_identity_and_known_authority() {
         if missing == 0 {
             header.scenario.controller_identity = None;
         } else {
-            header.control_mode = None;
+            header.execution = None;
         }
         let unknown = FlightRecord::try_from_finalized_samples(
             header,
@@ -1755,5 +1792,85 @@ fn build_provenance_changes_do_not_split_comparisons_and_resolved_authority_does
     assert_eq!(
         compare_tail_personal_best_records(&current, &changed_course).unwrap(),
         Some(PersonalBestComparison::DifferentConfiguration)
+    );
+}
+
+#[test]
+fn external_record_retains_real_hardware_report_and_excludes_hitl_from_personal_best() {
+    use crate::external_controller::ControllerArtifactIdentity;
+    let mut source = current_document();
+    source.header.requested_control_mode = source.header.control_mode.take();
+    source.header.personal_best_key = None;
+    for sample in &mut source.samples {
+        let TailFlightRecordControlsDocument::TailIncidence {
+            physical_incidence,
+            input_from_previous,
+        } = &mut sample.controls;
+        if let Some(input) = input_from_previous {
+            input.manual_incidence_target = None;
+            input.fbw_incidence_target = None;
+            input.mixed_incidence_target = None;
+            input.external_report = Some(ExternalTailControlDocument {
+                requested_rad: [
+                    physical_incidence.horizontal_tail_rad,
+                    physical_incidence.vertical_tail_rad,
+                ],
+                structural_target: *physical_incidence,
+                actual: *physical_incidence,
+                obstruction_mask: 0,
+            });
+        }
+    }
+    source.control_identity.execution.as_mut().unwrap().artifact =
+        ControllerArtifactIdentity::Wasm {
+            sha256: "aa".repeat(32),
+        };
+    let external = source.to_finalized_core_record().unwrap();
+    assert!(matches!(
+        external.header().execution,
+        Some(birdman_game_core::ControllerExecution::External { .. })
+    ));
+    let restored = TailFlightRecordDocument::from_record(
+        &external,
+        source.header.difficulty.resolved_settings(),
+        source.control_identity.clone(),
+    )
+    .unwrap();
+    assert_eq!(restored.samples, source.samples);
+    let csv = String::from_utf8(restored.encode_csv().unwrap()).unwrap();
+    assert!(csv.contains("external_requested_horizontal_tail_rad"));
+    let execution = source.recorded_execution().unwrap().unwrap();
+    let difficulty = source.header.difficulty.resolved_settings();
+    let identity = source.control_identity.clone();
+    let scenario = source.scenario_identity();
+    let ranked = source
+        .clone()
+        .with_personal_best_configuration(
+            crate::TailPersonalBestConfiguration {
+                scenario,
+                difficulty,
+                identity: &identity,
+                execution,
+            },
+            birdman_game_core::CourseAxis::try_new(1.0, 0.0).unwrap(),
+            test_build(crate::FlightRecordSourceFingerprints {
+                scenario: [1; 32],
+                aircraft: [2; 32],
+                environment: [3; 32],
+                physics_build: [4; 32],
+            }),
+        )
+        .unwrap();
+    assert!(ranked.header.personal_best_key.is_some());
+    source.control_identity.execution.as_mut().unwrap().artifact =
+        ControllerArtifactIdentity::Hitl {
+            hardware_id: "test-device".into(),
+            firmware_id: "v1".into(),
+            baud_rate: 115200,
+        };
+    source.validate().unwrap();
+    assert_eq!(
+        crate::canonical_tail_personal_best_key(&source).unwrap(),
+        None
     );
 }

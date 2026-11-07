@@ -23,7 +23,7 @@ pub use failure::{
     AerodynamicStageDocument, ContactFailureDocument, DynamicsFailureDocument,
     HybridFailureDocument, HybridFlowDocument, HybridLimitDocument, HybridSiteDocument,
     HybridSurfaceDocument, LoadFailureDocument, MathFailureDocument, TailControlFailureDocument,
-    TailTickFailureDocument, WindFailureDocument,
+    TailTickFailureDocument, TelemetryFailureDocument, WindFailureDocument,
 };
 
 /// Force in body FRD newtons and moment about datum O in body FRD newton metres.
@@ -186,7 +186,7 @@ fn deserialize_terminal_failure<'de, Decoder: serde::Deserializer<'de>>(
 }
 
 /// Current archive schema with named two-tail controls.
-pub const TAIL_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 10;
+pub const TAIL_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 11;
 
 /// Explicit model/controller names; their independent versions remain in the common header.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,6 +203,9 @@ pub struct FlightRecordTailIdentityDocument {
     /// Exact original controller source digest; absent in legacy archives.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub controller_sha256: Option<String>,
+    /// Actual software/hardware identity, absent in earlier record schemas.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<crate::external_controller::ControllerExecutionDescriptor>,
 }
 
 /// Named physical angles in radians, preserving the two-tail contract without a roll slot.
@@ -265,11 +268,32 @@ pub struct TailFlightRecordInputDocument {
     /// Authoritative retained or newly resolved pilot target in metres.
     pub resolved_pilot_position_target_m: f64,
     /// Manual intent mapped to physical incidence before authority mixing.
-    pub manual_incidence_target: TailIncidenceDocument,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual_incidence_target: Option<TailIncidenceDocument>,
     /// Core feedback output before authority mixing.
-    pub fbw_incidence_target: TailIncidenceDocument,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fbw_incidence_target: Option<TailIncidenceDocument>,
     /// Mixed target before the software actuator slew step.
-    pub mixed_incidence_target: TailIncidenceDocument,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mixed_incidence_target: Option<TailIncidenceDocument>,
+    /// Adopted external control report; built-in command fields are absent in this case.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_report: Option<ExternalTailControlDocument>,
+}
+
+/// Final requested angles and the actual structural/actuator adoption.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ExternalTailControlDocument {
+    /// Finite unbounded horizontal and vertical requests, in radians.
+    pub requested_rad: [f64; 2],
+    /// Request after the aircraft's mechanical stops.
+    pub structural_target: TailIncidenceDocument,
+    /// Actual slew-limited actuator angles adopted by physics.
+    pub actual: TailIncidenceDocument,
+    /// Axis-specific lower/upper stop and slew obstruction bits.
+    pub obstruction_mask: u8,
 }
 
 /// Schema-specific tagged control pair; unknown layouts and surplus axes are rejected.
@@ -344,6 +368,9 @@ pub struct TailFlightRecordDocument {
         skip_serializing_if = "FlightRecordIdentityMetadata::is_unspecified"
     )]
     pub identity_metadata: FlightRecordIdentityMetadata,
+    /// First external controller failure, independently of physical finalization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_fault: Option<crate::external_controller::ControllerExecutionFault>,
     /// Chronological initial/successful-tick/optional terminal samples.
     pub samples: Vec<TailFlightRecordSampleDocument>,
     /// Immutable exact terminal time, disposition and score.
@@ -355,7 +382,7 @@ impl TailFlightRecordDocument {
     pub fn from_record(
         record: &FlightRecord,
         settings: DifficultySettings,
-        identity: FlightRecordTailIdentityDocument,
+        mut identity: FlightRecordTailIdentityDocument,
     ) -> Result<Self, FlightRecordFormatError> {
         let finalization = record
             .finalization()
@@ -363,6 +390,21 @@ impl TailFlightRecordDocument {
         let finalization = TailFlightRecordFinalizationDocument::try_from_core(finalization)?;
         let core_header = record.header();
         let scenario = core_header.scenario;
+        if identity.execution.is_none()
+            && core_header
+                .execution
+                .is_some_and(|e| e.builtin_mode().is_some())
+        {
+            identity.execution = Some(
+                crate::external_controller::ControllerExecutionDescriptor::builtin(
+                    identity.controller_profile_id.clone(),
+                    identity
+                        .controller_sha256
+                        .clone()
+                        .ok_or(FlightRecordFormatError::InvalidRecord)?,
+                ),
+            );
+        }
         if scenario.aircraft_identity != [0; 32]
             && identity.aircraft_sha256.as_deref().is_none_or(|sha| {
                 crate::aircraft_identity(&identity.aircraft_configuration_id, sha)
@@ -374,13 +416,22 @@ impl TailFlightRecordDocument {
         let Some(controller_sha) = identity.controller_sha256.as_deref() else {
             return Err(FlightRecordFormatError::InvalidRecord);
         };
+        let expected_controller = identity
+            .execution
+            .as_ref()
+            .filter(|d| {
+                !matches!(
+                    d.artifact,
+                    crate::external_controller::ControllerArtifactIdentity::BuiltInJson
+                )
+            })
+            .map_or_else(
+                || crate::controller_identity(&identity.controller_profile_id, controller_sha),
+                |d| d.digest(),
+            );
         if identity.aircraft_sha256.is_none()
-            || scenario.controller_identity
-                != Some(crate::controller_identity(
-                    &identity.controller_profile_id,
-                    controller_sha,
-                ))
-            || core_header.control_mode.is_none()
+            || scenario.controller_identity != Some(expected_controller)
+            || core_header.execution.is_none()
         {
             return Err(FlightRecordFormatError::InvalidRecord);
         }
@@ -394,7 +445,14 @@ impl TailFlightRecordDocument {
                 aircraft_model_version: scenario.aircraft_model_version,
                 environment_version: scenario.environment_version,
                 controller_profile_version: None,
-                control_mode: core_header.control_mode.map(Into::into),
+                control_mode: core_header
+                    .execution
+                    .and_then(|execution| execution.builtin_mode())
+                    .map(Into::into),
+                requested_control_mode: core_header
+                    .execution
+                    .filter(|e| e.builtin_mode().is_none())
+                    .map(|e| e.requested_mode().into()),
                 difficulty: settings.into(),
                 seed: scenario.seed,
                 maximum_flight_ticks: core_header.maximum_flight_ticks,
@@ -405,6 +463,7 @@ impl TailFlightRecordDocument {
             },
             control_identity: identity,
             identity_metadata: FlightRecordIdentityMetadata::Unspecified,
+            controller_fault: None,
             samples: record
                 .samples()
                 .iter()
@@ -430,6 +489,56 @@ impl TailFlightRecordDocument {
             .filter(|mode| mode.to_core().is_ok())
     }
 
+    pub(crate) fn controller_identity_digest(&self) -> Option<[u8; 32]> {
+        if let Some(descriptor) = &self.control_identity.execution
+            && !matches!(
+                descriptor.artifact,
+                crate::external_controller::ControllerArtifactIdentity::BuiltInJson
+            )
+        {
+            Some(descriptor.digest())
+        } else {
+            self.control_identity
+                .controller_sha256
+                .as_deref()
+                .map(|sha| {
+                    crate::controller_identity(&self.control_identity.controller_profile_id, sha)
+                })
+        }
+    }
+    /// Restores the recorded software category, preserving unknown legacy data.
+    pub fn recorded_execution(
+        &self,
+    ) -> Result<Option<birdman_game_core::ControllerExecution>, FlightRecordFormatError> {
+        if let Some(descriptor) = &self.control_identity.execution
+            && !matches!(
+                descriptor.artifact,
+                crate::external_controller::ControllerArtifactIdentity::BuiltInJson
+            )
+        {
+            let requested_mode = self
+                .header
+                .requested_control_mode
+                .ok_or(FlightRecordFormatError::InvalidRecord)?
+                .to_core()?;
+            if self.header.control_mode.is_some() {
+                return Err(FlightRecordFormatError::InvalidRecord);
+            }
+            return Ok(Some(birdman_game_core::ControllerExecution::External {
+                identity: descriptor.digest(),
+                requested_mode,
+            }));
+        }
+        if self.header.requested_control_mode.is_some() {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
+        self.recorded_control_mode()
+            .map(|mode| {
+                mode.to_core()
+                    .map(|mode| birdman_game_core::ControllerExecution::BuiltIn { mode })
+            })
+            .transpose()
+    }
     fn scenario_identity(&self) -> SessionScenarioIdentity {
         SessionScenarioIdentity {
             aircraft_identity: self
@@ -445,13 +554,7 @@ impl TailFlightRecordDocument {
             scenario_version: self.header.scenario_version,
             aircraft_model_version: self.header.aircraft_model_version,
             environment_version: self.header.environment_version,
-            controller_identity: self
-                .control_identity
-                .controller_sha256
-                .as_deref()
-                .map(|sha| {
-                    crate::controller_identity(&self.control_identity.controller_profile_id, sha)
-                }),
+            controller_identity: self.controller_identity_digest(),
             seed: self.header.seed,
         }
     }
@@ -460,7 +563,7 @@ impl TailFlightRecordDocument {
     pub fn to_finalized_core_record(&self) -> Result<FlightRecord, FlightRecordFormatError> {
         if !matches!(
             self.schema_version,
-            6 | 7 | 8 | 9 | TAIL_FLIGHT_RECORD_SCHEMA_VERSION
+            6 | 7 | 8 | 9 | 10 | TAIL_FLIGHT_RECORD_SCHEMA_VERSION
         ) {
             return Err(FlightRecordFormatError::UnsupportedSchemaVersion);
         }
@@ -512,7 +615,7 @@ impl TailFlightRecordDocument {
         }
         if self.schema_version >= 10 {
             if self.control_identity.controller_sha256.is_none()
-                || self.header.control_mode.is_none()
+                || self.recorded_execution()?.is_none()
                 || self.header.controller_profile_version.is_some()
             {
                 return Err(FlightRecordFormatError::InvalidRecord);
@@ -523,6 +626,27 @@ impl TailFlightRecordDocument {
                 .header
                 .controller_profile_version
                 .is_none_or(|version| version == 0)
+        {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
+        if self.schema_version >= 11 {
+            let descriptor = self
+                .control_identity
+                .execution
+                .as_ref()
+                .ok_or(FlightRecordFormatError::InvalidRecord)?;
+            descriptor
+                .validate()
+                .map_err(|_| FlightRecordFormatError::InvalidRecord)?;
+            if descriptor.controller_id != self.control_identity.controller_profile_id
+                || Some(descriptor.controller_sha256.as_str())
+                    != self.control_identity.controller_sha256.as_deref()
+            {
+                return Err(FlightRecordFormatError::InvalidRecord);
+            }
+        } else if self.control_identity.execution.is_some()
+            || self.controller_fault.is_some()
+            || self.header.requested_control_mode.is_some()
         {
             return Err(FlightRecordFormatError::InvalidRecord);
         }
@@ -569,12 +693,38 @@ impl TailFlightRecordDocument {
         {
             return Err(FlightRecordFormatError::InvalidRecord);
         }
+        let external = matches!(
+            self.recorded_execution()?,
+            Some(birdman_game_core::ControllerExecution::External { .. })
+        );
+        let input_kind_matches =
+            |input: &TailFlightRecordInputDocument| input.external_report.is_some() == external;
+        if self.samples.iter().any(|s| {
+            let TailFlightRecordControlsDocument::TailIncidence {
+                input_from_previous,
+                ..
+            } = &s.controls;
+            input_from_previous
+                .as_ref()
+                .is_some_and(|i| !input_kind_matches(i))
+        }) || self
+            .finalization
+            .boundary_event
+            .as_ref()
+            .is_some_and(|event| !input_kind_matches(&event.input))
+            || self.controller_fault.as_ref().is_some_and(|fault| {
+                !external
+                    || fault.fault == crate::external_controller::ControllerFault::None
+                    || fault.cause.len() > 4096
+                    || fault.tick > self.finalization.terminal_tick
+            })
+        {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
         let header = FlightRecordHeader::try_new(
             self.scenario_identity(),
             self.header.maximum_flight_ticks,
-            self.recorded_control_mode()
-                .map(|mode| mode.to_core())
-                .transpose()?,
+            self.recorded_execution()?,
         )
         .map_err(|_| FlightRecordFormatError::InvalidRecord)?;
         let samples = self
@@ -702,7 +852,7 @@ impl TailFlightRecordDocument {
             serde_json::from_slice(input).map_err(|_| FlightRecordFormatError::InvalidJson)?;
         if !matches!(
             version.schema_version,
-            6 | 7 | 8 | 9 | TAIL_FLIGHT_RECORD_SCHEMA_VERSION
+            6 | 7 | 8 | 9 | 10 | TAIL_FLIGHT_RECORD_SCHEMA_VERSION
         ) {
             return Err(FlightRecordFormatError::UnsupportedSchemaVersion);
         }
@@ -718,11 +868,11 @@ impl TailFlightRecordDocument {
         identity: &FlightRecordTailIdentityDocument,
         scenario: SessionScenarioIdentity,
         physics_model_version: u32,
-        control_mode: birdman_game_core::ControlMode,
+        execution: birdman_game_core::ControllerExecution,
     ) -> Result<(), FlightRecordFormatError> {
         self.validate()?;
         if scenario.controller_identity.is_none()
-            || self.header.control_mode != Some(control_mode.into())
+            || self.recorded_execution()? != Some(execution)
             || self.control_identity != *identity
             || self.scenario_identity() != scenario
             || self.header.physics_model_version != physics_model_version
@@ -863,6 +1013,34 @@ impl TailFlightRecordSampleDocument {
 
 impl TailFlightRecordInputDocument {
     fn from_core(input: FlightRecordTailInput) -> Self {
+        let (manual, fbw, mixed, external) = match input.commands() {
+            birdman_game_core::TailControlReport::BuiltIn(commands) => (
+                Some(TailIncidenceDocument::from_core(
+                    commands.manual_incidence_target(),
+                )),
+                Some(TailIncidenceDocument::from_core(
+                    commands.fbw_incidence_target(),
+                )),
+                Some(TailIncidenceDocument::from_core(
+                    commands.mixed_incidence_target(),
+                )),
+                None,
+            ),
+            birdman_game_core::TailControlReport::External(update) => (
+                None,
+                None,
+                None,
+                Some(ExternalTailControlDocument {
+                    requested_rad: [
+                        update.requested().elevator_rad(),
+                        update.requested().rudder_rad(),
+                    ],
+                    structural_target: TailIncidenceDocument::from_core(update.structural_target()),
+                    actual: TailIncidenceDocument::from_core(update.incidence()),
+                    obstruction_mask: update.obstruction_mask(),
+                }),
+            ),
+        };
         Self {
             nose_up: input.manual_intent().nose_up(),
             turn_right: input.manual_intent().turn_right(),
@@ -875,39 +1053,63 @@ impl TailFlightRecordInputDocument {
                 },
             },
             resolved_pilot_position_target_m: input.resolved_pilot_position_target_m(),
-            manual_incidence_target: TailIncidenceDocument::from_core(
-                input.manual_incidence_target(),
-            ),
-            fbw_incidence_target: TailIncidenceDocument::from_core(input.fbw_incidence_target()),
-            mixed_incidence_target: TailIncidenceDocument::from_core(
-                input.mixed_incidence_target(),
-            ),
+            manual_incidence_target: manual,
+            fbw_incidence_target: fbw,
+            mixed_incidence_target: mixed,
+            external_report: external,
         }
     }
-
     fn to_core(self) -> Result<FlightRecordTailInput, FlightRecordFormatError> {
+        let invalid = || FlightRecordFormatError::InvalidRecord;
         let command = match self.pilot_position_command {
             TailPilotPositionCommandDocument::Hold {} => TailPilotPositionCommand::Hold,
             TailPilotPositionCommandDocument::Set { normalized } => TailPilotPositionCommand::Set(
-                TailPilotPositionIntent::try_new(normalized)
-                    .map_err(|_| FlightRecordFormatError::InvalidRecord)?,
+                TailPilotPositionIntent::try_new(normalized).map_err(|_| invalid())?,
             ),
         };
         let input = TailFlightTickInput::new(
-            TailPilotIntent::try_new(self.nose_up, self.turn_right)
-                .map_err(|_| FlightRecordFormatError::InvalidRecord)?,
+            TailPilotIntent::try_new(self.nose_up, self.turn_right).map_err(|_| invalid())?,
             TailRateTarget::try_new(self.desired_pitch_rate_rad_s, self.desired_yaw_rate_rad_s)
-                .map_err(|_| FlightRecordFormatError::InvalidRecord)?,
+                .map_err(|_| invalid())?,
             command,
         );
-        FlightRecordTailInput::try_from_recorded(
-            input,
-            self.resolved_pilot_position_target_m,
-            self.manual_incidence_target.to_core()?,
-            self.fbw_incidence_target.to_core()?,
-            self.mixed_incidence_target.to_core()?,
-        )
-        .map_err(|_| FlightRecordFormatError::InvalidRecord)
+        if let Some(external) = self.external_report {
+            if self.manual_incidence_target.is_some()
+                || self.fbw_incidence_target.is_some()
+                || self.mixed_incidence_target.is_some()
+            {
+                return Err(invalid());
+            }
+            let request = birdman_game_core::TailIncidenceRequest::try_new(
+                external.requested_rad[0],
+                external.requested_rad[1],
+            )
+            .map_err(|_| invalid())?;
+            let update = birdman_game_core::TailActuatorUpdate::try_from_recorded(
+                request,
+                external.structural_target.to_core()?,
+                external.actual.to_core()?,
+                external.obstruction_mask,
+            )
+            .map_err(|_| invalid())?;
+            FlightRecordTailInput::try_from_external_recorded(
+                input,
+                self.resolved_pilot_position_target_m,
+                update,
+            )
+            .map_err(|_| invalid())
+        } else {
+            FlightRecordTailInput::try_from_recorded(
+                input,
+                self.resolved_pilot_position_target_m,
+                self.manual_incidence_target
+                    .ok_or_else(invalid)?
+                    .to_core()?,
+                self.fbw_incidence_target.ok_or_else(invalid)?.to_core()?,
+                self.mixed_incidence_target.ok_or_else(invalid)?.to_core()?,
+            )
+            .map_err(|_| invalid())
+        }
     }
 }
 
