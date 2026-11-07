@@ -12,6 +12,9 @@ on:
     paths:
       - .github/workflows/native-preview.yml
       - .github/workflows/artifact-transfer-check.yml
+      - tools/native-release/package_native.py
+      - tools/native-release/artifact_transfer.py
+      - tools/native-release/test_package_native.py
 
 permissions:
   contents: read
@@ -24,7 +27,11 @@ jobs:
     timeout-minutes: 10
     outputs:
       receipt: ${{ steps.source.outputs.receipt }}
+      reference_sha256: ${{ steps.reference.outputs.sha256 }}
     steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
       - name: Select one existing native license artifact
         id: source
         shell: bash
@@ -35,20 +42,38 @@ jobs:
           set -euo pipefail
           artifact_id="$REQUESTED_ID"
           if [ -z "$artifact_id" ]; then
-            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" > "$RUNNER_TEMP/artifacts.json"
-            artifact_id=$(jq -r '[.artifacts[] | select(.expired == false and (.name | test("^native-licenses-[0-9a-f]{40}$")))] | sort_by(.created_at) | last | .id // empty' "$RUNNER_TEMP/artifacts.json")
+            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" > "$RUNNER_TEMP/artifacts.json"
+            python3 tools/native-release/artifact_transfer.py select --pages "$RUNNER_TEMP/artifacts.json" --output "$RUNNER_TEMP/source-artifact.json"
+            artifact_id=$(jq -r '.id' "$RUNNER_TEMP/source-artifact.json")
           fi
           [[ "$artifact_id" =~ ^[0-9]+$ ]] || { echo 'An existing native license artifact ID is required'; exit 1; }
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id" > "$RUNNER_TEMP/source-artifact.json"
-          jq -e '.expired == false and (.name | test("^native-licenses-[0-9a-f]{40}$"))' "$RUNNER_TEMP/source-artifact.json" > /dev/null
+          source_sha=$(python3 tools/native-release/artifact_transfer.py identity --artifact "$RUNNER_TEMP/source-artifact.json")
           run_id=$(jq -r '.workflow_run.id' "$RUNNER_TEMP/source-artifact.json")
           [[ "$run_id" =~ ^[0-9]+$ ]]
-          source_sha=$(jq -r '.name | sub("^native-licenses-"; "")' "$RUNNER_TEMP/source-artifact.json")
           echo "artifact_id=$artifact_id" >> "$GITHUB_OUTPUT"
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
           echo "receipt=artifact-transfer-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
           printf 'Source artifact: `%s`\n\nSource run: `%s`\n\nSource SHA: `%s`\n' "$artifact_id" "$run_id" "$source_sha" >> "$GITHUB_STEP_SUMMARY"
+      - name: Read the selected producer source separately from the verifier
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ steps.source.outputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - name: Fix an independent reference from the API-digest-checked REST ZIP
+        id: reference
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.source.outputs.artifact_id }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > "$RUNNER_TEMP/source.zip"
+          mkdir verification
+          python3 tools/native-release/artifact_transfer.py reference --archive "$RUNNER_TEMP/source.zip" --artifact "$RUNNER_TEMP/source-artifact.json" --source source --output verification/reference.json
+          echo "sha256=$(sha256sum verification/reference.json | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
       - name: Download existing data with the production transfer Action
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
@@ -57,18 +82,11 @@ jobs:
           repository: ${{ github.repository }}
           github-token: ${{ github.token }}
           path: verification/payload
-      - name: Record source identity, file paths and hashes
+      - name: Verify the initial Action transfer against the independent reference
         shell: bash
-        env:
-          EXPECTED_SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
         run: |
           set -euo pipefail
-          cd verification
-          test -z "$(find payload -type l -print -quit)"
-          jq -e --arg sha "$EXPECTED_SOURCE_SHA" '.source_sha == $sha' payload/LICENSE-INFO.json > /dev/null
-          find payload -type f -print0 | LC_ALL=C sort -z > PATHS
-          test -s PATHS
-          xargs -0 sha256sum < PATHS > SHA256SUMS
+          python3 tools/native-release/artifact_transfer.py verify --payload verification/payload --reference verification/reference.json
       - name: Upload the unchanged data and checksum receipt
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
@@ -82,6 +100,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
       - name: Download the transferred artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
@@ -89,9 +110,9 @@ jobs:
           path: roundtrip
       - name: Verify identical file paths and content
         shell: bash
+        env:
+          EXPECTED_REFERENCE_SHA256: ${{ needs.transfer.outputs.reference_sha256 }}
         run: |
           set -euo pipefail
-          cd roundtrip
-          test -z "$(find payload -type l -print -quit)"
-          find payload -type f -print0 | LC_ALL=C sort -z | cmp - PATHS
-          sha256sum --check --strict SHA256SUMS
+          echo "$EXPECTED_REFERENCE_SHA256  roundtrip/reference.json" | sha256sum --check --strict
+          python3 tools/native-release/artifact_transfer.py verify --payload roundtrip/payload --reference roundtrip/reference.json

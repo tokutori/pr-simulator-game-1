@@ -190,15 +190,22 @@ def copy_notices(root: Path, licenses: Path, staging: Path) -> None:
             raise ValueError(f"required font or notice is missing: {required}")
 
 
+def validate_license_info(info, *, source_sha: str, lock_hash: str,
+                          targets: list[str], features: list[str], licenses_hash: str) -> None:
+    if (info.get("source_sha") != source_sha or info.get("cargo_lock_sha256") != lock_hash
+            or info.get("targets") != targets or info.get("features") != features
+            or info.get("licenses_sha256") != licenses_hash):
+        raise ValueError("license artifact provenance does not match the source")
+
+
 def assemble(root: Path, binaries: Path, licenses: Path, source_sha: str, output: Path) -> None:
     require_source(root, source_sha)
     license_info = json.loads((licenses / "LICENSE-INFO.json").read_text(encoding="utf-8"))
     lock_hash = digest(root / "Cargo.lock")
-    if (license_info["source_sha"] != source_sha or license_info["cargo_lock_sha256"] != lock_hash
-            or license_info["targets"] != list(TARGETS)
-            or license_info["features"] != sorted({feature for target in TARGETS for feature in native_features(target)})
-            or license_info["licenses_sha256"] != digest(licenses / "THIRD-PARTY-LICENSES.html")):
-        raise ValueError("license artifact provenance does not match the source")
+    validate_license_info(license_info, source_sha=source_sha, lock_hash=lock_hash,
+                          targets=list(TARGETS),
+                          features=sorted({feature for target in TARGETS for feature in native_features(target)}),
+                          licenses_hash=digest(licenses / "THIRD-PARTY-LICENSES.html"))
     output.mkdir(parents=True, exist_ok=True)
     packages = []
     for target in TARGETS:

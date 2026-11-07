@@ -1,8 +1,10 @@
 import io
 import hashlib
 import json
+from contextlib import nullcontext
 from pathlib import Path
 import struct
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -10,6 +12,7 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
+import artifact_transfer as transfer
 import package_native as packaging
 
 
@@ -53,6 +56,85 @@ def raw_artifact(directory: Path, root: Path, target: str, binary: bytes,
 
 
 class NativePackagingTests(unittest.TestCase):
+    def test_transfer_selects_latest_unexpired_license_across_all_pages(self) -> None:
+        older = {"id": 1, "name": f"native-licenses-{SOURCE_SHA}", "expired": False,
+                 "created_at": "2026-11-01T00:00:00Z"}
+        latest = dict(older, id=102, created_at="2026-11-02T00:00:00Z")
+        pages = [{"artifacts": [older] + [dict(older, id=i + 2, name=f"native-raw-{i}")
+                                        for i in range(99)]},
+                 {"artifacts": [dict(latest, id=101), latest,
+                                dict(latest, id=103, expired=True, created_at="2026-11-03T00:00:00Z")]}]
+        self.assertEqual(transfer.select_artifact(pages), latest)
+        with self.assertRaises(ValueError):
+            transfer.select_artifact([{"artifacts": [dict(latest, expired=True)]}])
+
+    def test_initial_and_roundtrip_transfers_match_independent_zip_and_source(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, _, licenses, _ = self.fixture(directory)
+            archive = Path(directory) / "source.zip"
+            with zipfile.ZipFile(archive, "w") as zipped:
+                for name in transfer.FILES:
+                    zipped.write(licenses / name, name)
+            artifact = {"id": 9, "name": f"native-licenses-{SOURCE_SHA}", "expired": False,
+                        "workflow_run": {"id": 10, "head_sha": "b" * 40},
+                        "size_in_bytes": archive.stat().st_size,
+                        "digest": "sha256:" + packaging.digest(archive)}
+            matrix = json.dumps({"include": [{"target": target,
+                                            "features": ",".join(packaging.native_features(target))}
+                                           for target in packaging.TARGETS]})
+            with patch("artifact_transfer.require_source"), \
+                    patch("artifact_transfer.subprocess.check_output", return_value=matrix):
+                reference = transfer.build_reference(archive, artifact, root)
+                # This expected receipt exists before either transfer, independently of its payload.
+                for phase in ("initial", "roundtrip"):
+                    payload = Path(directory) / phase
+                    payload.mkdir()
+                    for name in transfer.FILES:
+                        (payload / name).write_bytes((licenses / name).read_bytes())
+                    transfer.verify_payload(payload, reference)
+                    for mutation in ("missing", "modified", "extra"):
+                        with self.subTest(phase=phase, mutation=mutation):
+                            notice = payload / "THIRD-PARTY-LICENSES.html"
+                            original = notice.read_bytes()
+                            if mutation == "missing":
+                                notice.unlink()
+                            elif mutation == "modified":
+                                notice.write_bytes(original + b"changed")
+                            else:
+                                (payload / "extra").write_bytes(b"extra")
+                            with self.assertRaises(ValueError):
+                                transfer.verify_payload(payload, reference)
+                            notice.write_bytes(original)
+                            (payload / "extra").unlink(missing_ok=True)
+                for field in ("source_sha", "cargo_lock_sha256", "targets", "features", "licenses_sha256"):
+                    info = json.loads((licenses / "LICENSE-INFO.json").read_text(encoding="utf-8"))
+                    del info[field]
+                    with self.subTest(missing_provenance=field), self.assertRaises(ValueError):
+                        packaging.validate_license_info(info, source_sha=SOURCE_SHA,
+                            lock_hash=packaging.digest(root / "Cargo.lock"), targets=list(packaging.TARGETS),
+                            features=["openxr"], licenses_hash=packaging.digest(licenses / "THIRD-PARTY-LICENSES.html"))
+                for digest in (None, "", "sha256:" + "0" * 64):
+                    with self.subTest(digest=digest), self.assertRaises(ValueError):
+                        transfer.build_reference(archive, dict(artifact, digest=digest), root)
+                # Exact flat names reject traversal, duplicate/extra entries and all non-files.
+                for invalid in ("/absolute", "../outside", "extra", "directory/", "LICENSE-INFO.json", "symlink"):
+                    bad = Path(directory) / "bad.zip"
+                    with zipfile.ZipFile(bad, "w") as zipped:
+                        for name in transfer.FILES:
+                            if invalid == "symlink" and name == "LICENSE-INFO.json":
+                                entry = zipfile.ZipInfo(name)
+                                entry.external_attr = (stat.S_IFLNK | 0o777) << 16
+                                zipped.writestr(entry, "target")
+                            else:
+                                zipped.write(licenses / name, name)
+                        if invalid != "symlink":
+                            # A duplicate is written explicitly to exercise the central directory.
+                            with self.assertWarns(UserWarning) if invalid == "LICENSE-INFO.json" else nullcontext():
+                                zipped.writestr(invalid, "invalid")
+                    metadata = dict(artifact, digest="sha256:" + packaging.digest(bad), size_in_bytes=bad.stat().st_size)
+                    with self.subTest(entry=invalid), self.assertRaises(ValueError):
+                        transfer.build_reference(bad, metadata, root)
+
     def test_six_native_header_formats_and_architectures(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             binary = Path(directory) / "binary"
