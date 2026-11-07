@@ -70,8 +70,8 @@ pub(super) struct ReplayCaptureRecord {
 
 impl ReplayCaptureRecord {
     pub(super) fn retain(session: &NativeRuntime) -> Result<Self, String> {
-        let record = session
-            .0
+        let runtime = session.lock();
+        let record = runtime
             .application()
             .core_session()
             .flight_record()
@@ -92,8 +92,8 @@ impl ReplayCaptureRecord {
     }
 
     pub(super) fn verify(&self, session: &NativeRuntime) -> Result<(), String> {
-        let record = session
-            .0
+        let runtime = session.lock();
+        let record = runtime
             .application()
             .core_session()
             .flight_record()

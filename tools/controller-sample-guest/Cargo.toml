@@ -1,0 +1,32 @@
+[package]
+name = "controller-sample-guest"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+resolver = "3"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "controller-sample-stdio"
+path = "src/main.rs"
+
+[dependencies]
+birdman-game-core = { path = "../../crates/birdman-game-core" }
+birdman-game-format = { path = "../../crates/birdman-game-format" }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = "deny"
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = "debuginfo"

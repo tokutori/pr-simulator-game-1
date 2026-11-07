@@ -11,6 +11,15 @@ pub struct TailControllerState {
 }
 
 impl TailControllerState {
+    /// Initializes cooperative controller memory from a canonical optional heading.
+    pub fn try_new(heading_target_rad: Option<f64>) -> Result<Self, TailControlError> {
+        if heading_target_rad
+            .is_some_and(|heading| !heading.is_finite() || heading.abs() > core::f64::consts::PI)
+        {
+            return Err(TailControlError::InvalidController);
+        }
+        Ok(Self::initial(heading_target_rad))
+    }
     pub(crate) const fn initial(heading_target_rad: Option<f64>) -> Self {
         Self {
             stages: [PidMemory::ZERO; 5],
@@ -313,26 +322,15 @@ pub fn advance_tail_control(
     } else {
         mixed
     };
-    let advance = |axis: usize, current: f64, target: f64| {
-        let limits = physical_limits[axis];
-        let [low, high] = limits.incidence_bounds_rad();
-        if bounds[axis][0] < low || bounds[axis][1] > high || current < low || current > high {
+    for axis in 0..2 {
+        let [low, high] = physical_limits[axis].incidence_bounds_rad();
+        if bounds[axis][0] < low || bounds[axis][1] > high {
             return Err(TailControlError::Actuator(ActuatorError::InvalidLimit));
         }
-        let target = target.clamp(bounds[axis][0], bounds[axis][1]);
-        let maximum_step = limits.maximum_slew_rad_per_second() * timestep_seconds;
-        let difference = target - current;
-        Ok(if difference.abs() <= maximum_step {
-            target
-        } else {
-            (current + difference.signum() * maximum_step).clamp(low, high)
-        })
-    };
-    let incidence = TailIncidence::try_new(
-        advance(0, previous.elevator_rad(), guarded.elevator_rad())?,
-        advance(1, previous.rudder_rad(), guarded.rudder_rad())?,
-    )
-    .map_err(TailControlError::Incidence)?;
+    }
+    let hardware =
+        advance_tail_actuators(previous, guarded.into(), physical_limits, timestep_seconds)?;
+    let incidence = hardware.incidence();
     let body_obstruction = [
         PidObstruction::difference(desired_q, bounded_q)
             .union(pitch.obstruction())
@@ -375,7 +373,7 @@ pub fn advance_tail_control(
             feedback,
             mixed,
         },
-        incidence,
+        hardware,
         candidate,
     })
 }

@@ -4,7 +4,7 @@ use birdman_game_core::{
 };
 
 use super::{ApplicationSession, ExternalPauseReason};
-use crate::flight_clock::{FlightClockError, FlightFrameAdvance};
+use crate::flight_clock::{FlightClockError, FlightFrameAdvance, FlightTickAdmission};
 use crate::flight_input::{FlightActionKey, FlightGamepadObservation, FlightKeyObservation};
 
 /// Original cause that stops live frame admission until the flight is replaced.
@@ -123,6 +123,22 @@ impl ApplicationSession {
         gamepads: &[FlightGamepadObservation],
         frame_available: bool,
     ) -> Result<FlightFrameReport, FlightFrameError> {
+        self.observe_controller_time(timestamp_ms);
+        self.controller_execution
+            .check_deadline(self.controller_observed_ms);
+        self.synchronize_controller_fault();
+        if self.controller_execution.hitl()
+            && self.controller_fault().is_some()
+            && matches!(
+                self.session.snapshot().phase(),
+                SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+            )
+        {
+            self.session
+                .abort_flight()
+                .map_err(FlightFrameError::Session)?;
+            self.finish_controller_result();
+        }
         let phase_before = self.session.snapshot().phase();
         if let Some(error) = self.flight_failure
             && matches!(
@@ -162,102 +178,182 @@ impl ApplicationSession {
             })
             .transpose()
             .map_err(FlightFrameError::Session)?;
+        let controller = &mut self.controller_execution;
+        let observed_ms = self.controller_observed_ms;
+        let lockstep = controller.native() && !controller.hitl();
+        let transport_waiting = controller.waiting();
         let session = &mut self.session;
         let prepared = &mut self.prepared;
         let input = &mut self.flight_input;
         let mut failure = None;
         let mut previous_tick = None;
-        let advance = self.flight_clock.advance_frame(timestamp_ms, || {
-            let tick = session.snapshot().tail_flight_state();
-            let result = (|| {
-                let previous = tick.ok_or(FlightFrameError::Session(
-                    GameSessionError::InvalidTransition,
-                ))?;
-                let mapping =
-                    session
-                        .tail_pilot_position_mapping()
-                        .ok_or(FlightFrameError::Session(
+        let advance =
+            self.flight_clock
+                .advance_frame(timestamp_ms, lockstep, transport_waiting, || {
+                    if controller.waiting() {
+                        return FlightTickAdmission::Waiting;
+                    }
+                    let tick = session.snapshot().tail_flight_state();
+                    let result = (|| {
+                        let previous = tick.ok_or(FlightFrameError::Session(
                             GameSessionError::InvalidTransition,
                         ))?;
-                let stop_target = previous
-                    .pilot_stopping_target()
-                    .filter(|_| previous.pilot_motion_limited());
-                input.observe_pilot_stop(stop_target.is_some());
-                let held = mapping
-                    .normalized_target(crate::flight_input::pilot_position_pickup_target(previous))
-                    .map_err(FlightFrameError::PilotPosition)?;
-                let prepared = prepared.as_mut().ok_or(FlightFrameError::Session(
-                    GameSessionError::InvalidTransition,
-                ))?;
-                let demand = input
-                    .tick_input(
-                        prepared
-                            .controller_profile
-                            .body_rate_bounds_rad_per_second(),
-                        gamepads,
-                        held.value(),
-                        prepared.keyboard_controls,
-                        |step| {
-                            let position = birdman_game_core::PilotPositionTarget::try_new(
-                                &prepared.aircraft,
-                                (previous.pilot_position_demand().position_m() + step).clamp(
-                                    prepared.aircraft.pilot_position_bounds_m()[0],
-                                    prepared.aircraft.pilot_position_bounds_m()[1],
-                                ),
+                        let mapping = session.tail_pilot_position_mapping().ok_or(
+                            FlightFrameError::Session(GameSessionError::InvalidTransition),
+                        )?;
+                        let stop_target = previous
+                            .pilot_stopping_target()
+                            .filter(|_| previous.pilot_motion_limited());
+                        input.observe_pilot_stop(stop_target.is_some());
+                        let held = mapping
+                            .normalized_target(crate::flight_input::pilot_position_pickup_target(
+                                previous,
+                            ))
+                            .map_err(FlightFrameError::PilotPosition)?;
+                        let prepared = prepared.as_mut().ok_or(FlightFrameError::Session(
+                            GameSessionError::InvalidTransition,
+                        ))?;
+                        let demand = if let Some(demand) = controller.ready_demand() {
+                            demand
+                        } else {
+                            input
+                                .tick_input(
+                                    prepared.body_rate_bounds,
+                                    gamepads,
+                                    held.value(),
+                                    prepared.keyboard_controls,
+                                    |step| {
+                                        let position =
+                                            birdman_game_core::PilotPositionTarget::try_new(
+                                                &prepared.aircraft,
+                                                (previous.pilot_position_demand().position_m()
+                                                    + step)
+                                                    .clamp(
+                                                        prepared.aircraft.pilot_position_bounds_m()
+                                                            [0],
+                                                        prepared.aircraft.pilot_position_bounds_m()
+                                                            [1],
+                                                    ),
+                                            )
+                                            .map_err(|_| TailControlError::InvalidPilotIntent)?;
+                                        mapping
+                                            .normalized_target(position)
+                                            .map_err(|_| TailControlError::InvalidPilotIntent)
+                                    },
+                                )
+                                .map_err(FlightFrameError::Input)?
+                        };
+                        let demand = if prepared.execution.builtin_mode().is_none() {
+                            let response = if let Some(response) = controller.take_ready_response()
+                            {
+                                Some(response)
+                            } else {
+                                let load = loads.as_ref().ok_or(FlightFrameError::Session(
+                                    GameSessionError::InvalidTransition,
+                                ))?;
+                                let sensors = match birdman_game_core::observe_tail_controller(
+                                    &prepared.aircraft,
+                                    previous,
+                                    load,
+                                ) {
+                                    Ok(sensors) => sensors,
+                                    Err(cause) => {
+                                        return session
+                                            .fail_tail_flight_observation(cause)
+                                            .map(Some)
+                                            .map_err(FlightFrameError::Session);
+                                    }
+                                };
+                                let observation = super::controller::controller_observation(
+                                    previous,
+                                    sensors,
+                                    demand,
+                                    prepared.execution.requested_mode(),
+                                    controller.previous_accepted_seconds(),
+                                );
+                                controller.evaluate(observation, demand, observed_ms)
+                            };
+                            let Some((demand, angles)) = response else {
+                                return Ok(None);
+                            };
+                            demand.with_external_request(
+                                birdman_game_core::TailIncidenceRequest::try_new(
+                                    angles[0], angles[1],
+                                )
+                                .map_err(FlightFrameError::Input)?,
                             )
-                            .map_err(|_| TailControlError::InvalidPilotIntent)?;
-                            mapping
-                                .normalized_target(position)
-                                .map_err(|_| TailControlError::InvalidPilotIntent)
-                        },
-                    )
-                    .map_err(FlightFrameError::Input)?;
-                let result = prepared
-                    .advance(
-                        session,
-                        definition,
-                        demand,
-                        loads
-                            .as_ref()
-                            .ok_or(GameSessionError::InvalidTransition)
-                            .map_err(FlightFrameError::Session)?,
-                    )
-                    .map_err(FlightFrameError::Session);
-                let elapsed = result.as_ref().is_ok_and(|snapshot| {
-                    snapshot
-                        .tail_flight_state()
-                        .is_some_and(|state| state.tick_index() > previous.tick_index())
-                        || snapshot.result().is_some_and(|result| match result.state {
-                            birdman_game_core::SessionTerminalState::TailTick(state) => {
-                                state.tick_index() > previous.tick_index()
+                        } else {
+                            demand
+                        };
+                        let result = prepared
+                            .advance(
+                                session,
+                                definition,
+                                demand,
+                                loads
+                                    .as_ref()
+                                    .ok_or(GameSessionError::InvalidTransition)
+                                    .map_err(FlightFrameError::Session)?,
+                            )
+                            .map_err(FlightFrameError::Session);
+                        let elapsed = result.as_ref().is_ok_and(|snapshot| {
+                            snapshot
+                                .tail_flight_state()
+                                .is_some_and(|state| state.tick_index() > previous.tick_index())
+                                || snapshot.result().is_some_and(|result| match result.state {
+                                    birdman_game_core::SessionTerminalState::TailTick(state) => {
+                                        state.tick_index() > previous.tick_index()
+                                    }
+                                    birdman_game_core::SessionTerminalState::TailWaterContact(
+                                        contact,
+                                    ) => {
+                                        contact.interval_start_tick() > previous.tick_index()
+                                            || contact.fraction() > 0.0
+                                    }
+                                })
+                        });
+                        if elapsed {
+                            let stopped = result
+                                .as_ref()
+                                .ok()
+                                .and_then(|snapshot| snapshot.tail_flight_state())
+                                .is_some_and(|state| state.pilot_motion_limited());
+                            input.confirm_tick(demand, stopped);
+                        }
+                        if result.is_ok() && prepared.execution.builtin_mode().is_none() {
+                            let accepted =
+                                super::controller::controller_adoption(session, previous)
+                                    .map_err(FlightFrameError::Session)?;
+                            controller.accepted(accepted, observed_ms);
+                        }
+                        result.map(Some)
+                    })();
+                    previous_tick = tick;
+                    match result {
+                        Ok(None) => FlightTickAdmission::Waiting,
+                        Ok(Some(_)) => {
+                            if session.snapshot().phase() == SessionPhase::FlightRunning {
+                                if controller.waiting() {
+                                    FlightTickAdmission::Awaiting
+                                } else {
+                                    FlightTickAdmission::Advanced
+                                }
+                            } else {
+                                FlightTickAdmission::Stopped
                             }
-                            birdman_game_core::SessionTerminalState::TailWaterContact(contact) => {
-                                contact.interval_start_tick() > previous.tick_index()
-                                    || contact.fraction() > 0.0
+                        }
+                        Err(error) => {
+                            if session.snapshot().phase() != SessionPhase::Result {
+                                failure = Some(error);
                             }
-                        })
-                });
-                if elapsed {
-                    let stopped = result
-                        .as_ref()
-                        .ok()
-                        .and_then(|snapshot| snapshot.tail_flight_state())
-                        .is_some_and(|state| state.pilot_motion_limited());
-                    input.confirm_tick(demand, stopped);
-                }
-                result
-            })();
-            previous_tick = tick;
-            match result {
-                Ok(_) => session.snapshot().phase() == SessionPhase::FlightRunning,
-                Err(error) => {
-                    if session.snapshot().phase() != SessionPhase::Result {
-                        failure = Some(error);
+                            FlightTickAdmission::Stopped
+                        }
                     }
-                    false
-                }
-            }
-        });
+                });
+        self.synchronize_controller_fault();
+        if self.session.snapshot().phase() == SessionPhase::Result {
+            self.finish_controller_result();
+        }
         let advance = match advance {
             Ok(advance) => advance,
             Err(error) => {
@@ -293,10 +389,29 @@ impl ApplicationSession {
         let phase = self.session.snapshot().phase();
         if phase == SessionPhase::FlightRunning {
             if previous != SessionPhase::FlightRunning {
+                self.controller_execution
+                    .resume(self.controller_observed_ms);
                 self.flight_clock.resume();
                 self.flight_input.set_active(true);
             }
         } else {
+            if previous == SessionPhase::FlightRunning
+                && matches!(phase, SessionPhase::FlightPaused { .. })
+                && let Some(state) = self.session.snapshot().tail_flight_state()
+            {
+                self.controller_execution.pause(
+                    state.tick_index(),
+                    state.tick_index() as f64 / f64::from(birdman_game_core::PHYSICS_HZ),
+                    [
+                        state.incidence().elevator_rad(),
+                        state.incidence().rudder_rad(),
+                    ],
+                    self.controller_observed_ms,
+                );
+            }
+            if phase == SessionPhase::Result {
+                self.finish_controller_result();
+            }
             self.flight_clock.suspend();
             self.flight_input.set_active(false);
             if !matches!(phase, SessionPhase::FlightPaused { .. }) {

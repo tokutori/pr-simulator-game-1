@@ -16,7 +16,7 @@ pub use tail::{
     TailFlightRecordControlsDocument, TailFlightRecordDocument,
     TailFlightRecordFinalizationDocument, TailFlightRecordInputDocument,
     TailFlightRecordSampleDocument, TailIncidenceDocument, TailPilotPositionCommandDocument,
-    TailTickFailureDocument, TailWrenchDocument, WindFailureDocument,
+    TailTickFailureDocument, TailWrenchDocument, TelemetryFailureDocument, WindFailureDocument,
     compare_tail_personal_best_records,
 };
 
@@ -43,6 +43,9 @@ pub struct FlightRecordHeaderDocument {
     /// Actual sealed control mode; absent when a legacy archive did not record it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub control_mode: Option<crate::FlightRecordControlMode>,
+    /// Operator-requested mode for external software, distinct from known built-in authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_control_mode: Option<crate::FlightRecordControlMode>,
     /// Resolved preset and independent gameplay axes.
     pub difficulty: FlightRecordDifficultyDocument,
     /// Explicit deterministic selection seed.

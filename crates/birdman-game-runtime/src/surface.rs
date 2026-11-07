@@ -189,6 +189,12 @@ pub(super) struct SurfaceDisplay {
 }
 
 impl SurfaceOwner {
+    pub(super) fn retire_lease(&mut self) {
+        self.invalidate();
+        self.menu_paint = None;
+        self.head_paint = None;
+    }
+
     pub(super) fn retire_input(&mut self) {
         self.pointer = XrPointerSession::default();
         self.published = None;

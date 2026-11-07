@@ -1,3 +1,6 @@
+pub mod execution;
+mod wasm;
+
 use birdman_game_content::{AircraftDefinition, AircraftDefinitionError, DEFAULT_CONTROLLER_JSON};
 use birdman_game_core::{ControllerReference, TailControlProfile};
 use birdman_game_format::controller::{

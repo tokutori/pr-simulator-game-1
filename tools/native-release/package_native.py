@@ -1,5 +1,6 @@
 import argparse
 import hashlib
+import html
 import json
 import os
 from pathlib import Path
@@ -125,30 +126,114 @@ def stage_binary(root: Path, binary: Path, target: str, source_sha: str, output:
             archive.add(staging / "BUILD-INFO.json", arcname="BUILD-INFO.json")
 
 
-def generate_licenses(root: Path, cargo_about: Path, source_sha: str, output: Path) -> None:
+def append_source_form_notices(root: Path, source_sha: str, notice: Path, features: list[str],
+                               manifest: Path, targets: tuple[str, ...]) -> list[dict]:
+    """Generate MPL source locations from actual package sources, including path patches."""
+    command = ["cargo", "metadata", "--format-version", "1", "--locked", "--manifest-path",
+               str(manifest)]
+    if features:
+        command.extend(["--features", ",".join(features)])
+    packages, reachable = {}, set()
+    for target in targets:
+        metadata = json.loads(subprocess.check_output(command + ["--filter-platform", target],
+                                                     cwd=root, text=True, encoding="utf-8"))
+        packages.update({package["id"]: package for package in metadata["packages"]})
+        entry = next(package["id"] for package in metadata["packages"]
+                     if Path(package["manifest_path"]).resolve() ==
+                     manifest.resolve())
+        nodes = {node["id"]: [dependency["pkg"] for dependency in node["deps"]
+                 if any(kind["kind"] != "dev" for kind in dependency["dep_kinds"])]
+                 for node in metadata["resolve"]["nodes"]}
+        pending, seen = [entry], set()
+        while pending:
+            current = pending.pop()
+            if current not in seen:
+                seen.add(current)
+                pending.extend(nodes.get(current, []))
+        reachable.update(seen)
+    locked = tomllib.loads((root / "Cargo.lock").read_text(encoding="utf-8"))["package"]
+    sources = []
+    for package in sorted((packages[key] for key in reachable), key=lambda value: (value["name"], value["version"])):
+        if "MPL-2.0" not in (package.get("license") or ""):
+            continue
+        source = package.get("source")
+        if source == "registry+https://github.com/rust-lang/crates.io-index":
+            item = next(item for item in locked if item["name"] == package["name"]
+                        and item["version"] == package["version"] and item.get("source") == source)
+            url = f"https://crates.io/api/v1/crates/{package['name']}/{package['version']}/download"
+            checksum = item["checksum"]
+        elif source is None:
+            relative = Path(package["manifest_path"]).resolve().parent.relative_to(root.resolve())
+            url = f"https://github.com/tokutori/pr-simulator-game-1/tree/{source_sha}/{relative.as_posix()}"
+            checksum = None
+        elif source.startswith("git+") and "#" in source:
+            repository, revision = source[4:].rsplit("#", 1)
+            url = f"{repository.split('?')[0].removesuffix('.git')}/tree/{revision}"
+            checksum = None
+        else:
+            raise ValueError(f"MPL source location requires an explicit source mapping: {source}")
+        sources.append({"name": package["name"], "version": package["version"],
+                        "source_form": url, "registry_checksum": checksum})
+    if sources:
+        section = '<section><h2>MPL-2.0 Source Code Form</h2><p>The following sources correspond to the distributed packages. '
+        section += 'MPL-2.0 applies to these source files; its full terms appear above.</p><ul>'
+        for source in sources:
+            label = html.escape(f"{source['name']} {source['version']}")
+            section += f'<li><a href="{html.escape(source["source_form"], quote=True)}">{label}: source archive</a></li>'
+        section += '</ul></section>\n'
+        notice.write_text(notice.read_text(encoding="utf-8").replace('</html>', section + '</html>'),
+                          encoding="utf-8", newline="\n")
+    # Upstream metadata omits these inherited/table notices; retain the registered originals.
+    names = {packages[key]["name"] for key in reachable}
+    additions = []
+    if "earcut" in names:
+        original = (root / "assets/earcut.LICENSE.txt").read_text(encoding="utf-8")
+        isc = "ISC License\n" + original.split("ISC License\n", 1)[1]
+        additions.append("<section><h2>earcut: inherited Mapbox notice</h2><pre>" + html.escape(isc) + "</pre></section>")
+    if "unicode-width" in names:
+        original = (root / "assets/unicode-width.LICENSE.txt").read_text(encoding="utf-8")
+        current = notice.read_text(encoding="utf-8")
+        copyrights = [line for line in original.splitlines() if line.startswith("Copyright") and html.escape(line) not in current]
+        if copyrights:
+            additions.append("<section><h2>unicode-width: generated table copyright</h2><p>The MIT terms above apply.</p><pre>" +
+                             html.escape("\n".join(copyrights)) + "</pre></section>")
+    if additions:
+        notice.write_text(notice.read_text(encoding="utf-8").replace("</html>", "\n".join(additions) + "\n</html>"),
+                          encoding="utf-8", newline="\n")
+    return sources
+
+
+def generate_licenses(root: Path, cargo_about: Path, source_sha: str, output: Path, web: bool = False) -> None:
     require_source(root, source_sha)
     version = subprocess.check_output([str(cargo_about), "--version"], text=True).strip()
     if version != "cargo-about 0.9.2":
         raise ValueError(f"unexpected license tool: {version}")
     output.mkdir(parents=True, exist_ok=True)
-    features = sorted({feature for target in TARGETS for feature in native_features(target)})
+    targets = ("wasm32-unknown-unknown",) if web else tuple(TARGETS)
+    features = [] if web else sorted({feature for target in TARGETS for feature in native_features(target)})
+    manifest = root / ("crates/birdman-game-wasm/Cargo.toml" if web else "crates/birdman-game-bevy/Cargo.toml")
     command = [str(cargo_about), "generate", "--locked", "--fail", "--manifest-path",
-               str(root / "crates/birdman-game-bevy/Cargo.toml"), "--config",
+               str(manifest), "--config",
                str(root / "tools/native-release/about.toml"), "--output-file",
                str(output / "THIRD-PARTY-LICENSES.html")]
     for feature in features:
         command.extend(["--features", feature])
-    for target in TARGETS:
+    for target in targets:
         command.extend(["--target", target])
     command.append(str(root / "tools/native-release/about.hbs"))
     subprocess.run(command, cwd=root, check=True)
+    source_forms = append_source_form_notices(root, source_sha, output / "THIRD-PARTY-LICENSES.html", features, manifest, targets)
+    notice = output / "THIRD-PARTY-LICENSES.html"
+    notice.write_text(notice.read_text(encoding="utf-8").replace("NOTICE_TARGETS", html.escape(", ".join(targets)))
+                      .replace("NOTICE_LOCK_SHA256", digest(root / "Cargo.lock")), encoding="utf-8", newline="\n")
     write_json(output / "LICENSE-INFO.json", {
         "source_sha": source_sha,
         "cargo_lock_sha256": digest(root / "Cargo.lock"),
         "tool": version,
-        "targets": list(TARGETS),
+        "targets": list(targets),
         "features": features,
         "licenses_sha256": digest(output / "THIRD-PARTY-LICENSES.html"),
+        "source_forms": source_forms,
     })
 
 
@@ -268,6 +353,7 @@ def main() -> None:
             subparser.add_argument("--target", choices=TARGETS, required=True)
         elif command == "licenses":
             subparser.add_argument("--cargo-about", type=Path, required=True)
+            subparser.add_argument("--web", action="store_true", help="Generate the actual WebAssembly dependency notice")
         else:
             subparser.add_argument("--binaries", type=Path, required=True)
             subparser.add_argument("--licenses", type=Path, required=True)
@@ -279,7 +365,7 @@ def main() -> None:
     elif arguments.command == "stage":
         stage_binary(arguments.root, arguments.binary.resolve(), arguments.target, arguments.source_sha, arguments.output)
     elif arguments.command == "licenses":
-        generate_licenses(arguments.root, arguments.cargo_about.resolve(), arguments.source_sha, arguments.output)
+        generate_licenses(arguments.root, arguments.cargo_about.resolve(), arguments.source_sha, arguments.output, arguments.web)
     else:
         assemble(arguments.root, arguments.binaries, arguments.licenses, arguments.source_sha, arguments.output)
 

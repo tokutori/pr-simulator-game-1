@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { parse } from "smol-toml";
 import { checkAssets } from "../asset-check/index.js";
@@ -8,6 +9,15 @@ import { assertDependencyBoundary, assertNativeTextPatch } from "./dependency-bo
 import { repositoryPaths } from "./repository-paths.js";
 
 const count = await checkAssets(process.cwd());
+const assetManifest = record(parse(await readFile("assets/manifest.toml", "utf8")));
+if (!Array.isArray(assetManifest.assets)) throw new Error("Missing registered asset list");
+const rustNotice = assetManifest.assets.map((asset: unknown) => record(asset))
+  .find(asset => asset.path === "assets/wasm-runtime.LICENSE.html");
+const lockSha256 = createHash("sha256").update(await readFile("Cargo.lock")).digest("hex");
+if (rustNotice?.source_version !== `Cargo.lock SHA-256 ${lockSha256}`) {
+  throw new Error("Regenerate the registered Web Rust license notice for the current Cargo.lock");
+}
+
 assertNativeTextPatch(parse(await readFile("Cargo.toml", "utf8")));
 
 const metadata = record(JSON.parse(execFileSync("cargo", ["metadata", "--format-version", "1", "--no-deps", "--locked"], { encoding: "utf8" })) as unknown);

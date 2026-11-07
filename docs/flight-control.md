@@ -58,6 +58,14 @@ u_n=K_p e_n+I_n+K_d D_n
 - anti-windup: 各段の出力飽和と下流のclamp・混合・保護・physical slewが阻害する増減方向を各PIDへ戻す。阻害方向へのI更新を止め、飽和を解消する方向の更新を認可する。
 - 選択: 文書単独の検証と機体とのpair検査を分ける。文書単独で有効なら保存・選択でき、使用角が機体stop内にあることや実trimと目標範囲の整合を確認して準備・開始・Retryを認可する。
 
+## 外部controller
+
+- 入出力: Wasm・SITL・HITLは共有観測と設定を受け、水平・垂直尾翼の最終要求角を返す。hostは有限値を認可し、同じ物理stop/slewへ渡す。組込みのPID・mix・迎角/身体guardは外部出力へ重ねて適用しない。
+- 候補と履歴: Evaluateは未採用候補である。物理採用後のAcceptedに実時間と実hardwareを返し、協調sample guestが同じ区間だけ積分・D履歴をcommitする。0秒・取消ではguest履歴を保持する。任意の外部firmware内部をhostがrollbackする契約は置かない。
+- SITL: 応答待ちのtick予算を保持し、通信待ち時間を追付き物理tickへ変換しない。Wasm/SITL faultは接続を有界に終了し、以後は中立要求を共通hardwareへ渡して飛行を継続する。
+- HITL: Frameは描画と生観測を通知し、ownerが認可したWakeと完了だけで100 Hzの物理採用を進める。期限超過・切断は最後の採用境界で飛行を終了し、採用済みstate/recordを巻き戻さない。
+- Pauseと終了: AwaitEvaluateは同sequenceの取消Accepted/ACKで解決してから次Evaluateを送る。AwaitAcceptedは既に採用した境界の通知を完了する。Finishを一度送り、ACKまたは100 msの終了期限後にCloseを一度要求し、Closed後に資源を回収する。
+
 ## actuatorと区間の採用
 
 - 整数tick $k$ のstateは前区間の保持値 $\delta_k$ を持つ。

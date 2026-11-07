@@ -37,6 +37,7 @@ enum Operation {
     ConfigurationWrite(birdman_game_format::ConfigurationDocumentKind, u32),
     KeyboardRead(u32),
     KeyboardWrite(u32),
+    Controller(u64),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -91,6 +92,9 @@ impl ShutdownOwner {
     pub(super) fn observe(&mut self, input: &ApplicationInput) -> bool {
         let previous = self.pending.len();
         let operation = match input {
+            ApplicationInput::ControllerIo {
+                observation: birdman_game_app::ControllerIoObservation::Closed { generation, .. },
+            } => Some(Operation::Controller(*generation)),
             ApplicationInput::ConfigurationLoaded {
                 document,
                 request_id,
@@ -192,6 +196,11 @@ impl ShutdownOwner {
     pub(super) fn requests(&mut self, requests: &[ApplicationRequest]) {
         for request in requests {
             let operation = match request {
+                ApplicationRequest::ControllerIo {
+                    request:
+                        birdman_game_app::ControllerIoRequest::Open { generation, .. }
+                        | birdman_game_app::ControllerIoRequest::Close { generation },
+                } => Some(Operation::Controller(*generation)),
                 ApplicationRequest::ReadConfiguration {
                     document,
                     request_id,

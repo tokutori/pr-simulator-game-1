@@ -650,7 +650,12 @@ pub(crate) fn project_observer(
     let Some(runtime) = runtime else {
         return;
     };
-    let phase = runtime.0.application().core_session().snapshot().phase();
+    let phase = runtime
+        .lock()
+        .application()
+        .core_session()
+        .snapshot()
+        .phase();
     if let VerificationStage::WaterMotion(motion, endpoint) = verification.stage {
         if endpoint == MotionEndpoint::End
             && let Some(interval) = verification.motion_interval
@@ -753,7 +758,12 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
     let Some(runtime) = world.get_resource::<NativeRuntime>() else {
         return Ok(());
     };
-    let phase = runtime.0.application().core_session().snapshot().phase();
+    let phase = runtime
+        .lock()
+        .application()
+        .core_session()
+        .snapshot()
+        .phase();
     if verification.capture.pending() {
         if let Some(saved) = verification.capture.poll(verification.capture_identity())? {
             trace::capture(

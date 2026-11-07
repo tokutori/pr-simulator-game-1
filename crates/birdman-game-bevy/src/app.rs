@@ -8,6 +8,8 @@ mod flight_devices;
 mod mip_filter;
 #[path = "native_assets.rs"]
 mod native_assets;
+#[path = "native_controller.rs"]
+mod native_controller;
 #[path = "native_runtime.rs"]
 mod native_runtime;
 #[path = "native_storage.rs"]

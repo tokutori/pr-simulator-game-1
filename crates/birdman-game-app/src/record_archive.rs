@@ -91,7 +91,10 @@ pub fn export_record_document(
         || matches!(
             configuration.difficulty.assistance(),
             AssistanceLevel::Manual
-        ) != matches!(configuration.control_mode, ControlMode::Manual)
+        ) != matches!(
+            configuration.execution.requested_mode(),
+            ControlMode::Manual
+        )
     {
         return Err(RecordExportError::MetadataMismatch);
     }
@@ -118,19 +121,22 @@ impl ApplicationSession {
             .core_session()
             .configuration_identity()
             .ok_or(RecordExportError::MetadataMismatch)?;
-        export_record_document(
+        let mut document = export_record_document(
             self.core_session(),
             RecordExportMetadata {
                 configuration: TailPersonalBestConfiguration {
                     scenario,
                     difficulty: self.difficulty(),
                     identity: &prepared.record_identity,
-                    control_mode: prepared.control_mode,
+                    execution: prepared.execution,
                 },
                 course_axis: prepared.course_axis,
                 build_provenance: record_build_provenance(),
             },
-        )
+        )?;
+        document.controller_fault = prepared.controller_fault.clone();
+        document.validate().map_err(RecordExportError::Format)?;
+        Ok(document)
     }
 }
 
@@ -202,7 +208,7 @@ mod tests {
                     scenario: application.core_session().configuration_identity().unwrap(),
                     difficulty: application.difficulty(),
                     identity: &prepared.record_identity,
-                    control_mode: prepared.control_mode,
+                    execution: prepared.execution,
                 },
                 course_axis: prepared.course_axis,
                 build_provenance: record_build_provenance(),

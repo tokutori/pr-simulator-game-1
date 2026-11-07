@@ -57,6 +57,12 @@ pub(super) fn context<'view>(
         controller_name: "既定の制御設定",
         controller_notification: "",
         controller_can_delete: false,
+        controller_execution_name: "組み込み制御",
+        controller_execution_notification: "",
+        controller_execution_can_delete: false,
+        controller_execution_status: None,
+        controller_fault: None,
+        controller_fault_terminal: false,
         controller_pair_diagnostic: None,
         controller_shared_authority: Some(0.5),
         controller_effective_authority: Some(0.0),
@@ -1539,16 +1545,7 @@ fn credits_are_reachable_from_title_and_pause_without_advancing_the_session() {
                 credits.interaction_scope,
                 game_ui_view(&state, &context).unwrap().interaction_scope
             );
-            for id in [
-                "osm",
-                "jaxa",
-                "copernicus",
-                "jma",
-                "font",
-                "earcut",
-                "ryu",
-                "time",
-            ] {
+            for id in ["osm", "jaxa", "copernicus", "jma", "font", "dependencies"] {
                 assert!(matches!(
                     control(&credits, &format!("game-credits-{id}")).content,
                     GameUiControlContent::Status { .. }
@@ -5111,6 +5108,22 @@ fn synchronous_log_actions_preserve_navigation_record_and_feedback() {
 
 #[test]
 fn shared_result_diagnostics_preserve_reason_site_limit_stage_and_raw_cause() {
+    {
+        let session = finalized();
+        let platform = platform();
+        let mut context = context(&session, difficulty(), &platform);
+        let fault = birdman_game_app::ControllerExecutionFault {
+            fault: birdman_game_format::external_controller::ControllerFault::DeadlineMissed,
+            tick: 17,
+            cause: "serial deadline".to_owned(),
+        };
+        context.controller_fault = Some(&fault);
+        context.controller_fault_terminal = true;
+        let view = game_ui_view(&GameUiState::default(), &context).unwrap();
+        assert!(matches!(&control(&view, "game-result-analysis").content,
+            GameUiControlContent::Status {value,..}
+                if value.contains("制御器の異常") && value.contains("tick 17") && value.contains("serial deadline")));
+    }
     for (reason, expected) in [
         (SessionEndReason::WaterContact, "着水した"),
         (

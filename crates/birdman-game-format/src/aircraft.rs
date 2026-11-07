@@ -497,49 +497,6 @@ impl AircraftFormatError {
     }
 }
 
-/// Reads only the declared version while checking the complete JSON object syntax.
-fn declared_schema_version(input: &str) -> Result<u32, serde_json::Error> {
-    use serde::de::{Error, IgnoredAny, MapAccess, Visitor};
-
-    #[derive(Deserialize)]
-    #[serde(field_identifier, rename_all = "snake_case")]
-    enum Field {
-        SchemaVersion,
-        #[serde(other)]
-        Other,
-    }
-    struct VersionVisitor;
-    impl<'de> Visitor<'de> for VersionVisitor {
-        type Value = u32;
-
-        fn expecting(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            formatter.write_str("an aircraft JSON object with schema_version")
-        }
-
-        fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<u32, M::Error> {
-            let mut version = None;
-            while let Some(field) = map.next_key()? {
-                match field {
-                    Field::SchemaVersion => {
-                        if version.is_some() {
-                            return Err(M::Error::duplicate_field("schema_version"));
-                        }
-                        version = Some(map.next_value::<u32>()?);
-                    }
-                    Field::Other => {
-                        map.next_value::<IgnoredAny>()?;
-                    }
-                }
-            }
-            version.ok_or_else(|| M::Error::missing_field("schema_version"))
-        }
-    }
-    let mut decoder = serde_json::Deserializer::from_str(input);
-    let version = serde::Deserializer::deserialize_map(&mut decoder, VersionVisitor)?;
-    decoder.end()?;
-    Ok(version)
-}
-
 impl AircraftDocument {
     /// Resolves both structural tail actuators through the validated core constructor.
     pub fn tail_actuator_limits(
@@ -572,8 +529,8 @@ impl AircraftDocument {
             return Err(AircraftFormatError::InputTooLarge);
         }
         let text = core::str::from_utf8(input).map_err(|_| AircraftFormatError::InvalidJson)?;
-        let version =
-            declared_schema_version(text).map_err(|_| AircraftFormatError::InvalidJson)?;
+        let version = crate::json_version::declared_schema_version(text)
+            .map_err(|_| AircraftFormatError::InvalidJson)?;
         if version != AIRCRAFT_SCHEMA_VERSION {
             return Err(AircraftFormatError::unsupported_schema_version(version));
         }

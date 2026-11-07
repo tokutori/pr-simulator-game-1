@@ -39,6 +39,7 @@ pub struct ArchiveMetadata {
     control_identity: FlightRecordTailIdentityDocument,
     identity_metadata: FlightRecordIdentityMetadata,
     original_json: String,
+    controller_fault: Option<crate::ControllerExecutionFault>,
 }
 
 impl ArchiveMetadata {
@@ -52,8 +53,20 @@ impl ArchiveMetadata {
                 control_identity: document.control_identity,
                 identity_metadata: document.identity_metadata,
                 original_json: json.to_owned(),
+                controller_fault: document.controller_fault,
             },
         ))
+    }
+
+    /// Borrows the fault saved with this exact archive.
+    pub fn controller_fault(&self) -> Option<&crate::ControllerExecutionFault> {
+        self.controller_fault.as_ref()
+    }
+
+    /// The archived execution class determines its original terminal policy.
+    pub fn controller_fault_is_terminal(&self) -> bool {
+        self.controller_fault.is_some() && self.control_identity.execution.as_ref().is_some_and(|execution|
+            matches!(execution.artifact, birdman_game_format::external_controller::ControllerArtifactIdentity::Hitl {..}))
     }
 
     /// Returns the saved settings document without substituting current defaults.

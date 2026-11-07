@@ -22,8 +22,8 @@ pub struct TailPersonalBestConfiguration<'a> {
     pub difficulty: DifficultySettings,
     /// Exact model/controller names accompanying those versions.
     pub identity: &'a FlightRecordTailIdentityDocument,
-    /// Authority mode used by the session.
-    pub control_mode: ControlMode,
+    /// Actual built-in or external software sealed into the session.
+    pub execution: birdman_game_core::ControllerExecution,
 }
 
 /// Deterministic selection among eligible records of one explicit configuration.
@@ -126,10 +126,18 @@ fn key_for_validated_record(
         return Ok(None);
     }
     let header = &record.header;
-    let mode = header
-        .control_mode
-        .ok_or(FlightRecordFormatError::InvalidRecord)?
-        .to_core()?;
+    let execution = record
+        .recorded_execution()?
+        .ok_or(FlightRecordFormatError::InvalidRecord)?;
+    if record
+        .control_identity
+        .execution
+        .as_ref()
+        .is_some_and(|d| !d.personal_best_eligible())
+    {
+        return Ok(None);
+    }
+    let mode = execution.requested_mode();
     let controller_sha = record
         .control_identity
         .controller_sha256
@@ -143,7 +151,7 @@ fn key_for_validated_record(
         return Err(FlightRecordFormatError::InvalidRecord);
     }
     let mut hasher = Sha256::new();
-    hasher.update(b"birdman-game/personal-best-key/tail-incidence/v5\0");
+    hasher.update(b"birdman-game/personal-best-key/tail-incidence/v6\0");
     hash_u32(&mut hasher, PERSONAL_BEST_COMPARISON_VERSION);
     hash_u32(&mut hasher, record.schema_version);
     for name in [
@@ -168,6 +176,9 @@ fn key_for_validated_record(
     hash_assistance(&mut hasher, difficulty.assistance());
     hash_weather(&mut hasher, difficulty.weather());
     hash_controller_mode(&mut hasher, mode);
+    if let Some(descriptor) = &record.control_identity.execution {
+        hasher.update(descriptor.digest());
+    }
     for component in identity.conditions.course_axis_ne {
         hash_f64(&mut hasher, component);
     }
@@ -218,19 +229,8 @@ impl TailFlightRecordDocument {
             || header.scenario_version != scenario.scenario_version
             || header.aircraft_model_version != scenario.aircraft_model_version
             || header.environment_version != scenario.environment_version
-            || scenario.controller_identity
-                != self
-                    .control_identity
-                    .controller_sha256
-                    .as_deref()
-                    .map(|sha| {
-                        crate::controller_identity(
-                            &self.control_identity.controller_profile_id,
-                            sha,
-                        )
-                    })
-            || header.control_mode.map(|mode| mode.to_core()).transpose()?
-                != Some(configuration.control_mode)
+            || scenario.controller_identity != self.controller_identity_digest()
+            || self.recorded_execution()? != Some(configuration.execution)
             || header.seed != scenario.seed
             || header.difficulty.resolved_settings()
                 != crate::FlightRecordDifficultyDocument::from(configuration.difficulty)

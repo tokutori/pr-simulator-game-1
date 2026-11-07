@@ -176,7 +176,7 @@ fn tail_tick_report_retains_normalized_intent_rate_targets_and_physical_command_
             applied.input().pilot_position_command(),
             TailPilotPositionCommand::Hold
         );
-        let commands = applied.commands();
+        let commands = applied.commands().builtin().unwrap();
         assert_eq!(
             commands.manual_incidence_target(),
             TailIncidence::try_new(-0.1, 0.05).unwrap()
@@ -506,7 +506,11 @@ fn tail_tick_contact_interpolates_body_and_pilot_at_one_time_with_interval_input
             let applied = report.applied_controls().unwrap();
             assert_eq!(applied.input(), command);
             assert_eq!(
-                applied.commands().manual_incidence_target(),
+                applied
+                    .commands()
+                    .builtin()
+                    .unwrap()
+                    .manual_incidence_target(),
                 TailIncidence::try_new(-0.2, 0.2).unwrap()
             );
             next

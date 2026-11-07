@@ -65,4 +65,8 @@ mod aircraft;
 pub use aircraft::SelectedAircraft;
 
 mod controller;
+pub use controller::execution::{
+    ControllerExecutionFault, ControllerIoObservation, ControllerIoRequest,
+    SelectedControllerExecution,
+};
 pub use controller::{ControllerPreparationError, SelectedController};

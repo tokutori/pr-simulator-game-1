@@ -36,32 +36,32 @@ pub struct FlightRecordHeader {
     pub maximum_flight_ticks: u64,
     /// Physics frequency in samples per second.
     pub physics_hz: u32,
-    /// Effective sealed mode; absence preserves unknown legacy archive metadata.
-    pub control_mode: Option<crate::ControlMode>,
+    /// Known builtin or external execution; absence preserves unknown legacy metadata.
+    pub execution: Option<crate::ControllerExecution>,
 }
 
 impl FlightRecordHeader {
     /// Creates a header within the core tick and version metadata contracts.
     #[cfg_attr(verus_only, verus_verify(dual_spec))]
     #[cfg_attr(verus_only, verus_spec(
-        ensures match Self::try_new(scenario, maximum_flight_ticks, control_mode) {
-            Ok(header) => header == (Self { scenario, maximum_flight_ticks, physics_hz: crate::PHYSICS_HZ, control_mode })
+        ensures match Self::try_new(scenario, maximum_flight_ticks, execution) {
+            Ok(header) => header == (Self { scenario, maximum_flight_ticks, physics_hz: crate::PHYSICS_HZ, execution })
                 && header.valid(),
             Err(error) => error == FlightRecordError::InvalidHeader
-                && !(Self { scenario, maximum_flight_ticks, physics_hz: crate::PHYSICS_HZ, control_mode }).valid(),
+                && !(Self { scenario, maximum_flight_ticks, physics_hz: crate::PHYSICS_HZ, execution }).valid(),
         },
-        returns Self::try_new(scenario, maximum_flight_ticks, control_mode),
+        returns Self::try_new(scenario, maximum_flight_ticks, execution),
     ))]
     pub const fn try_new(
         scenario: SessionScenarioIdentity,
         maximum_flight_ticks: u64,
-        control_mode: Option<crate::ControlMode>,
+        execution: Option<crate::ControllerExecution>,
     ) -> Result<Self, FlightRecordError> {
         let header = Self {
             scenario,
             maximum_flight_ticks,
             physics_hz: crate::PHYSICS_HZ,
-            control_mode,
+            execution,
         };
         if !header.is_valid() {
             Err(FlightRecordError::InvalidHeader)
@@ -238,9 +238,9 @@ verus! {
 
         /// Exposes the error classification of the same executable header constructor.
         pub proof fn construction_error_is_invalid_header(
-            scenario: SessionScenarioIdentity, maximum_flight_ticks: u64, control_mode: Option<crate::ControlMode>,
+            scenario: SessionScenarioIdentity, maximum_flight_ticks: u64, execution: Option<crate::ControllerExecution>,
         )
-            ensures match Self::try_new(scenario, maximum_flight_ticks, control_mode) {
+            ensures match Self::try_new(scenario, maximum_flight_ticks, execution) {
                 Err(error) => error == FlightRecordError::InvalidHeader,
                 Ok(_) => true,
             },

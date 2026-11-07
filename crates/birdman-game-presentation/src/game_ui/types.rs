@@ -263,6 +263,8 @@ pub enum GameUiPlatformCommand {
     RecenterPhoneTracking {},
     /// Places the retained menu in front of the viewer.
     RecenterMenu {},
+    /// Downloads the generated common Rust dependency notice.
+    DownloadSoftwareLicenses {},
     /// Downloads the original JSON record.
     DownloadRecordJson {},
     /// Downloads record-derived numeric CSV.
@@ -597,6 +599,18 @@ pub struct GameUiContext<'view> {
     pub controller_notification: &'view str,
     /// Whether persisted controller source is available for deletion.
     pub controller_can_delete: bool,
+    /// Current software or hardware execution category.
+    pub controller_execution_name: &'view str,
+    /// Shared execution source validation and persistence feedback.
+    pub controller_execution_notification: &'view str,
+    /// Whether the selected execution source can be removed.
+    pub controller_execution_can_delete: bool,
+    /// Live external execution waiting or first-fault description.
+    pub controller_execution_status: Option<String>,
+    /// First fault of the displayed record, including an imported archive.
+    pub controller_fault: Option<&'view birdman_game_app::ControllerExecutionFault>,
+    /// Original execution policy ended the flight at this fault boundary.
+    pub controller_fault_terminal: bool,
     /// Latest aircraft/controller compatibility diagnostics from their shared owner.
     pub controller_pair_diagnostic: Option<String>,
     /// Shared-mode authority supplied by the selected controller document.

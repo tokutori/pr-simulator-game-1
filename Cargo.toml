@@ -24,6 +24,9 @@ birdman-game-presentation = { path = "crates/birdman-game-presentation" }
 birdman-game-runtime = { path = "crates/birdman-game-runtime" }
 birdman-game-scene = { path = "crates/birdman-game-scene" }
 libm = "=0.2.16"
+wasmi = { version = "=2.0.0", default-features = false, features = ["stable", "validate", "deterministic", "portable-dispatch", "prefer-btree-collections"] }
+wasmparser = { version = "=0.228.0", default-features = false }
+wasmi_core = { version = "=2.0.0", default-features = false }
 wasm-bindgen = "=0.2.129"
 serde = { version = "=1.0.229", default-features = false, features = ["alloc", "derive"] }
 serde_json = { version = "=1.0.151", default-features = false, features = ["alloc", "float_roundtrip"] }
