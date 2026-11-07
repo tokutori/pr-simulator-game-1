@@ -1783,6 +1783,17 @@ pub struct GameUiTheme {
 }
 
 impl GameUiTheme {
+    /// Bottom edge of the frame-rate badge in logical pixels measured from
+    /// the viewport top, before platform safe-area adjustment. Both Screen
+    /// adapters place the badge at the top-right corner from the inset, the
+    /// text line height and the vertical padding, so layout that starts at
+    /// the top edge reserves this full extent.
+    pub fn frame_rate_badge_bottom_px(&self) -> f64 {
+        self.frame_rate_inset_px
+            + self.frame_rate_text.line_height_px
+            + 2.0 * self.frame_rate_padding_px[1]
+    }
+
     /// Completes typography for the published semantic control role.
     pub fn control_text(&self, content: &GameUiControlContent) -> GameUiTextStyle {
         match content {

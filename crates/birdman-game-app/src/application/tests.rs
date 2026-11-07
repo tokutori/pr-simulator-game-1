@@ -85,6 +85,10 @@ fn registered_live_records_interval_initial_coefficients_and_restores_them_on_re
             document.schema_version,
             birdman_game_format::TAIL_FLIGHT_RECORD_SCHEMA_VERSION
         );
+        assert_eq!(
+            document.control_identity.aircraft_sha256.as_deref(),
+            Some(application.aircraft().unwrap().raw_sha256())
+        );
         let restored = TailFlightRecordDocument::decode_json(&document.encode_json().unwrap())
             .unwrap()
             .to_finalized_core_record()
