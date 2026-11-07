@@ -1009,7 +1009,14 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
     let overlay = view.countdown.as_ref().unwrap();
     assert_eq!(overlay.digits, "3");
     assert_eq!(overlay.unit, "秒");
-    assert_eq!(overlay.font_size_px, 500.0);
+    assert_eq!(overlay.digit_text.font_size_px, 500.0);
+    assert_eq!(overlay.anchor, GameUiAnchor::Head);
+    assert_eq!(overlay.unit_text.font_size_px, 175.0);
+    assert_eq!(
+        overlay.digit_text.font_weight,
+        view.theme.primary_status_text.font_weight
+    );
+    assert_eq!(overlay.gap_px, 35.0);
     // The panel uses the flight bar shell, so the cancel button and the
     // build-version line render exactly as on the flight screen.
     assert_eq!(view.layout.shell, GameUiShell::FlightBar);
@@ -1073,7 +1080,50 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
         let frame_countdown = frame.countdown.as_ref().unwrap();
         assert_eq!(frame_countdown.digits, overlay.digits);
         assert_eq!(frame_countdown.unit, overlay.unit);
-        assert_eq!(frame_countdown.font_size_px, overlay.font_size_px);
+        assert_eq!(
+            frame_countdown.digit_text.font_size_px,
+            overlay.digit_text.font_size_px
+        );
+        let font = MenuFont {
+            family: "test-font".into(),
+            weight: 400,
+            style: MenuFontStyle::Normal,
+            generation: 1,
+        };
+        let head = prepare_game_ui_head_hud(
+            &view,
+            &frame,
+            HeadHudPreparationInput {
+                view_revision: view.view_revision,
+                viewer: &viewer,
+                profile: XrHeadHudProfile::default(),
+                font: &font,
+                locale: "ja",
+                frame_rate_label: None,
+            },
+            &mut SurfaceFontCache::default(),
+            |request, _, value| {
+                let advance = value.chars().count() as f64 * request.font_meters * 0.5;
+                Ok(MenuGlyphMetrics {
+                    advance,
+                    left: 0.0,
+                    right: advance,
+                    ascent: request.font_meters * 0.8,
+                    descent: request.font_meters * 0.2,
+                })
+            },
+        );
+        let HeadHudPaintReply::Ready { projection: head } = head else {
+            panic!("both eyes must retain the complete head-anchored countdown: {head:?}");
+        };
+        assert!(head.local_pose.position.z < 0.0);
+        assert_eq!(head.clear_region.width, 0.0);
+        for expected in [&overlay.digits, &overlay.unit] {
+            assert!(head.items.iter().any(|item| matches!(item,
+                SurfacePaintItem::Text { value, color, .. }
+                if value == expected && color == &view.theme.text
+            )));
+        }
         let reply = prepare_game_ui_menu(
             &view,
             &frame,

@@ -24,16 +24,26 @@ struct GameUiHudGeometry {
 /// digit size follows the viewport: lining digits advance about 0.56 em and
 /// their cap height is about 0.72 em, so the smaller of the two quotients
 /// makes the digit width or height about half the viewport width or height.
-pub(super) fn game_ui_countdown(context: &GameUiContext<'_, '_>) -> Option<GameUiCountdown> {
+pub(super) fn game_ui_countdown(context: &GameUiContext<'_>) -> Option<GameUiCountdown> {
     let SessionPhase::Countdown { remaining_seconds } = context.session.snapshot().phase() else {
         return None;
     };
     let viewport = context.platform.viewport;
     let font_size_px = (0.5 * viewport.height / 0.72).min(0.5 * viewport.width / 0.56);
+    let base = super::view::theme(viewport.root_font_size).primary_status_text;
+    let text = |size| GameUiTextStyle {
+        font_size_px: size,
+        line_height_px: size * base.line_height_px / base.font_size_px,
+        font_weight: base.font_weight,
+    };
     Some(GameUiCountdown {
         digits: format!("{remaining_seconds}"),
         unit: "秒".to_owned(),
-        font_size_px,
+        anchor: GameUiAnchor::Head,
+        logical_size_px: [viewport.width, viewport.height],
+        digit_text: text(font_size_px),
+        unit_text: text(font_size_px * 0.35),
+        gap_px: font_size_px * 0.07,
     })
 }
 

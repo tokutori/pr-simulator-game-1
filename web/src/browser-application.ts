@@ -138,7 +138,7 @@ export class BrowserApplication {
           if (this.view !== null) this.hud.render(hud ?? null, this.view.theme);
           this.hud.setVisible(drawing.presentation.screen_hud_visible && hud != null);
           if (this.view !== null) this.countdown.render(countdown ?? null, this.view.theme);
-          this.countdown.setVisible(countdown != null);
+          this.countdown.setVisible(drawing.presentation.screen_ui_visible && countdown != null);
           this.frameRate.hidden = !drawing.presentation.screen_ui_visible;
           if (this.frameRate.textContent !== drawing.presentation.frame_rate_label) {
             this.frameRate.textContent = drawing.presentation.frame_rate_label;

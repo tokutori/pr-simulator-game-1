@@ -868,9 +868,16 @@ pub struct GameUiCountdown {
     pub digits: String,
     /// Unit label rendered small beside the digits.
     pub unit: String,
-    /// Digit font size in logical pixels, derived from the viewport so the
-    /// digit width or height is about half the viewport width or height.
-    pub font_size_px: f64,
+    /// Head-relative centre; Screen adapters map this anchor to the viewport centre.
+    pub anchor: GameUiAnchor,
+    /// Logical viewport used to scale this completed composition uniformly in XR.
+    pub logical_size_px: [f64; 2],
+    /// Completed digit typography.
+    pub digit_text: GameUiTextStyle,
+    /// Completed unit typography.
+    pub unit_text: GameUiTextStyle,
+    /// Baseline-row spacing between digits and unit, in logical pixels.
+    pub gap_px: f64,
 }
 
 /// Shared Web-baseline HUD model; no adapter rederives flight values or labels.

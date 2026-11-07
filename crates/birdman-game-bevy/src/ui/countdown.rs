@@ -5,8 +5,8 @@ use birdman_game_presentation::game_ui::{GameUiCountdown, GameUiTheme};
 
 pub(super) struct RetainedCountdown {
     pub(super) shell: Entity,
+    row: Entity,
     texts: Option<(Entity, Entity)>,
-    previous: Option<GameUiCountdown>,
 }
 
 pub(super) fn setup_countdown(commands: &mut Commands) -> RetainedCountdown {
@@ -27,11 +27,7 @@ pub(super) fn setup_countdown(commands: &mut Commands) -> RetainedCountdown {
             Pickable::IGNORE,
         ))
         .id();
-    RetainedCountdown {
-        shell,
-        texts: None,
-        previous: None,
-    }
+    RetainedCountdown { shell, texts: None }
 }
 
 /// Game-side countdown display: a full-screen overlay with no panel, matching
@@ -46,13 +42,8 @@ pub(super) fn project_countdown(
         retained_node(world, retained.shell)
             .map_unchanged(|node| &mut node.display)
             .set_if_neq(Display::None);
-        retained.previous = None;
         return Ok(());
     };
-    if retained.previous.as_ref() == Some(countdown) {
-        return Ok(());
-    }
-    retained.previous = Some(countdown.clone());
     let font = world.resource::<NativeFont>().0.clone();
     let ink = color(&theme.text, 1.0)?;
     retained_node(world, retained.shell)
@@ -63,19 +54,19 @@ pub(super) fn project_countdown(
         None => {
             let digits = spawn_text(
                 world,
-                retained.shell,
+                retained.row,
                 "",
                 &font,
-                countdown.font_size_px as f32,
+                countdown.digit_text.font_size_px as f32,
                 ink,
             );
             world.entity_mut(digits).insert(Pickable::IGNORE);
             let unit = spawn_text(
                 world,
-                retained.shell,
+                retained.row,
                 "",
                 &font,
-                (countdown.font_size_px * 0.35) as f32,
+                countdown.unit_text.font_size_px as f32,
                 ink,
             );
             world.entity_mut(unit).insert(Pickable::IGNORE);
@@ -85,16 +76,18 @@ pub(super) fn project_countdown(
     };
     set_text(world, digits, countdown.digits.clone());
     set_text(world, unit, countdown.unit.clone());
-    for (entity, size) in [
-        (digits, countdown.font_size_px),
-        (unit, countdown.font_size_px * 0.35),
-    ] {
+    retained_node(world, retained.row).column_gap = px(countdown.gap_px as f32);
+    for (entity, style) in [(digits, countdown.digit_text), (unit, countdown.unit_text)] {
         if let Some(mut text_font) = world.get_mut::<TextFont>(entity) {
-            text_font.font_size = FontSize::Px(size as f32);
+            text_font.font_size = FontSize::Px(style.font_size_px as f32);
+            text_font.weight = bevy::text::FontWeight(style.font_weight);
         }
+        world
+            .entity_mut(entity)
+            .insert(bevy::text::LineHeight::Px(style.line_height_px as f32));
         if let Some(mut text_color) = world.get_mut::<TextColor>(entity) {
             *text_color = TextColor(ink);
         }
     }
-    Ok(())
+    super::projection::project_text_shadow(world, retained.shell, theme, true)
 }

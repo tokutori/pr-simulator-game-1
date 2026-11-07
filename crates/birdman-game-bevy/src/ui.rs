@@ -636,6 +636,13 @@ pub(crate) fn submit(world: &mut World, drawing: &ApplicationDrawingOutput) -> R
             }),
         ApplicationUiProjection::Frame { frame } => project_frame(world, &mut retained, frame),
     };
+    world
+        .entity_mut(retained.countdown.shell)
+        .insert(if drawing.presentation.screen_ui_visible {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
     if let Some(mut visibility) = world.get_mut::<Visibility>(retained.shell) {
         *visibility = if drawing.presentation.screen_ui_visible {
             Visibility::Inherited

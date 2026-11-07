@@ -6,8 +6,8 @@ use super::{
 };
 use crate::camera::{Pose, Vector3};
 use crate::game_ui::{
-    GameUiChartPoint, GameUiChartTextAnchor, GameUiFrame, GameUiHudNode, GameUiHudNodeContent,
-    GameUiHudTone, GameUiRect, GameUiTheme, GameUiView,
+    GameUiAnchor, GameUiChartPoint, GameUiChartTextAnchor, GameUiCountdown, GameUiFrame,
+    GameUiHudNode, GameUiHudNodeContent, GameUiHudTone, GameUiRect, GameUiTheme, GameUiView,
 };
 use serde::{Deserialize, Serialize};
 
@@ -94,6 +94,7 @@ pub fn prepare_game_ui_head_hud(
         let hud = frame.hud.as_ref();
         if hud.is_none_or(|hud| hud.groups.iter().all(|group| group.nodes.is_empty()))
             && input.frame_rate_label.is_none()
+            && frame.countdown.is_none()
         {
             return Ok(HeadHudPaintReply::Absent);
         }
@@ -104,7 +105,7 @@ pub fn prepare_game_ui_head_hud(
             local_pose,
             size_m,
             text_height_meters,
-            clear_region,
+            mut clear_region,
             frame_rate_bounds,
             nodes,
         } = projection
@@ -211,6 +212,16 @@ pub fn prepare_game_ui_head_hud(
                 &view.theme.panel_background,
             )?);
         }
+        if let Some(countdown) = &frame.countdown {
+            painter.countdown(countdown, &mut items)?;
+            // The launch countdown intentionally occupies the central view.
+            clear_region = GameUiRect {
+                x: 0.5,
+                y: 0.5,
+                width: 0.0,
+                height: 0.0,
+            };
+        }
         match fit_xr_text_ink(input.viewer, &painter.ink, local_pose, 0.35) {
             XrInkFit::Ready { .. } | XrInkFit::Empty => {}
             XrInkFit::TooSmall => return Err(MenuLayoutFailure::InsufficientInkAngle),
@@ -303,6 +314,62 @@ where
             return Err(MenuLayoutFailure::InvalidTextMetrics);
         }
         Ok(lines.remove(0))
+    }
+
+    fn countdown(
+        &mut self,
+        countdown: &GameUiCountdown,
+        items: &mut Vec<SurfacePaintItem>,
+    ) -> Result<(), MenuLayoutFailure> {
+        if countdown.anchor != GameUiAnchor::Head {
+            return Err(MenuLayoutFailure::InvalidLayout);
+        }
+        let color = self.theme.text.clone();
+        let mut scale = (self.size.width / countdown.logical_size_px[0])
+            .min(self.size.height / countdown.logical_size_px[1]);
+        for attempt in 0..2 {
+            let mut measure = |id: &str, value: String, style: crate::game_ui::GameUiTextStyle| {
+                self.font = style.font_size_px * scale;
+                self.line_height_meters = style.line_height_px * scale;
+                self.font_style.weight = style.font_weight;
+                self.label(id, value)
+            };
+            let digits = measure(
+                "countdown-digits",
+                countdown.digits.clone(),
+                countdown.digit_text,
+            )?;
+            let unit = measure(
+                "countdown-unit",
+                countdown.unit.clone(),
+                countdown.unit_text,
+            )?;
+            let unit_x = digits.advance_meters + countdown.gap_px * scale;
+            let left = (-digits.left_meters).min(unit_x - unit.left_meters);
+            let right = digits.right_meters.max(unit_x + unit.right_meters);
+            let ascent = digits.ascent_meters.max(unit.ascent_meters);
+            let descent = digits.descent_meters.max(unit.descent_meters);
+            let fit = (self.size.width * 0.8 / (right - left))
+                .min(self.size.height * 0.7 / (ascent + descent))
+                .min(1.0);
+            if attempt == 0 && fit < 1.0 {
+                scale *= fit;
+                continue;
+            }
+            let x = (self.size.width - (right - left)) / 2.0 - left;
+            let baseline = (self.size.height - ascent - descent) / 2.0 + ascent;
+            self.logical_pixel_meters = scale;
+            for (line, offset, style) in [
+                (&digits, 0.0, countdown.digit_text),
+                (&unit, unit_x, countdown.unit_text),
+            ] {
+                self.font = style.font_size_px * scale;
+                self.font_style.weight = style.font_weight;
+                self.paint_text(items, line, x + offset, baseline, &color, 0.0);
+            }
+            return Ok(());
+        }
+        unreachable!()
     }
 
     fn paint_text(

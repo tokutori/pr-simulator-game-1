@@ -1,4 +1,5 @@
 import { Window } from "happy-dom";
+import { CountdownAdapter } from "../../web/src/presentation/countdown.js";
 import { describe, expect, it, vi } from "vitest";
 import type { ApplicationInput, GameUiFrame, GameUiView } from "../../web/src/generated/application-contracts.js";
 import { bootViewFixture, readyApplicationFixture } from "../game-check/application-fixture.js";
@@ -69,6 +70,28 @@ async function withAdapter(observe: (root: HTMLElement, adapter: import("../../w
 }
 
 describe("Screen DOM adapter", () => {
+  it("projects complete countdown typography and replaces previous frame styles", async () => {
+    const window = new Window();
+    const root = window.document.createElement("section") as unknown as HTMLElement;
+    const adapter = new CountdownAdapter(root);
+    const countdown = { digits: "3", unit: "秒", anchor: "head", logical_size_px: [1280, 720],
+      digit_text: { font_size_px: 500, line_height_px: 675, font_weight: 700 },
+      unit_text: { font_size_px: 175, line_height_px: 236.25, font_weight: 700 }, gap_px: 35 } as const;
+    try {
+      adapter.render({ ...countdown, logical_size_px: [...countdown.logical_size_px] }, shared.theme);
+      expect(required(root, "span").style.fontSize).toBe("500px");
+      expect(required(root, "span + span").style.fontSize).toBe("175px");
+      adapter.render({ ...countdown, logical_size_px: [...countdown.logical_size_px], digits: "2",
+        digit_text: { font_size_px: 200, line_height_px: 270, font_weight: 400 } }, shared.theme);
+      expect(required(root, "span").style.fontSize).toBe("200px");
+      expect(required(root, "span").style.fontWeight).toBe("400");
+      adapter.setVisible(false);
+      expect(root.hidden).toBe(true);
+      adapter.render(null, shared.theme);
+      expect(root.hidden).toBe(true);
+    } finally { await window.happyDOM.abort(); }
+  });
+
   it("renders generated widget payloads and transfers raw button, toggle and range observations", async () => {
     await withAdapter((root, adapter, actions, window) => {
       adapter.render(adapterView());
