@@ -268,6 +268,23 @@ impl Guest {
 // The host accesses this stable buffer between calls; Rust references end before it returns.
 static GUEST: Mutex<Guest> = Mutex::new(Guest::new());
 
+/// Exchanges one bounded binary frame with the same guest used by the Wasm exports.
+///
+/// The output array is owned by the native caller; no linear-memory pointer is exposed.
+pub fn exchange_frame(request: &[u8], response: &mut [u8; MAX_FRAME_BYTES]) -> Option<usize> {
+    if request.len() > MAX_FRAME_BYTES {
+        return None;
+    }
+    let mut guest = GUEST.lock().expect("Controller guest state poisoned");
+    guest.bytes[..request.len()].copy_from_slice(request);
+    let length = guest.exchange(request.len());
+    if length == 0 {
+        return None;
+    }
+    response[..length].copy_from_slice(&guest.bytes[MAX_FRAME_BYTES..MAX_FRAME_BYTES + length]);
+    Some(length)
+}
+
 /// Returns the one supported controller ABI.
 #[allow(
     unsafe_code,

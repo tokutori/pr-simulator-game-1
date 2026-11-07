@@ -10,6 +10,10 @@ resolver = "3"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "controller-sample-stdio"
+path = "src/main.rs"
+
 [dependencies]
 birdman-game-core = { path = "../../crates/birdman-game-core" }
 birdman-game-format = { path = "../../crates/birdman-game-format" }

@@ -7,10 +7,16 @@
 このディレクトリで次を実行する。
 
 ```powershell
-cargo build --release --locked --target wasm32-unknown-unknown
+cargo build --release --locked --lib --target wasm32-unknown-unknown
 ```
 
 成果物は `target/wasm32-unknown-unknown/release/controller_sample_guest.wasm` に生成する。`CARGO_TARGET_DIR` を指定した場合はそのディレクトリを起点とする。
+
+## Native stdio runner
+
+同じディレクトリで `cargo build --release --locked --bin controller-sample-stdio` を実行する。Native接続文書の `program` に生成された実行ファイルの絶対パスを指定し、実行ファイルのSHA-256を `binary_sha256` に記載する。
+
+stdin/stdoutは共通ABIのbinary frameだけを運び、各frameの応答後にflushする。診断はstderrへ出力する。EOFで終了し、serial用CRCはstdioへ付加しない。制御則と候補採用はWasmと同じ唯一のGuestを使う。
 
 ## ABIと状態
 
