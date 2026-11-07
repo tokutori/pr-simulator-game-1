@@ -375,7 +375,9 @@ fn adopted_shape_contact_matches_independent_rotated_support_and_record_query() 
     let trim = definition.trim().unwrap();
     let mapping = TailPilotPositionMapping::try_new(&aircraft, trim.pilot_position_m()).unwrap();
     let preparation = HybridSessionPreparation::try_default().unwrap();
-    let profile = preparation.controller_profile();
+    let profile = preparation
+        .controller_profile()
+        .expect("default preparation uses the built-in controller");
     let loads = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
         definition.document().trim.air_density_kg_m3,

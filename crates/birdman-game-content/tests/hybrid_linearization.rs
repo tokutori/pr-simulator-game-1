@@ -94,11 +94,12 @@ impl TickMap<'_> {
         let TailFlightTickOutcome::Advanced(next) = report.outcome() else {
             panic!("linearization interval must precede water contact");
         };
-        let target = report
-            .applied_controls()
-            .unwrap()
-            .commands()
-            .mixed_incidence_target();
+        let birdman_game_core::TailControlReport::BuiltIn(commands) =
+            report.applied_controls().unwrap().commands()
+        else {
+            panic!("linearization uses the built-in controller");
+        };
+        let target = commands.mixed_incidence_target();
         for ((command, current), limit) in [target.elevator_rad(), target.rudder_rad()]
             .into_iter()
             .zip([
