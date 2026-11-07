@@ -166,7 +166,7 @@ fn initial_state(
     .unwrap();
     let initial_incidence = advance_tail_control(
         TailIncidence::neutral(),
-        config.profile,
+        config.profile.unwrap(),
         config.mode,
         TailPilotIntent::try_new(0.0, 0.0).unwrap(),
         TailRateTarget::try_new(0.0, 0.0).unwrap(),
@@ -212,7 +212,7 @@ fn integrate(
             let control = crate::advance_tail_control(
                 previous.incidence,
                 previous.controller_state,
-                config.profile,
+                config.profile.unwrap(),
                 config.mode,
                 input.pilot,
                 input.desired_rate,

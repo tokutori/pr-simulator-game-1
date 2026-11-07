@@ -706,7 +706,7 @@ fn running_owner_preserves_callback_order_and_stage_failure_priority() {
                     }
                     let report = configuration.scenario.advance_tick_with_contact_report(
                         state,
-                        configuration.control_mode,
+                        configuration.requested_mode(),
                         sampled_input,
                         &loads,
                         crate::WaterContactGeometry::try_new(&CONTACT_POINTS).unwrap(),
@@ -717,7 +717,7 @@ fn running_owner_preserves_callback_order_and_stage_failure_priority() {
                         };
                         configuration.scenario.advance_tick_with_contact_report(
                             next,
-                            configuration.control_mode,
+                            configuration.requested_mode(),
                             sampled_input,
                             &loads,
                             crate::WaterContactGeometry::try_new(&CONTACT_POINTS).unwrap(),

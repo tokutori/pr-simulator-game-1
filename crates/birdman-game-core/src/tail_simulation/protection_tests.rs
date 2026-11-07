@@ -71,6 +71,119 @@ fn pid_memory_admission_uses_the_actual_full_partial_or_zero_physical_interval()
         } else {
             assert_eq!(memory.stages()[3].previous_measurement(), Some(0.0));
         }
+        let sensors = observe_tail_controller(&aircraft, previous, &loads).unwrap();
+        assert_eq!(
+            sensors.composite_cg_velocity_ned_mps,
+            previous.flight_state().datum_velocity_ned()
+        );
+        assert_eq!(
+            sensors.water_clearance_m,
+            -sensors.telemetry.composite_cg_position_ned_m.components()[2]
+        );
+        let total = loads
+            .evaluate_hybrid(&previous.flight_state(), previous.incidence())
+            .unwrap()
+            .total_wrench()
+            .force_body_newtons()
+            .components();
+        for (actual, force) in sensors
+            .specific_force_frd_mps2
+            .components()
+            .into_iter()
+            .zip(total)
+        {
+            assert!(
+                (actual - force / (aircraft.airframe_mass_kg() + aircraft.pilot_mass_kg())).abs()
+                    < 1e-12 * (actual.abs() + 1.0)
+            );
+        }
+        // Flight equivalence uses the same pilot Hold with no pilot-guard intervention.
+        let candidate = crate::advance_tail_control(
+            previous.incidence(),
+            previous.controller_state(),
+            profile,
+            ControlMode::Automatic,
+            input.manual_intent(),
+            input.desired_body_rate(),
+            crate::TailControlObservation {
+                body_rate: previous.flight_state().angular_velocity_body(),
+                euler_rad: Some([0.0; 3]),
+                airspeed_mps: sensors.telemetry.airspeed_mps,
+                datum_alpha_rad: sensors.datum_alpha_rad,
+            },
+            PHYSICS_DT_SECONDS,
+            aircraft.tail_actuators(),
+        )
+        .unwrap();
+        let external_input = input.with_external_request(candidate.hardware().requested());
+        let external_config = TailFlightTickConfig::external(
+            ControlMode::Automatic,
+            config.pilot_mapping,
+            config.gravity,
+        );
+        let external = advance_tail_flight_tick_with_contact_report(
+            &aircraft,
+            previous,
+            external_config,
+            external_input,
+            &loads,
+            geometry,
+        )
+        .unwrap();
+        match (report.outcome(), external.outcome()) {
+            (TailFlightTickOutcome::Advanced(a), TailFlightTickOutcome::Advanced(b)) => {
+                assert_eq!(a.flight_state(), b.flight_state());
+                assert_eq!(a.incidence(), b.incidence());
+                assert_eq!(a.pilot_position_target(), b.pilot_position_target());
+                assert_eq!(b.controller_state(), previous.controller_state());
+            }
+            (TailFlightTickOutcome::WaterContact(a), TailFlightTickOutcome::WaterContact(b)) => {
+                assert_eq!(a.flight_state(), b.flight_state());
+                assert_eq!(a.incidence(), b.incidence());
+                assert_eq!(a.fraction(), b.fraction());
+                assert_eq!(a.moment(), b.moment());
+            }
+            _ => panic!("external and builtin physical outcomes diverged"),
+        }
+        if let Some(applied) = external.applied_controls() {
+            let actual = applied.commands().external().unwrap();
+            assert_eq!(
+                candidate
+                    .admitted_state_with_hardware(elapsed, actual)
+                    .unwrap(),
+                memory
+            );
+            let recorded = crate::FlightRecordTailInput::from_applied(
+                applied,
+                previous.pilot_position_target(),
+            );
+            assert_eq!(recorded.manual_incidence_target(), None);
+            assert_eq!(recorded.commands(), TailControlReport::External(actual));
+        } else {
+            assert_eq!(candidate.admitted_state(0.0).unwrap(), memory);
+        }
+        assert!(
+            advance_tail_flight_tick_with_contact_report(
+                &aircraft,
+                previous,
+                config,
+                external_input,
+                &loads,
+                geometry
+            )
+            .is_err()
+        );
+        assert!(
+            advance_tail_flight_tick_with_contact_report(
+                &aircraft,
+                previous,
+                external_config,
+                input,
+                &loads,
+                geometry
+            )
+            .is_err()
+        );
     }
 }
 
@@ -99,7 +212,9 @@ fn evaluated_report_transfers_controls_and_normalizes_only_zero_contact() {
     let input = input_holding_incidence(next.incidence);
     let controls = TailAppliedControls {
         input,
-        commands: commands(previous, config(&aircraft, ControlMode::Manual, 1.0), input).commands(),
+        commands: TailControlReport::BuiltIn(
+            commands(previous, config(&aircraft, ControlMode::Manual, 1.0), input).commands(),
+        ),
     };
     let report = evaluated_tick_report(previous, next, controls, None);
     assert_eq!(report.outcome(), TailFlightTickOutcome::Advanced(next));
@@ -263,7 +378,7 @@ fn alpha_guard_applies_effective_pilot_targets_without_clamping_state_or_losing_
         assert_eq!(report.applied_controls().unwrap().input(), set);
         assert_eq!(
             report.applied_controls().unwrap().commands(),
-            commands(previous, config, set).commands()
+            TailControlReport::BuiltIn(commands(previous, config, set).commands())
         );
         let hold = TailFlightTickInput::new(
             set.manual_intent(),
@@ -325,7 +440,7 @@ fn undefined_or_unavailable_datum_alpha_keeps_original_physics_and_first_stage_f
     let original_config = config(&aircraft, ControlMode::Manual, 1.0);
     let guarded_config = TailFlightTickConfig::new(
         original_config.mode,
-        original_config.profile.with_angle_of_attack_guard(
+        original_config.profile.unwrap().with_angle_of_attack_guard(
             TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.04, 1.0, 1.6).unwrap(),
         ),
         original_config.pilot_mapping,
@@ -563,7 +678,7 @@ pub(super) fn commands(
 ) -> crate::TailControlUpdate {
     advance_tail_control(
         previous.incidence,
-        config.profile,
+        config.profile.unwrap(),
         config.mode,
         input.pilot,
         input.desired_rate,
@@ -726,7 +841,10 @@ fn weighted_endpoint_failure_is_not_fourth_stage_or_a_post_contact_rejection() {
     );
     let applied = report.applied_controls().unwrap();
     assert_eq!(applied.input(), input);
-    assert_eq!(applied.commands(), nominal.commands());
+    assert_eq!(
+        applied.commands(),
+        TailControlReport::BuiltIn(nominal.commands())
+    );
     loads
         .evaluate_hybrid(&sample.flight_state(), sample.incidence())
         .unwrap();

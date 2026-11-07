@@ -21,9 +21,7 @@ pub struct FlightRecordTailInput {
     desired_body_rate: TailRateTarget,
     pilot_position_command: TailPilotPositionCommand,
     resolved_pilot_position_target_m: f64,
-    manual_incidence_target: TailIncidence,
-    fbw_incidence_target: TailIncidence,
-    mixed_incidence_target: TailIncidence,
+    commands: crate::TailControlReport,
 }
 
 impl FlightRecordTailInput {
@@ -41,9 +39,7 @@ impl FlightRecordTailInput {
             desired_body_rate: input.desired_body_rate(),
             pilot_position_command: input.pilot_position_command(),
             resolved_pilot_position_target_m: resolved_pilot_position_target.position_m(),
-            manual_incidence_target: commands.manual_incidence_target(),
-            fbw_incidence_target: commands.fbw_incidence_target(),
-            mixed_incidence_target: commands.mixed_incidence_target(),
+            commands,
         }
     }
 
@@ -63,10 +59,35 @@ impl FlightRecordTailInput {
             desired_body_rate: input.desired_body_rate(),
             pilot_position_command: input.pilot_position_command(),
             resolved_pilot_position_target_m,
-            manual_incidence_target,
-            fbw_incidence_target,
-            mixed_incidence_target,
+            commands: crate::TailControlReport::BuiltIn(crate::TailControlCommands::from_recorded(
+                manual_incidence_target,
+                fbw_incidence_target,
+                mixed_incidence_target,
+            )),
         })
+    }
+
+    /// Restores an external final-angle report without inventing builtin feedback components.
+    pub fn try_from_external_recorded(
+        input: crate::TailFlightTickInput,
+        resolved_pilot_position_target_m: f64,
+        update: crate::TailActuatorUpdate,
+    ) -> Result<Self, FlightRecordControlError> {
+        if !resolved_pilot_position_target_m.is_finite() {
+            return Err(FlightRecordControlError::NonFinitePilotPositionTarget);
+        }
+        Ok(Self {
+            manual_intent: input.manual_intent(),
+            desired_body_rate: input.desired_body_rate(),
+            pilot_position_command: input.pilot_position_command(),
+            resolved_pilot_position_target_m,
+            commands: crate::TailControlReport::External(update),
+        })
+    }
+
+    /// Returns the preserved builtin or external command report.
+    pub const fn commands(self) -> crate::TailControlReport {
+        self.commands
     }
 
     /// Returns the normalized nose-up/right-turn manual intent.
@@ -90,18 +111,27 @@ impl FlightRecordTailInput {
     }
 
     /// Returns the manual physical-incidence command before authority mixing.
-    pub const fn manual_incidence_target(self) -> TailIncidence {
-        self.manual_incidence_target
+    pub const fn manual_incidence_target(self) -> Option<TailIncidence> {
+        match self.commands {
+            crate::TailControlReport::BuiltIn(commands) => Some(commands.manual_incidence_target()),
+            crate::TailControlReport::External(_) => None,
+        }
     }
 
     /// Returns the core feedback physical-incidence command before authority mixing.
-    pub const fn fbw_incidence_target(self) -> TailIncidence {
-        self.fbw_incidence_target
+    pub const fn fbw_incidence_target(self) -> Option<TailIncidence> {
+        match self.commands {
+            crate::TailControlReport::BuiltIn(commands) => Some(commands.fbw_incidence_target()),
+            crate::TailControlReport::External(_) => None,
+        }
     }
 
     /// Returns the mixed physical-incidence target before the software actuator slew step.
-    pub const fn mixed_incidence_target(self) -> TailIncidence {
-        self.mixed_incidence_target
+    pub const fn mixed_incidence_target(self) -> Option<TailIncidence> {
+        match self.commands {
+            crate::TailControlReport::BuiltIn(commands) => Some(commands.mixed_incidence_target()),
+            crate::TailControlReport::External(_) => None,
+        }
     }
 }
 

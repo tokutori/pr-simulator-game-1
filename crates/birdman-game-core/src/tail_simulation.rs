@@ -21,8 +21,10 @@ use crate::tail_control::{
 };
 
 mod contact_shape;
+mod sensors;
 use contact_shape::TailTrialGeometry;
 pub use contact_shape::advance_tail_flight_tick_with_shape_provider;
+pub use sensors::{TailControllerSensors, observe_tail_controller};
 
 /// One immutable integer-tick state with exactly two held physical tail incidences.
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
@@ -166,7 +168,7 @@ impl TailFlightTickState {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailFlightTickConfig {
     mode: ControlMode,
-    profile: TailControlProfile,
+    profile: Option<TailControlProfile>,
     pilot_mapping: TailPilotPositionMapping,
     gravity: Gravity,
 }
@@ -181,10 +183,33 @@ impl TailFlightTickConfig {
     ) -> Self {
         Self {
             mode,
-            profile,
+            profile: Some(profile),
             pilot_mapping,
             gravity,
         }
+    }
+
+    /// Seals physical inputs for a final-angle controller without a builtin software profile.
+    pub const fn external(
+        requested_mode: ControlMode,
+        pilot_mapping: TailPilotPositionMapping,
+        gravity: Gravity,
+    ) -> Self {
+        Self {
+            mode: requested_mode,
+            profile: None,
+            pilot_mapping,
+            gravity,
+        }
+    }
+
+    fn admit_input(self, input: TailFlightTickInput) -> Result<(), TailFlightTickError> {
+        if self.profile.is_some() == input.external_request.is_some() {
+            return Err(TailFlightTickError::Control(
+                TailControlError::InvalidController,
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -207,6 +232,7 @@ pub struct TailFlightTickInput {
     desired_rate: TailRateTarget,
     pilot_position: TailPilotPositionCommand,
     pilot_motion_admission: TailPilotMotionAdmission,
+    external_request: Option<crate::TailIncidenceRequest>,
 }
 
 impl TailFlightTickInput {
@@ -221,7 +247,19 @@ impl TailFlightTickInput {
             desired_rate,
             pilot_position,
             pilot_motion_admission: TailPilotMotionAdmission::Continued,
+            external_request: None,
         }
+    }
+
+    /// Supplies the external program's final request; the tick entry checks the sealed source.
+    pub const fn with_external_request(mut self, request: crate::TailIncidenceRequest) -> Self {
+        self.external_request = Some(request);
+        self
+    }
+
+    /// Returns an external final request, absent for builtin software.
+    pub const fn external_request(self) -> Option<crate::TailIncidenceRequest> {
+        self.external_request
     }
 
     /// Attaches an explicit admission from the shared raw-input owner.
@@ -272,6 +310,8 @@ pub enum TailFlightTickError {
     Dynamics(DynamicsError),
     /// Static-water contact interpolation or geometry evaluation failed.
     Contact(ContactError),
+    /// Truth telemetry could not be derived at the accepted controller observation boundary.
+    Telemetry(crate::FlightTelemetryError),
 }
 
 impl core::fmt::Display for TailFlightTickError {
@@ -281,6 +321,7 @@ impl core::fmt::Display for TailFlightTickError {
             Self::Control(_) => f.write_str("tail control"),
             Self::Dynamics(_) => f.write_str("flight dynamics"),
             Self::Contact(_) => f.write_str("water contact"),
+            Self::Telemetry(_) => f.write_str("controller truth telemetry"),
         }
     }
 }
@@ -291,6 +332,7 @@ impl core::error::Error for TailFlightTickError {
             Self::Control(cause) => Some(cause),
             Self::Dynamics(cause) => Some(cause),
             Self::Contact(cause) => Some(cause),
+            Self::Telemetry(cause) => Some(cause),
             Self::TickOverflow => None,
         }
     }
@@ -403,7 +445,34 @@ pub enum TailFlightTickOutcome {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailAppliedControls {
     input: TailFlightTickInput,
-    commands: TailControlCommands,
+    commands: TailControlReport,
+}
+
+/// Software-produced builtin commands or the admitted external final-angle pipeline.
+#[cfg_attr(verus_only, verus_verify)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TailControlReport {
+    /// Commands computed by the sealed builtin software.
+    BuiltIn(TailControlCommands),
+    /// External final request with its shared structural and slew result.
+    External(crate::TailActuatorUpdate),
+}
+
+impl TailControlReport {
+    /// Returns genuine builtin software components only for builtin execution.
+    pub const fn builtin(self) -> Option<TailControlCommands> {
+        match self {
+            Self::BuiltIn(commands) => Some(commands),
+            Self::External(_) => None,
+        }
+    }
+    /// Returns the genuine external pipeline report only for external execution.
+    pub const fn external(self) -> Option<crate::TailActuatorUpdate> {
+        match self {
+            Self::External(update) => Some(update),
+            Self::BuiltIn(_) => None,
+        }
+    }
 }
 
 impl TailAppliedControls {
@@ -417,7 +486,7 @@ impl TailAppliedControls {
     /// Returns manual/FBW/mixed incidence targets from the interval's single evaluation.
     #[cfg_attr(verus_only, verus_verify(dual_spec))]
     #[cfg_attr(verus_only, verus_spec(returns self.commands()))]
-    pub const fn commands(self) -> TailControlCommands {
+    pub const fn commands(self) -> TailControlReport {
         self.commands
     }
 }
@@ -767,52 +836,83 @@ fn evaluate_tail_flight_tick(
     loads: &HybridAerodynamicLoad<'_>,
     geometry: TailTrialGeometry<'_>,
 ) -> Result<TailEvaluatedTick, TailFlightTickError> {
+    config.admit_input(input)?;
     let tick_index = previous
         .tick_index
         .checked_add(1)
         .ok_or(TailFlightTickError::TickOverflow)?;
-    let datum_alpha_rad = if config.profile.angle_of_attack_guard().is_some() {
-        datum_alpha_for_guard(previous.flight_state, loads)
-    } else {
-        None
+    let (control, commands, hardware, pilot_guard) = match (config.profile, input.external_request)
+    {
+        (Some(profile), None) => {
+            let datum_alpha_rad = if profile.angle_of_attack_guard().is_some() {
+                datum_alpha_for_guard(previous.flight_state, loads)
+            } else {
+                None
+            };
+            let (angles, regular) =
+                crate::scenario::flight_euler_angles(previous.flight_state.attitude_body_to_ned());
+            let telemetry = if matches!(
+                profile.pitch(),
+                crate::PitchController::AirspeedAttitudeRate { .. }
+            ) {
+                Some(
+                    crate::scenario::derive_flight_telemetry(
+                        aircraft,
+                        previous.flight_state,
+                        |position| loads.wind_velocity_at(position),
+                    )
+                    .map_err(|error| {
+                        TailFlightTickError::Contact(match error {
+                            crate::FlightTelemetryError::Dynamics(cause) => {
+                                ContactError::Dynamics(cause)
+                            }
+                            crate::FlightTelemetryError::Wind(cause) => ContactError::Wind(cause),
+                        })
+                    })?,
+                )
+            } else {
+                None
+            };
+            let control = advance_tail_control(
+                previous.incidence,
+                previous.controller_state,
+                profile,
+                config.mode,
+                input.pilot,
+                input.desired_rate,
+                TailControlObservation {
+                    body_rate: previous.flight_state.angular_velocity_body(),
+                    euler_rad: regular.then_some(angles),
+                    airspeed_mps: telemetry.map_or(0.0, |sample| sample.airspeed_mps),
+                    datum_alpha_rad,
+                },
+                PHYSICS_DT_SECONDS,
+                aircraft.tail_actuators(),
+            )
+            .map_err(TailFlightTickError::Control)?;
+            (
+                Some(control),
+                TailControlReport::BuiltIn(control.commands()),
+                control.hardware(),
+                profile.angle_of_attack_guard().zip(datum_alpha_rad),
+            )
+        }
+        (None, Some(request)) => {
+            let hardware = crate::advance_tail_actuators(
+                previous.incidence,
+                request,
+                aircraft.tail_actuators(),
+                PHYSICS_DT_SECONDS,
+            )
+            .map_err(TailFlightTickError::Control)?;
+            (None, TailControlReport::External(hardware), hardware, None)
+        }
+        _ => {
+            return Err(TailFlightTickError::Control(
+                TailControlError::InvalidController,
+            ));
+        }
     };
-    let (angles, regular) =
-        crate::scenario::flight_euler_angles(previous.flight_state.attitude_body_to_ned());
-    let telemetry = if matches!(
-        config.profile.pitch(),
-        crate::PitchController::AirspeedAttitudeRate { .. }
-    ) {
-        Some(
-            crate::scenario::derive_flight_telemetry(aircraft, previous.flight_state, |position| {
-                loads.wind_velocity_at(position)
-            })
-            .map_err(|error| {
-                TailFlightTickError::Contact(match error {
-                    crate::FlightTelemetryError::Dynamics(cause) => ContactError::Dynamics(cause),
-                    crate::FlightTelemetryError::Wind(cause) => ContactError::Wind(cause),
-                })
-            })?,
-        )
-    } else {
-        None
-    };
-    let control = advance_tail_control(
-        previous.incidence,
-        previous.controller_state,
-        config.profile,
-        config.mode,
-        input.pilot,
-        input.desired_rate,
-        TailControlObservation {
-            body_rate: previous.flight_state.angular_velocity_body(),
-            euler_rad: regular.then_some(angles),
-            airspeed_mps: telemetry.map_or(0.0, |sample| sample.airspeed_mps),
-            datum_alpha_rad,
-        },
-        PHYSICS_DT_SECONDS,
-        aircraft.tail_actuators(),
-    )
-    .map_err(TailFlightTickError::Control)?;
     let requested_pilot_position_target = config
         .pilot_mapping
         .resolve(
@@ -821,21 +921,20 @@ fn evaluate_tail_flight_tick(
             input.pilot_position,
         )
         .map_err(TailFlightTickError::Dynamics)?;
-    let guarded_target =
-        if let Some((guard, alpha)) = config.profile.angle_of_attack_guard().zip(datum_alpha_rad) {
-            PilotPositionTarget::try_new(
-                aircraft,
-                guard.project_pilot_position(
-                    requested_pilot_position_target.position_m(),
-                    config.pilot_mapping.trim_target().position_m(),
-                    alpha,
-                    previous.flight_state.angular_velocity_body().components()[1],
-                ),
-            )
-            .map_err(TailFlightTickError::Dynamics)?
-        } else {
-            requested_pilot_position_target
-        };
+    let guarded_target = if let Some((guard, alpha)) = pilot_guard {
+        PilotPositionTarget::try_new(
+            aircraft,
+            guard.project_pilot_position(
+                requested_pilot_position_target.position_m(),
+                config.pilot_mapping.trim_target().position_m(),
+                alpha,
+                previous.flight_state.angular_velocity_body().components()[1],
+            ),
+        )
+        .map_err(TailFlightTickError::Dynamics)?
+    } else {
+        requested_pilot_position_target
+    };
     let (pilot_position_target, pilot_stop) = admit_pilot_target(
         aircraft,
         previous,
@@ -861,14 +960,17 @@ fn evaluate_tail_flight_tick(
         loads,
         geometry,
     };
-    let incidence = control.incidence();
+    let incidence = hardware.incidence();
     let mut outcome = trial.evaluate(incidence)?;
     let admitted_seconds = outcome.contact.map_or(PHYSICS_DT_SECONDS, |sample| {
         sample.fraction() * PHYSICS_DT_SECONDS
     });
-    let controller_state = control
-        .admitted_state(admitted_seconds)
-        .map_err(TailFlightTickError::Control)?;
+    let controller_state = match control {
+        Some(control) => control
+            .admitted_state(admitted_seconds)
+            .map_err(TailFlightTickError::Control)?,
+        None => previous.controller_state,
+    };
     if let Some(contact) = &mut outcome.contact {
         contact.controller_state = controller_state;
     }
@@ -883,10 +985,7 @@ fn evaluate_tail_flight_tick(
             pilot_stop,
             wing_bending_factor,
         },
-        controls: TailAppliedControls {
-            input,
-            commands: control.commands(),
-        },
+        controls: TailAppliedControls { input, commands },
         contact: outcome.contact,
         tail_wrenches: outcome.tail_wrenches,
     })
@@ -976,6 +1075,7 @@ pub fn advance_tail_flight_tick_with_contact_report(
     loads: &HybridAerodynamicLoad<'_>,
     geometry: WaterContactGeometry<'_>,
 ) -> Result<TailFlightTickReport, TailFlightTickError> {
+    config.admit_input(input)?;
     if let Some(index) = geometry
         .initial_contact_point(previous.flight_state())
         .map_err(TailFlightTickError::Contact)?

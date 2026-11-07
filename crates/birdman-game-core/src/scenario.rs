@@ -274,6 +274,14 @@ pub(crate) fn derive_flight_telemetry(
     state: FlightState,
     wind_at: impl FnOnce(NedPoint) -> Result<NedVector, crate::wind_field::WindError>,
 ) -> Result<FlightTelemetry, FlightTelemetryError> {
+    derive_flight_telemetry_with_velocity(aircraft, state, wind_at).map(|(telemetry, _)| telemetry)
+}
+
+pub(crate) fn derive_flight_telemetry_with_velocity(
+    aircraft: &AircraftModel,
+    state: FlightState,
+    wind_at: impl FnOnce(NedPoint) -> Result<NedVector, crate::wind_field::WindError>,
+) -> Result<(FlightTelemetry, NedVector), FlightTelemetryError> {
     let mass_fraction =
         aircraft.pilot_mass_kg() / (aircraft.airframe_mass_kg() + aircraft.pilot_mass_kg());
     let offset_body = aircraft
@@ -321,24 +329,28 @@ pub(crate) fn derive_flight_telemetry(
         .norm()
         .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
     let (angles, _) = flight_euler_angles(state.attitude_body_to_ned());
-    Ok(FlightTelemetry {
-        composite_cg_position_ned_m: position_ned,
-        altitude_m: -position_ned.components()[2],
-        airspeed_mps: airspeed,
-        groundspeed_mps: cg_velocity_ned
-            .norm()
-            .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?,
-        wind_velocity_ned_mps: wind,
-        angle_of_attack_rad: (airspeed > 0.0).then(|| libm::atan2(w, u)),
-        sideslip_angle_rad: (airspeed > 0.0).then(|| libm::asin((v / airspeed).clamp(-1.0, 1.0))),
-        roll_rad: angles[0],
-        pitch_rad: angles[1],
-        heading_rad: angles[2],
-    })
+    Ok((
+        FlightTelemetry {
+            composite_cg_position_ned_m: position_ned,
+            altitude_m: -position_ned.components()[2],
+            airspeed_mps: airspeed,
+            groundspeed_mps: cg_velocity_ned
+                .norm()
+                .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?,
+            wind_velocity_ned_mps: wind,
+            angle_of_attack_rad: (airspeed > 0.0).then(|| libm::atan2(w, u)),
+            sideslip_angle_rad: (airspeed > 0.0)
+                .then(|| libm::asin((v / airspeed).clamp(-1.0, 1.0))),
+            roll_rad: angles[0],
+            pitch_rad: angles[1],
+            heading_rad: angles[2],
+        },
+        cg_velocity_ned,
+    ))
 }
 
 /// Canonical 321 Euler decomposition shared by telemetry and scalar attitude control.
-pub(crate) fn flight_euler_angles(attitude: UnitQuaternion) -> ([f64; 3], bool) {
+pub fn flight_euler_angles(attitude: UnitQuaternion) -> ([f64; 3], bool) {
     let [qw, qx, qy, qz] = attitude.components();
     let sine_pitch = (2.0 * (qw * qy - qz * qx)).clamp(-1.0, 1.0);
     let roll_y = 2.0 * (qw * qx + qy * qz);
