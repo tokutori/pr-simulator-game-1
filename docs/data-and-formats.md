@@ -360,13 +360,14 @@ keyは次の条件をSHA-256へ入力する。
 - Nativeも共有producer/selectorを利用し、filesystem上の全候補を検査する。
 - 同点ではpath昇順の最初の記録を保持し、新しい索引用DBを設けない。
 
-### 意味versionの更新責務
+### 意味識別子の更新責務
 
-| 変更対象 | 更新するversion |
+| 変更対象 | 更新する識別子 |
 | --- | --- |
 | 運動方程式・積分・接触算法・数値結果へ影響する依存 | physics model |
 | 質量・慣性・空力係数・機体の物理形状 | aircraft model |
-| 操縦支援・controllerの意味 | controller profile |
+| controllerの設定データ | controller IDと原文SHA-256 |
+| 制御算法・PIDの数値規則 | physics model |
 | 不変scenario・発進条件・接触proxy・会場条件 | scenarioと必要なcatalog/model |
 | WindField・環境の意味と数値条件 | environmentと必要なscenario |
 | 終了・飛距離・採点 | score definitionと必要なphysics |

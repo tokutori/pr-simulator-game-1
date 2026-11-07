@@ -10,18 +10,26 @@ export type ApplicationInput = {
     /**
      * Unmodified I/O result.
      */
-    readonly completion: ApplicationAircraftLoad;
-    readonly kind: "aircraft_loaded";
+    readonly completion: ApplicationConfigurationLoad;
+    /**
+     * Independently selected original document kind.
+     */
+    readonly document: ConfigurationDocumentKind;
+    readonly kind: "configuration_loaded";
     /**
      * Owner-issued operation identity.
      */
     readonly request_id: number;
 } | {
     /**
+     * Independently selected original document kind.
+     */
+    readonly document: ConfigurationDocumentKind;
+    /**
      * Original I/O failure, absent after success.
      */
     readonly failure?: string | null;
-    readonly kind: "aircraft_saved";
+    readonly kind: "configuration_saved";
     /**
      * Owner-issued operation identity.
      */
@@ -492,9 +500,9 @@ export type ApplicationInput = {
     readonly request_id: number;
 };
 /**
- * Original aircraft bytes produced by a requested storage or file-picker operation.
+ * Original configuration bytes produced by a requested storage or file-picker operation.
  */
-export type ApplicationAircraftLoad = {
+export type ApplicationConfigurationLoad = {
     readonly kind: "missing";
 } | {
     readonly kind: "cancelled";
@@ -511,6 +519,10 @@ export type ApplicationAircraftLoad = {
     readonly cause: string;
     readonly kind: "failed";
 };
+/**
+ * Independent original JSON sources selectable by the application.
+ */
+export type ConfigurationDocumentKind = "aircraft" | "controller";
 /**
  * Raw completion of the requested user keyboard-settings read.
  */
@@ -1318,9 +1330,17 @@ export type HudCue = "telemetry" | "attitude" | "wind" | "flight_path" | "angle_
  * Platform-owned operation requested by common UI.
  */
 export type GameUiPlatformCommand = {
-    readonly kind: "load_aircraft";
+    /**
+     * Independently selected original document.
+     */
+    readonly document: ConfigurationDocumentKind;
+    readonly kind: "load_configuration";
 } | {
-    readonly kind: "delete_aircraft";
+    /**
+     * Independently selected original document.
+     */
+    readonly document: ConfigurationDocumentKind;
+    readonly kind: "delete_configuration";
 } | {
     readonly kind: "reload_application";
 } | {
@@ -1808,7 +1828,11 @@ export type ApplicationLifecycle = "running" | "closing" | "drained";
  * Ordered platform operations produced by the application owner.
  */
 export type ApplicationRequest = {
-    readonly kind: "read_aircraft";
+    /**
+     * Independently selected original document kind.
+     */
+    readonly document: ConfigurationDocumentKind;
+    readonly kind: "read_configuration";
     /**
      * Source-byte read budget.
      */
@@ -1819,7 +1843,11 @@ export type ApplicationRequest = {
     readonly request_id: number;
     readonly [k: string]: unknown | undefined;
 } | {
-    readonly kind: "pick_aircraft";
+    /**
+     * Independently selected original document kind.
+     */
+    readonly document: ConfigurationDocumentKind;
+    readonly kind: "pick_configuration";
     /**
      * Source-byte read budget.
      */
@@ -1834,14 +1862,22 @@ export type ApplicationRequest = {
      * Original validated source bytes.
      */
     readonly bytes: readonly number[];
-    readonly kind: "write_aircraft";
+    /**
+     * Independently selected original document kind.
+     */
+    readonly document: ConfigurationDocumentKind;
+    readonly kind: "write_configuration";
     /**
      * Owner-issued operation identity.
      */
     readonly request_id: number;
     readonly [k: string]: unknown | undefined;
 } | {
-    readonly kind: "delete_aircraft";
+    /**
+     * Independently selected original document kind.
+     */
+    readonly document: ConfigurationDocumentKind;
+    readonly kind: "delete_configuration";
     /**
      * Owner-issued operation identity.
      */
