@@ -1020,7 +1020,7 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
     assert_eq!(overlay.unit_text.font_size_px, 175.0);
     assert_eq!(
         overlay.digit_text.font_weight,
-        view.theme.primary_status_text.font_weight
+        view.theme.body_text.font_weight
     );
     assert_eq!(overlay.gap_px, 35.0);
     // The panel uses the flight bar shell, so the cancel button and the

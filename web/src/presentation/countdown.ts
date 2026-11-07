@@ -32,7 +32,7 @@ export class CountdownAdapter {
       [this.digits, countdown.digits, countdown.digit_text],
       [this.unit, countdown.unit, countdown.unit_text]
     ] as const) {
-      node.textContent = value;
+      if (node.textContent !== value) node.textContent = value;
       Object.assign(node.style, {
         fontSize: `${String(style.font_size_px)}px`,
         fontWeight: String(style.font_weight),

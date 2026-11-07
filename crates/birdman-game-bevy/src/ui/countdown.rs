@@ -7,6 +7,7 @@ pub(super) struct RetainedCountdown {
     pub(super) shell: Entity,
     row: Entity,
     texts: Option<(Entity, Entity)>,
+    painted: Option<(GameUiCountdown, GameUiTheme)>,
 }
 
 pub(super) fn setup_countdown(commands: &mut Commands) -> RetainedCountdown {
@@ -41,6 +42,7 @@ pub(super) fn setup_countdown(commands: &mut Commands) -> RetainedCountdown {
         shell,
         row,
         texts: None,
+        painted: None,
     }
 }
 
@@ -53,11 +55,20 @@ pub(super) fn project_countdown(
     theme: &GameUiTheme,
 ) -> Result<(), String> {
     let Some(countdown) = countdown else {
+        retained.painted = None;
         retained_node(world, retained.shell)
             .map_unchanged(|node| &mut node.display)
             .set_if_neq(Display::None);
         return Ok(());
     };
+    if retained
+        .painted
+        .as_ref()
+        .is_some_and(|(previous, previous_theme)| previous == countdown && previous_theme == theme)
+    {
+        return Ok(());
+    }
+    retained.painted = Some((countdown.clone(), theme.clone()));
     let font = world.resource::<NativeFont>().0.clone();
     let ink = color(&theme.text, 1.0)?;
     retained_node(world, retained.shell)
