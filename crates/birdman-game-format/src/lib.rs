@@ -41,7 +41,7 @@ pub mod controller;
 pub mod external_controller;
 mod json_version;
 
-/// Independent original JSON sources selectable by the application.
+/// Independent original sources selectable by the application.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
@@ -50,16 +50,19 @@ mod json_version;
 pub enum ConfigurationDocumentKind {
     /// Physical aircraft definition.
     Aircraft,
-    /// Software flight-controller definition.
+    /// Software flight-controller settings definition.
     Controller,
+    /// Executable Wasm program or Native connection document.
+    ControllerExecution,
 }
 
 impl ConfigurationDocumentKind {
     /// Original byte budget for the requested document kind.
-    pub const fn maximum_json_bytes(self) -> usize {
+    pub const fn maximum_source_bytes(self) -> usize {
         match self {
             Self::Aircraft => aircraft::MAX_AIRCRAFT_JSON_BYTES,
             Self::Controller => controller::MAX_CONTROLLER_JSON_BYTES,
+            Self::ControllerExecution => external_controller::MAX_MODULE_BYTES,
         }
     }
 }

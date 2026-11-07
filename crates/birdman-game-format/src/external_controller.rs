@@ -8,6 +8,13 @@ use sha2::{Digest, Sha256};
 pub const ABI_VERSION: u16 = 1;
 /// Resource policy incorporated into the execution identity.
 pub const RESOURCE_POLICY_VERSION: u32 = 1;
+/// Maximum Native initialization interval, including cold controller preparation.
+pub const INITIALIZATION_TIMEOUT_MILLISECONDS: f64 = 5_000.0;
+/// One complete steady-state HITL exchange shares this physical interval.
+pub const HITL_INTERVAL_MILLISECONDS: f64 = birdman_game_core::PHYSICS_DT_SECONDS * 1_000.0;
+/// Bounded best-effort Finish notification and acknowledgement interval.
+pub const FINISH_TIMEOUT_MILLISECONDS: f64 = 100.0;
+
 /// Common frame header length, including the execution identity.
 pub const HEADER_BYTES: usize = 64;
 /// Largest admitted binary frame, independently of the transport.
@@ -290,8 +297,7 @@ impl ControllerFrame {
             identity: self.bytes[32..64].try_into().unwrap(),
         }
     }
-    /// Checks header, fixed length, finite payload and reserved bits before copying a frame.
-    pub fn decode(bytes: &[u8]) -> Result<Self, ProtocolError> {
+    fn decode_envelope(bytes: &[u8]) -> Result<Self, ProtocolError> {
         if bytes.len() < HEADER_BYTES || bytes.len() > MAX_FRAME_BYTES {
             return Err(ProtocolError::InvalidFrame);
         }
@@ -302,15 +308,21 @@ impl ControllerFrame {
         if u16::from_le_bytes(bytes[4..6].try_into().unwrap()) != ABI_VERSION {
             return Err(ProtocolError::UnsupportedAbi);
         }
-        let kind = ExchangeKind::try_from(u32::from(u16::from_le_bytes(
+        let _kind = ExchangeKind::try_from(u32::from(u16::from_le_bytes(
             bytes[6..8].try_into().unwrap(),
         )))?;
-        let status = PeerStatus::try_from(u32_at(12))?;
+        let _status = PeerStatus::try_from(u32_at(12))?;
         let mut frame = Self {
             bytes: [0; MAX_FRAME_BYTES],
             length: bytes.len(),
         };
         frame.bytes[..bytes.len()].copy_from_slice(bytes);
+        Ok(frame)
+    }
+    /// Checks header, fixed length, finite payload and reserved bits before copying a frame.
+    pub fn decode(bytes: &[u8]) -> Result<Self, ProtocolError> {
+        let frame = Self::decode_envelope(bytes)?;
+        let FrameHeader { kind, status, .. } = frame.header();
         if status != PeerStatus::Success {
             return if bytes.len() == HEADER_BYTES {
                 Ok(frame)
@@ -341,12 +353,11 @@ impl ControllerFrame {
     }
     /// Admits only the response direction of the pending exchange.
     pub fn decode_reply(bytes: &[u8], request: &Self) -> Result<Self, ProtocolError> {
-        if bytes.len() < HEADER_BYTES {
-            return Err(ProtocolError::InvalidFrame);
-        }
-        let status = PeerStatus::try_from(u32::from_le_bytes(bytes[12..16].try_into().unwrap()))?;
+        let reply = Self::decode_envelope(bytes)?;
+        let header = reply.header();
+        header.authorize(request.header())?;
         let expected =
-            if status == PeerStatus::Success && request.header().kind == ExchangeKind::Evaluate {
+            if header.status == PeerStatus::Success && header.kind == ExchangeKind::Evaluate {
                 ANGLES_BYTES
             } else {
                 HEADER_BYTES
@@ -354,10 +365,11 @@ impl ControllerFrame {
         if bytes.len() != expected {
             return Err(ProtocolError::InvalidFrame);
         }
-        let reply = Self::decode(bytes)?;
-        reply.header().authorize(request.header())?;
-        if status != PeerStatus::Success {
+        if header.status != PeerStatus::Success {
             return Err(ProtocolError::PeerRejected);
+        }
+        if header.kind == ExchangeKind::Evaluate {
+            reply.requested_angles()?;
         }
         Ok(reply)
     }
@@ -809,6 +821,18 @@ mod tests {
         assert_eq!(
             frame.header().authorize(old),
             Err(ProtocolError::Unauthorized)
+        );
+        let mut foreign_nan = frame.as_bytes().to_vec();
+        foreign_nan[24..32].copy_from_slice(&(frame.header().sequence + 1).to_le_bytes());
+        foreign_nan[64..72].copy_from_slice(&f64::NAN.to_le_bytes());
+        assert_eq!(
+            ControllerFrame::decode_reply(&foreign_nan, &frame),
+            Err(ProtocolError::Unauthorized)
+        );
+        foreign_nan[24..32].copy_from_slice(&frame.header().sequence.to_le_bytes());
+        assert_eq!(
+            ControllerFrame::decode_reply(&foreign_nan, &frame),
+            Err(ProtocolError::NonFiniteValue)
         );
         assert_eq!(crc32c(b"123456789"), 0xe3069283);
     }

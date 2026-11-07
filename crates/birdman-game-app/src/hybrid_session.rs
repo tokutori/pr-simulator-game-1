@@ -110,7 +110,7 @@ impl core::error::Error for HybridSessionPreparationError {
 pub struct HybridSessionPreparation {
     configuration: GameSessionConfiguration,
     record_identity: FlightRecordTailIdentityDocument,
-    controller_profile: TailControlProfile,
+    controller_profile: Option<TailControlProfile>,
     course_axis: CourseAxis,
     wind: WindField<'static>,
 }
@@ -185,6 +185,31 @@ impl HybridSessionPreparation {
         seed: u64,
         weather: WeatherClass,
     ) -> Result<Self, HybridSessionPreparationError> {
+        Self::try_new_for_weather_with_execution(
+            aircraft,
+            controller,
+            control_mode,
+            maximum_flight_ticks,
+            seed,
+            weather,
+            None,
+        )
+    }
+
+    /// Prepares either the built-in policy or an admitted external execution against the same model.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Explicit sealed sources and execution are one preparation contract"
+    )]
+    pub fn try_new_for_weather_with_execution(
+        aircraft: &crate::SelectedAircraft,
+        controller: &crate::SelectedController,
+        control_mode: ControlMode,
+        maximum_flight_ticks: u64,
+        seed: u64,
+        weather: WeatherClass,
+        execution: Option<&birdman_game_format::external_controller::ControllerExecutionDescriptor>,
+    ) -> Result<Self, HybridSessionPreparationError> {
         let definition = aircraft.definition();
         let selection = Self::select_scenario(weather, seed, definition.document().model_version)?;
         let surfaces = definition
@@ -248,26 +273,58 @@ impl HybridSessionPreparation {
             wind,
         )
         .map_err(HybridSessionPreparationError::Hybrid)?;
-        let controller_profile = controller
-            .prepare(definition)
-            .map_err(HybridSessionPreparationError::Controller)?;
-        let scenario = TailFlightScenario::try_new(parameters, load, controller_profile)
-            .map_err(HybridSessionPreparationError::Scenario)?;
+        let external = execution.filter(|d| {
+            !matches!(
+                d.artifact,
+                birdman_game_format::external_controller::ControllerArtifactIdentity::BuiltInJson
+            )
+        });
+        let controller_profile = if external.is_some() {
+            None
+        } else {
+            Some(
+                controller
+                    .prepare(definition)
+                    .map_err(HybridSessionPreparationError::Controller)?,
+            )
+        };
+        let scenario = match controller_profile {
+            Some(profile) => TailFlightScenario::try_new(parameters, load, profile),
+            None => TailFlightScenario::try_new_external(parameters, load),
+        }
+        .map_err(HybridSessionPreparationError::Scenario)?;
         let mut identity = identity_for_selection(selection);
         identity.aircraft_identity = aircraft.identity();
-        identity.controller_identity = Some(controller.identity());
-        let configuration = GameSessionConfiguration::try_new_tail(
-            scenario,
-            control_mode,
-            maximum_flight_ticks,
-            identity,
-        )
+        identity.controller_identity =
+            Some(external.map_or_else(|| controller.identity(), |d| d.digest()));
+        let configuration = if external.is_some() {
+            GameSessionConfiguration::try_new_external(
+                scenario,
+                control_mode,
+                maximum_flight_ticks,
+                identity,
+            )
+        } else {
+            GameSessionConfiguration::try_new_tail(
+                scenario,
+                control_mode,
+                maximum_flight_ticks,
+                identity,
+            )
+        }
         .map_err(HybridSessionPreparationError::Session)?;
+        let descriptor = execution.cloned().unwrap_or_else(|| {
+            birdman_game_format::external_controller::ControllerExecutionDescriptor::builtin(
+                controller.document().controller_id.clone(),
+                controller.raw_sha256().into(),
+            )
+        });
         let record_identity = FlightRecordTailIdentityDocument {
-            aircraft_sha256: Some(aircraft.raw_sha256().to_owned()),
+            execution: Some(descriptor),
+            aircraft_sha256: Some(aircraft.raw_sha256().into()),
             aircraft_configuration_id: definition.document().configuration_id.clone(),
             controller_profile_id: controller.document().controller_id.clone(),
-            controller_sha256: Some(controller.raw_sha256().to_owned()),
+            controller_sha256: Some(controller.raw_sha256().into()),
         };
         Ok(Self {
             configuration,
@@ -326,7 +383,7 @@ impl HybridSessionPreparation {
     }
 
     /// Returns the exact software profile used to seal this scenario.
-    pub const fn controller_profile(&self) -> TailControlProfile {
+    pub const fn controller_profile(&self) -> Option<TailControlProfile> {
         self.controller_profile
     }
 

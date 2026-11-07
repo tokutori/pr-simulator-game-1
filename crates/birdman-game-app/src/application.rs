@@ -2,6 +2,7 @@
 
 mod archive;
 pub(crate) mod commands;
+mod controller;
 mod flight;
 
 pub use archive::{ArchiveError, ArchiveMetadata};
@@ -110,6 +111,8 @@ pub struct ApplicationSession {
     aircraft: Result<crate::SelectedAircraft, birdman_game_content::AircraftDefinitionError>,
     controller:
         Result<crate::SelectedController, birdman_game_format::controller::ControllerFormatError>,
+    controller_execution: crate::controller::execution::ControllerExecutionState,
+    controller_observed_ms: f64,
     controller_pair:
         Result<birdman_game_core::TailControlProfile, crate::ControllerPreparationError>,
     difficulty: DifficultySettings,
@@ -179,6 +182,8 @@ impl ApplicationSession {
             aircraft,
             controller,
             controller_pair,
+            controller_execution: Default::default(),
+            controller_observed_ms: 0.0,
             difficulty,
             maximum_flight_ticks,
             seed,
@@ -300,13 +305,15 @@ impl ApplicationSession {
             | SessionPhase::Attract => self
                 .session
                 .playback_record()
-                .and_then(|record| record.header().control_mode),
+                .and_then(|record| record.header().execution.and_then(|e| e.builtin_mode())),
             SessionPhase::BriefingPreparing
             | SessionPhase::BriefingReady
             | SessionPhase::BriefingFailed { .. }
-            | SessionPhase::Countdown { .. } => {
-                self.prepared.as_ref().map(|prepared| prepared.control_mode)
-            }
+            | SessionPhase::Countdown { .. } => self
+                .prepared
+                .as_ref()
+                .and_then(|prepared| prepared.execution.builtin_mode()),
+            _ if !self.controller_execution.selected.is_builtin() => None,
             _ => self.controller().ok().and_then(|selected| {
                 commands::control_mode(
                     self.difficulty.assistance(),
@@ -371,7 +378,8 @@ impl ApplicationSession {
                 | SessionCommand::Retry {}
                 | SessionCommand::RetryBriefing {}
                 | SessionCommand::EnterAttract {}
-        ) {
+        ) && self.controller_execution.selected.is_builtin()
+        {
             self.controller_pair().map_err(|cause| {
                 ApplicationError::Preparation(crate::HybridSessionPreparationError::Controller(
                     cause,
@@ -447,7 +455,17 @@ impl ApplicationSession {
             }
             SessionCommand::OpenSetup {} => self.session.open_setup(),
             SessionCommand::ReturnToTitle {} => self.session.return_to_title(),
-            SessionCommand::CancelBriefing {} => self.session.cancel_briefing(),
+            SessionCommand::CancelBriefing {} => {
+                if matches!(
+                    self.session.snapshot().phase(),
+                    SessionPhase::BriefingPreparing
+                        | SessionPhase::BriefingReady
+                        | SessionPhase::BriefingFailed { .. }
+                ) {
+                    self.finish_controller(birdman_game_format::external_controller::FinishReason::CancelledBeforeFlight);
+                }
+                self.session.cancel_briefing()
+            }
             SessionCommand::Prepare {} => {
                 let mut prepared = commands::prepare_flight(
                     &mut self.session,
@@ -466,6 +484,8 @@ impl ApplicationSession {
                     self.difficulty,
                     self.maximum_flight_ticks,
                     self.seed,
+                    &mut self.controller_execution,
+                    self.controller_observed_ms,
                 )?;
                 prepared.keyboard_controls = self.keyboard_controls;
                 self.prepared = Some(prepared);
@@ -483,13 +503,21 @@ impl ApplicationSession {
                     .observe_readiness(readiness)
                     .map_err(ApplicationError::Session);
             }
-            SessionCommand::StartCountdown {} => self.start_countdown(3),
+            SessionCommand::StartCountdown {} => {
+                if !self.controller_execution.ready() {
+                    return Err(ApplicationError::ControllerExecution(
+                        "制御器への接続を準備している。".into(),
+                    ));
+                }
+                self.start_countdown(3)
+            }
             SessionCommand::CancelCountdown {} => self.session.cancel_countdown(),
             SessionCommand::Pause {} => self.session.pause(PauseReason::Manual),
             SessionCommand::Resume {} => self.session.resume(),
             SessionCommand::Abort {} => self.session.abort_flight().map(|_| ()),
             SessionCommand::Retry {} => {
                 self.session.retry().map_err(ApplicationError::Session)?;
+                self.restart_controller()?;
                 self.advance_record_source();
                 Ok(())
             }
@@ -531,6 +559,9 @@ impl ApplicationSession {
         &mut self,
         readiness: BackendReadiness,
     ) -> Result<(), GameSessionError> {
+        if !self.controller_execution.ready() {
+            return Ok(());
+        }
         match readiness {
             BackendReadiness::Preparing => Ok(()),
             BackendReadiness::Ready => self.session.mark_briefing_ready(),
@@ -630,6 +661,13 @@ impl ApplicationSession {
         &mut self,
         input: TailFlightTickInput,
     ) -> Result<SessionSnapshot, GameSessionError> {
+        if self
+            .prepared
+            .as_ref()
+            .is_some_and(|prepared| prepared.execution.builtin_mode().is_none())
+        {
+            return Err(GameSessionError::InvalidTransition);
+        }
         let previous = self.session.snapshot().phase();
         let definition = self
             .aircraft
@@ -808,6 +846,8 @@ fn build_demo_record(
         difficulty,
         crate::DEFAULT_MAXIMUM_FLIGHT_TICKS,
         0xD3A0,
+        &mut Default::default(),
+        0.0,
     )?;
     builder
         .mark_briefing_ready()

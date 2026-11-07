@@ -47,6 +47,19 @@ pub enum FlightFrameAdvance {
     },
 }
 
+/// Result of one physical tick admission attempt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlightTickAdmission {
+    /// A physical interval committed and the next tick can start.
+    Advanced,
+    /// A physical interval committed; its controller acknowledgement is pending.
+    Awaiting,
+    /// The tick retains its admitted budget while controller output is pending.
+    Waiting,
+    /// The session stopped and retires its remaining frame budget.
+    Stopped,
+}
+
 /// Owns admitted wall-clock time independently of platform scheduling.
 #[derive(Debug, Default)]
 pub struct FlightFrameClock {
@@ -55,21 +68,28 @@ pub struct FlightFrameClock {
     suspended: bool,
     processing_delayed: bool,
     interpolation_ready: bool,
+    waiting: bool,
 }
 
 impl FlightFrameClock {
     /// Observes one monotonic timestamp and invokes each admitted tick in order.
     ///
-    /// A false callback stops the frame and retires the remaining time budget.
+    /// Lockstep waiting preserves the pending tick and excludes transport wait from wall time.
     pub fn advance_frame(
         &mut self,
         timestamp_ms: f64,
-        mut advance_tick: impl FnMut() -> bool,
+        lockstep: bool,
+        transport_waiting: bool,
+        mut advance_tick: impl FnMut() -> FlightTickAdmission,
     ) -> Result<FlightFrameAdvance, FlightClockError> {
         self.validate_timestamp(timestamp_ms)?;
-        let elapsed_ms = self
-            .previous_timestamp_ms
-            .map_or(0.0, |previous| timestamp_ms - previous);
+        let elapsed_ms = if lockstep && (transport_waiting || self.waiting) {
+            0.0
+        } else {
+            self.previous_timestamp_ms
+                .map_or(0.0, |previous| timestamp_ms - previous)
+        };
+        self.waiting = transport_waiting;
         self.previous_timestamp_ms = Some(timestamp_ms);
         let delayed = elapsed_ms > f64::from(crate::MAXIMUM_FLIGHT_FRAME_GAP_MILLISECONDS);
         if delayed != self.processing_delayed {
@@ -87,14 +107,27 @@ impl FlightFrameClock {
         let tick_ms = 1000.0 / f64::from(PHYSICS_HZ);
         let mut count = 0;
         while self.accumulated_ms + 1e-9 >= tick_ms {
+            let admission = advance_tick();
+            if admission == FlightTickAdmission::Waiting {
+                self.waiting = true;
+                break;
+            }
             self.accumulated_ms = (self.accumulated_ms - tick_ms).max(0.0);
             count += 1;
             self.interpolation_ready = true;
-            if !advance_tick() {
-                self.suspended = true;
-                self.accumulated_ms = 0.0;
-                self.interpolation_ready = false;
-                break;
+            match admission {
+                FlightTickAdmission::Advanced => {}
+                FlightTickAdmission::Awaiting => {
+                    self.waiting = true;
+                    break;
+                }
+                FlightTickAdmission::Stopped => {
+                    self.suspended = true;
+                    self.accumulated_ms = 0.0;
+                    self.interpolation_ready = false;
+                    break;
+                }
+                FlightTickAdmission::Waiting => unreachable!(),
             }
         }
         Ok(self.ticks(count))
@@ -105,6 +138,7 @@ impl FlightFrameClock {
         self.suspended = true;
         self.accumulated_ms = 0.0;
         self.interpolation_ready = false;
+        self.waiting = false;
     }
 
     /// Starts an admitted run at zero elapsed time after processing delay has recovered.
@@ -116,6 +150,7 @@ impl FlightFrameClock {
         self.previous_timestamp_ms = None;
         self.accumulated_ms = 0.0;
         self.interpolation_ready = false;
+        self.waiting = false;
         true
     }
 
@@ -126,7 +161,7 @@ impl FlightFrameClock {
 
     /// Returns the admitted remainder used by aircraft, pilot and camera interpolation.
     pub fn interpolation_fraction(&self) -> f64 {
-        self.accumulated_ms * f64::from(PHYSICS_HZ) / 1000.0
+        (self.accumulated_ms * f64::from(PHYSICS_HZ) / 1000.0).min(1.0)
     }
 
     /// Reports a committed physical interval admitted since the last suspension or reset.

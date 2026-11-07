@@ -1,7 +1,9 @@
 use super::*;
 
 fn advance(clock: &mut FlightFrameClock, timestamp_ms: f64) -> FlightFrameAdvance {
-    clock.advance_frame(timestamp_ms, || true).unwrap()
+    clock
+        .advance_frame(timestamp_ms, false, false, || FlightTickAdmission::Advanced)
+        .unwrap()
 }
 
 #[test]
@@ -57,9 +59,9 @@ fn the_frame_gap_boundary_and_recovery_retire_time_before_explicit_resume() {
         advance(&mut clock, 0.0);
         let mut callbacks = 0;
         let outcome = clock
-            .advance_frame(gap, || {
+            .advance_frame(gap, false, false, || {
                 callbacks += 1;
-                true
+                FlightTickAdmission::Advanced
             })
             .unwrap();
         if gap <= maximum {
@@ -100,9 +102,13 @@ fn a_stopped_tick_retires_the_rest_of_a_multi_tick_frame() {
     let mut attempts = 0;
     assert_eq!(
         clock
-            .advance_frame(50.0, || {
+            .advance_frame(50.0, false, false, || {
                 attempts += 1;
-                attempts < 2
+                if attempts < 2 {
+                    FlightTickAdmission::Advanced
+                } else {
+                    FlightTickAdmission::Stopped
+                }
             })
             .unwrap(),
         FlightFrameAdvance::Ticks {
@@ -113,9 +119,9 @@ fn a_stopped_tick_retires_the_rest_of_a_multi_tick_frame() {
     assert_eq!(attempts, 2);
     assert!(matches!(
         clock
-            .advance_frame(60.0, || {
+            .advance_frame(60.0, false, false, || {
                 attempts += 1;
-                true
+                FlightTickAdmission::Advanced
             })
             .unwrap(),
         FlightFrameAdvance::Ticks { count: 0, .. }
@@ -139,7 +145,10 @@ fn invalid_timestamps_preserve_the_last_observation_and_reset_starts_a_new_clock
         } else {
             FlightClockError::InvalidTimestamp
         };
-        assert_eq!(clock.advance_frame(timestamp, || true), Err(expected));
+        assert_eq!(
+            clock.advance_frame(timestamp, false, false, || FlightTickAdmission::Advanced),
+            Err(expected)
+        );
     }
     assert!(matches!(
         advance(&mut clock, 30.0),
@@ -153,4 +162,37 @@ fn invalid_timestamps_preserve_the_last_observation_and_reset_starts_a_new_clock
             interpolation_fraction: 0.0,
         }
     );
+}
+
+#[test]
+fn lockstep_wait_preserves_tick_without_transport_time_catchup() {
+    let mut clock = FlightFrameClock::default();
+    clock
+        .advance_frame(0.0, true, false, || unreachable!())
+        .unwrap();
+    assert!(matches!(
+        clock
+            .advance_frame(10.0, true, false, || FlightTickAdmission::Waiting)
+            .unwrap(),
+        FlightFrameAdvance::Ticks { count: 0, .. }
+    ));
+    assert!(matches!(
+        clock
+            .advance_frame(5010.0, true, false, || FlightTickAdmission::Awaiting)
+            .unwrap(),
+        FlightFrameAdvance::Ticks { count: 1, .. }
+    ));
+    assert!(matches!(
+        clock
+            .advance_frame(9010.0, true, false, || unreachable!())
+            .unwrap(),
+        FlightFrameAdvance::Ticks { count: 0, .. }
+    ));
+    assert!(matches!(
+        clock
+            .advance_frame(9020.0, true, false, || FlightTickAdmission::Advanced)
+            .unwrap(),
+        FlightFrameAdvance::Ticks { count: 1, .. }
+    ));
+    assert!(!clock.processing_delayed());
 }

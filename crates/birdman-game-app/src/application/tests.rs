@@ -175,7 +175,8 @@ fn public_defaults_and_live_selection_use_the_selected_controller_authority() {
     assert_eq!(application.seed(), crate::DEFAULT_SESSION_SEED);
     execute(&mut application, SessionCommand::OpenSetup {});
     execute(&mut application, SessionCommand::Prepare {});
-    let ControlMode::Shared(authority) = application.prepared().unwrap().control_mode else {
+    let ControlMode::Shared(authority) = application.prepared().unwrap().execution.requested_mode()
+    else {
         panic!("Mixed assistance must use shared authority");
     };
     assert_eq!(
@@ -213,7 +214,10 @@ fn public_defaults_and_live_selection_use_the_selected_controller_authority() {
         } else {
             mode
         };
-        assert_eq!(explicit.prepared().unwrap().control_mode, expected);
+        assert_eq!(
+            explicit.prepared().unwrap().execution.requested_mode(),
+            expected
+        );
         assert_eq!(explicit.display_control_mode(), Some(expected));
     }
 
@@ -926,10 +930,19 @@ fn shared_attract_keeps_player_selection_and_reuses_the_installed_record() {
     assert_ne!(source, empty_source);
     let record = application.core_session().playback_record().unwrap();
     let address = record.samples().as_ptr();
-    assert!(record.header().control_mode.is_some());
+    assert!(
+        record
+            .header()
+            .execution
+            .and_then(|execution| execution.builtin_mode())
+            .is_some()
+    );
     assert_eq!(
         application.display_control_mode(),
-        record.header().control_mode
+        record
+            .header()
+            .execution
+            .and_then(|execution| execution.builtin_mode())
     );
     assert!(record.duration_seconds().unwrap() > 0.0);
     assert!(

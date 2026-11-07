@@ -100,12 +100,14 @@ impl GameSessionConfiguration {
         requested_mode: ControlMode,
         maximum_flight_ticks: u64,
         identity: SessionScenarioIdentity,
-        execution_identity: [u8; 32],
     ) -> Result<Self, GameSessionError> {
         validate_configuration_identity(maximum_flight_ticks, identity)?;
         if !scenario.is_external() {
             return Err(GameSessionError::InvalidControllerExecution);
         }
+        let execution_identity = identity
+            .controller_identity
+            .ok_or(GameSessionError::InvalidControllerExecution)?;
         Ok(Self {
             scenario,
             maximum_flight_ticks,

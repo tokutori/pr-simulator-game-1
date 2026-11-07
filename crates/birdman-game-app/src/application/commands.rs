@@ -129,6 +129,8 @@ pub enum ApplicationError {
     Input(birdman_game_core::TailControlError),
     /// A demonstration record query rejected invalid or empty finalized data.
     Record(birdman_game_core::FlightRecordQueryError),
+    /// External software preparation or connection failed before launch.
+    ControllerExecution(String),
 }
 #[cfg(not(verus_only))]
 impl core::fmt::Display for ApplicationError {
@@ -142,6 +144,7 @@ impl core::fmt::Display for ApplicationError {
             Self::NotSelection => f.write_str("Command is not a difficulty selection"),
             Self::Input(_) => f.write_str("Pilot intent was rejected"),
             Self::Record(_) => f.write_str("Application record query failed"),
+            Self::ControllerExecution(cause) => f.write_str(cause),
         }
     }
 }
@@ -169,11 +172,16 @@ pub struct PreparedFlight {
     /// Archive definition identity.
     pub record_identity: FlightRecordTailIdentityDocument,
     /// Sealed software controller.
-    pub controller_profile: TailControlProfile,
+    pub controller_profile: Option<TailControlProfile>,
+    /// Body-rate request bounds used by shared raw-input normalization.
+    pub(super) body_rate_bounds: [[f64; 2]; 2],
+    /// First external software/transport fault retained with this record.
+    pub controller_fault:
+        Option<birdman_game_format::external_controller::ControllerExecutionFault>,
     /// Sealed distance-scoring direction.
     pub course_axis: CourseAxis,
     /// Resolved authority mode.
-    pub control_mode: ControlMode,
+    pub execution: birdman_game_core::ControllerExecution,
     contact_shape: AircraftContactBuffer,
     wind: birdman_game_core::WindField<'static>,
 }
@@ -260,6 +268,10 @@ pub(crate) fn resolve_difficulty(
 }
 
 /// Seals the same model, weather, controller and metadata into the existing session owner.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "One preparation seals selected model, software and physical identity"
+)]
 pub(crate) fn prepare_flight(
     session: &mut GameSession,
     selected: &crate::SelectedAircraft,
@@ -267,19 +279,37 @@ pub(crate) fn prepare_flight(
     difficulty: DifficultySettings,
     maximum_ticks: u64,
     seed: u64,
+    execution_state: &mut crate::controller::execution::ControllerExecutionState,
+    observed_ms: f64,
 ) -> Result<PreparedFlight, ApplicationError> {
     let control_mode = control_mode(
         difficulty.assistance(),
         controller.document().shared_authority,
     )
     .map_err(ApplicationError::Control)?;
-    let preparation = HybridSessionPreparation::try_new_for_weather(
+    let heading = crate::launch_venue()
+        .map_err(|cause| {
+            ApplicationError::Preparation(HybridSessionPreparationError::Venue(cause))
+        })?
+        .platform
+        .heading_rad();
+    let descriptor = execution_state
+        .prepare(
+            controller,
+            selected.definition(),
+            control_mode,
+            Some(heading),
+            observed_ms,
+        )
+        .map_err(ApplicationError::ControllerExecution)?;
+    let preparation = HybridSessionPreparation::try_new_for_weather_with_execution(
         selected,
         controller,
         control_mode,
         maximum_ticks,
         seed,
         difficulty.weather(),
+        descriptor.as_ref(),
     )
     .map_err(ApplicationError::Preparation)?;
     let controller_profile = preparation.controller_profile();
@@ -308,7 +338,7 @@ pub(crate) fn prepare_flight(
         .map_err(HybridSessionPreparationError::Scenario)
         .map_err(ApplicationError::Preparation)?;
     let aircraft = configuration.aircraft();
-    let control_mode = configuration.control_mode();
+    let execution = configuration.execution();
     session
         .prepare_flight(configuration)
         .map_err(ApplicationError::Session)?;
@@ -317,8 +347,10 @@ pub(crate) fn prepare_flight(
         aircraft,
         record_identity,
         controller_profile,
+        body_rate_bounds: controller.document().body_rate_bounds_rad_per_second,
+        controller_fault: None,
         course_axis,
-        control_mode,
+        execution,
         contact_shape,
         wind,
     })

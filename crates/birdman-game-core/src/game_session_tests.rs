@@ -1127,7 +1127,6 @@ fn briefing_record_factory_preserves_the_owner_on_failure_and_receives_the_seale
             requested_mode,
             100,
             sealed.identity,
-            [0; 32]
         ),
         Err(GameSessionError::InvalidControllerExecution)
     ));
