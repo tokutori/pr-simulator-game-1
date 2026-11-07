@@ -476,12 +476,87 @@ impl ApplicationRuntime {
         &mut self,
         observation: ApplicationObservation,
     ) -> Result<ApplicationOutput, ApplicationRuntimeError> {
-        let ApplicationObservation { observed_ms, input } = observation;
-        if !observed_ms.is_finite() || observed_ms < self.observed_ms {
-            return Err(ApplicationRuntimeError::InvalidTimestamp);
+        let ApplicationObservation {
+            mut observed_ms,
+            input,
+        } = observation;
+        let arrival_valid = observed_ms.is_finite() && observed_ms >= self.observed_ms;
+        if !arrival_valid {
+            let kind = match &input {
+                ApplicationInput::Frame { .. } => "frame",
+                ApplicationInput::XrSelect { .. } => "xr_select",
+                ApplicationInput::Wake { .. } => "wake",
+                ApplicationInput::ControllerIo { .. } => "controller_io",
+                ApplicationInput::Keyboard { .. } | ApplicationInput::PhysicalKey { .. } => {
+                    "keyboard"
+                }
+                _ => "event_or_completion",
+            };
+            self.diagnostic = Some(format!(
+                "Observation timestamp rejected: domain=arrival input={kind} raw={observed_ms} last={}",
+                self.observed_ms
+            ));
+            if matches!(
+                &input,
+                ApplicationInput::Frame { .. } | ApplicationInput::XrSelect { .. }
+            ) {
+                return Ok(self.output(None, Vec::new(), false));
+            }
+            if let ApplicationInput::Wake { request_id } = &input {
+                // The platform already consumed its timer. Preserve the owner operation and
+                // request one new notification without advancing its deadline clock.
+                let wake = if let Some((id, at_ms)) = self.controller_wake
+                    && id == *request_id
+                {
+                    Some(ApplicationRequest::ScheduleWake {
+                        request_id: id,
+                        at_ms,
+                        realtime: true,
+                    })
+                } else if self.phone_wake == Some(*request_id) {
+                    self.phone
+                        .deadline()
+                        .map(|at_ms| ApplicationRequest::ScheduleWake {
+                            request_id: *request_id,
+                            at_ms,
+                            realtime: false,
+                        })
+                } else {
+                    None
+                };
+                return Ok(self.output(None, wake.into_iter().collect(), false));
+            }
+            // Completion identities, key releases and cleanup still need admission. A bad
+            // envelope supplies no new elapsed time; raw I/O sample times remain untouched.
+            observed_ms = self.observed_ms;
         }
+        let source_time = match &input {
+            ApplicationInput::Frame { timestamp_ms, .. } => Some(("frame", *timestamp_ms, false)),
+            ApplicationInput::XrSelect { timestamp_ms, .. } => {
+                Some(("xr_select", *timestamp_ms, true))
+            }
+            _ => None,
+        };
+        let source_rejected = if let Some((kind, timestamp_ms, event_time)) = source_time
+            && (!timestamp_ms.is_finite()
+                || timestamp_ms < 0.0
+                || (event_time && timestamp_ms > observed_ms))
+        {
+            self.diagnostic = Some(format!(
+                "Observation timestamp rejected: domain=source input={kind} raw={timestamp_ms} arrival={observed_ms} last={}",
+                self.observed_ms
+            ));
+            true
+        } else {
+            false
+        };
         self.observed_ms = observed_ms;
-        self.application.observe_controller_time(observed_ms);
+        if arrival_valid {
+            self.application
+                .observe_controller_time(observed_ms)
+                .map_err(ApplicationRuntimeError::Application)?;
+            self.reconcile_controller_observation(observed_ms)?;
+        }
         let input = match input {
             ApplicationInput::PageHide { persisted: false } => ApplicationInput::Dispose,
             input => input,
@@ -557,7 +632,8 @@ impl ApplicationRuntime {
                 self.graphics.epoch(),
             )
         });
-        let io_continuation = self.presentation_lease.is_some()
+        let io_continuation = source_rejected
+            || self.presentation_lease.is_some()
             || match &input {
                 ApplicationInput::ControllerIo { .. }
                 | ApplicationInput::RecordSaveOpened { .. } => true,
@@ -587,83 +663,65 @@ impl ApplicationRuntime {
         let mut keyboard_consumed = false;
         let mut spatial_frame = None;
         let mut render_spatial = false;
-        match input {
-            ApplicationInput::ControllerIo { observation } => {
-                self.application
-                    .observe_controller_io(observation)
-                    .map_err(ApplicationRuntimeError::Application)?;
-                if !self.shutdown.closed()
-                    && self.application.core_session().snapshot().phase()
-                        == SessionPhase::BriefingPreparing
-                {
+        if !source_rejected {
+            match input {
+                ApplicationInput::ControllerIo { observation } => {
                     self.application
-                        .observe_readiness(self.resource_readiness)
-                        .map_err(ApplicationRuntimeError::Session)?;
+                        .observe_controller_io(observation, arrival_valid)
+                        .map_err(ApplicationRuntimeError::Application)?;
+                    if arrival_valid {
+                        self.reconcile_controller_observation(observed_ms)?;
+                    }
                 }
-                if !self.shutdown.closed()
-                    && self.application.controller_realtime()
-                    && self.application.controller_has_candidate()
-                    && self.application.core_session().snapshot().phase()
-                        == SessionPhase::FlightRunning
-                {
-                    self.application
-                        .advance_flight_frame(
-                            observed_ms,
-                            &self.controller_gamepads,
-                            self.presentation_input_focused(),
-                        )
-                        .map_err(ApplicationRuntimeError::Flight)?;
-                }
-            }
-            ApplicationInput::ConfigurationLoaded {
-                document,
-                request_id,
-                completion,
-            } => {
-                let write_id = self.allocate_request()?;
-                let (selected, request) = self.storage.configuration_read_completed(
+                ApplicationInput::ConfigurationLoaded {
                     document,
                     request_id,
                     completion,
-                    &self.application,
-                    write_id,
-                );
-                requests.extend(request);
-                if let Some(selected) = selected {
-                    selected
-                        .apply(&mut self.application)
-                        .map_err(ApplicationRuntimeError::Session)?;
+                } => {
+                    let write_id = self.allocate_request()?;
+                    let (selected, request) = self.storage.configuration_read_completed(
+                        document,
+                        request_id,
+                        completion,
+                        &self.application,
+                        write_id,
+                    );
+                    requests.extend(request);
+                    if let Some(selected) = selected {
+                        selected
+                            .apply(&mut self.application)
+                            .map_err(ApplicationRuntimeError::Session)?;
+                    }
                 }
-            }
-            ApplicationInput::ConfigurationSaved {
-                document,
-                request_id,
-                failure,
-            } => {
-                if let Some(selected) = self.storage.configuration_saved(
+                ApplicationInput::ConfigurationSaved {
                     document,
                     request_id,
                     failure,
-                    &self.application,
-                ) {
-                    selected
-                        .apply(&mut self.application)
-                        .map_err(ApplicationRuntimeError::Session)?;
+                } => {
+                    if let Some(selected) = self.storage.configuration_saved(
+                        document,
+                        request_id,
+                        failure,
+                        &self.application,
+                    ) {
+                        selected
+                            .apply(&mut self.application)
+                            .map_err(ApplicationRuntimeError::Session)?;
+                    }
                 }
-            }
-            ApplicationInput::KeyboardControlsLoaded {
-                request_id,
-                completion,
-            } => {
-                if let Some(settings) = self.storage.keyboard_loaded(request_id, completion)
-                    && !self.shutdown.closed()
-                    && self.boot.active()
-                    && matches!(
-                        self.application.core_session().snapshot().phase(),
-                        SessionPhase::Title | SessionPhase::FlightSetup
-                    )
-                {
-                    self.application
+                ApplicationInput::KeyboardControlsLoaded {
+                    request_id,
+                    completion,
+                } => {
+                    if let Some(settings) = self.storage.keyboard_loaded(request_id, completion)
+                        && !self.shutdown.closed()
+                        && self.boot.active()
+                        && matches!(
+                            self.application.core_session().snapshot().phase(),
+                            SessionPhase::Title | SessionPhase::FlightSetup
+                        )
+                    {
+                        self.application
                         .execute(
                             birdman_game_app::application::SessionCommand::SetKeyboardControls {
                                 settings,
@@ -671,489 +729,478 @@ impl ApplicationRuntime {
                             self.resource_readiness,
                         )
                         .map_err(ApplicationRuntimeError::Application)?;
+                    }
                 }
-            }
-            ApplicationInput::KeyboardControlsSaved {
-                request_id,
-                failure,
-            } => {
-                self.storage.keyboard_written(request_id, failure);
-            }
-            ApplicationInput::DisplaySettingsLoaded {
-                request_id,
-                completion,
-            } => {
-                if let Some(settings) = self.storage.display_loaded(request_id, completion)
-                    && !self.shutdown.closed()
-                    && self.boot.active()
-                    && matches!(
-                        self.application.core_session().snapshot().phase(),
-                        SessionPhase::Title
-                            | SessionPhase::FlightSetup
-                            | SessionPhase::FlightPaused { .. }
-                    )
-                {
-                    self.application
-                        .execute(
-                            birdman_game_app::application::SessionCommand::SetDisplaySettings {
-                                settings,
-                            },
-                            self.resource_readiness,
+                ApplicationInput::KeyboardControlsSaved {
+                    request_id,
+                    failure,
+                } => {
+                    self.storage.keyboard_written(request_id, failure);
+                }
+                ApplicationInput::DisplaySettingsLoaded {
+                    request_id,
+                    completion,
+                } => {
+                    if let Some(settings) = self.storage.display_loaded(request_id, completion)
+                        && !self.shutdown.closed()
+                        && self.boot.active()
+                        && matches!(
+                            self.application.core_session().snapshot().phase(),
+                            SessionPhase::Title
+                                | SessionPhase::FlightSetup
+                                | SessionPhase::FlightPaused { .. }
                         )
-                        .map_err(ApplicationRuntimeError::Application)?;
+                    {
+                        self.application
+                            .execute(
+                                birdman_game_app::application::SessionCommand::SetDisplaySettings {
+                                    settings,
+                                },
+                                self.resource_readiness,
+                            )
+                            .map_err(ApplicationRuntimeError::Application)?;
+                    }
                 }
-            }
-            ApplicationInput::DisplaySettingsSaved {
-                request_id,
-                failure,
-            } => {
-                self.storage.display_written(request_id, failure);
-            }
-            ApplicationInput::PhoneSensorsStarted {
-                resource_id,
-                failure,
-            } => {
-                if self
-                    .phone
-                    .started(resource_id, failure.as_deref(), observed_ms, &mut requests)
-                {
-                    self.diagnostic = failure;
+                ApplicationInput::DisplaySettingsSaved {
+                    request_id,
+                    failure,
+                } => {
+                    self.storage.display_written(request_id, failure);
                 }
-            }
-            ApplicationInput::PhoneSensorsStopped {
-                resource_id,
-                failure,
-            } => {
-                if self.phone.stopped(resource_id, failure.as_deref()) {
-                    self.diagnostic = failure;
+                ApplicationInput::PhoneSensorsStarted {
+                    resource_id,
+                    failure,
+                } => {
+                    if self.phone.started(
+                        resource_id,
+                        failure.as_deref(),
+                        observed_ms,
+                        &mut requests,
+                    ) {
+                        self.diagnostic = failure;
+                    }
                 }
-            }
-            ApplicationInput::RendererFailed {
-                renderer_resource_id,
-                cause,
-            } => {
-                if self
-                    .graphics
-                    .invalidate_renderer(renderer_resource_id, observed_ms)
-                    .map_err(ApplicationRuntimeError::Graphics)?
-                {
-                    self.diagnostic = Some(cause);
-                    if self.boot.active() {
-                        self.boot.fail(self.diagnostic.as_deref());
-                    } else {
-                        self.platform.renderer_failure = Some(
-                            "描画を続けられない。ゲームを再読み込みして再試行する。".to_owned(),
+                ApplicationInput::PhoneSensorsStopped {
+                    resource_id,
+                    failure,
+                } => {
+                    if self.phone.stopped(resource_id, failure.as_deref()) {
+                        self.diagnostic = failure;
+                    }
+                }
+                ApplicationInput::RendererFailed {
+                    renderer_resource_id,
+                    cause,
+                } => {
+                    if self
+                        .graphics
+                        .invalidate_renderer(renderer_resource_id, observed_ms)
+                        .map_err(ApplicationRuntimeError::Graphics)?
+                    {
+                        self.diagnostic = Some(cause);
+                        if self.boot.active() {
+                            self.boot.fail(self.diagnostic.as_deref());
+                        } else {
+                            self.platform.renderer_failure = Some(
+                                "描画を続けられない。ゲームを再読み込みして再試行する。".to_owned(),
+                            );
+                        }
+                    }
+                }
+                ApplicationInput::DocumentFocus { focused } => {
+                    self.document_focused = focused;
+                    if !focused {
+                        self.application.invalidate_flight_input();
+                        if self.display.state().active_mode() != Some(GameUiPresentationMode::Hmd) {
+                            self.surface.retire_input();
+                        }
+                    }
+                }
+                ApplicationInput::DisplayEnded { resource_id, cause } => {
+                    if self.display.active_resource() == Some(resource_id) {
+                        if let Some(cause) = cause {
+                            self.diagnostic = Some(cause);
+                        }
+                        let next_id = self.allocate_request()?;
+                        requests.extend(
+                            self.display
+                                .ended(resource_id, next_id)
+                                .into_iter()
+                                .map(|request| ApplicationRequest::Display { request }),
                         );
                     }
                 }
-            }
-            ApplicationInput::DocumentFocus { focused } => {
-                self.document_focused = focused;
-                if !focused {
-                    self.application.invalidate_flight_input();
-                    if self.display.state().active_mode() != Some(GameUiPresentationMode::Hmd) {
-                        self.surface.retire_input();
-                    }
+                ApplicationInput::Dispose => {
+                    self.close(&mut requests);
                 }
-            }
-            ApplicationInput::DisplayEnded { resource_id, cause } => {
-                if self.display.active_resource() == Some(resource_id) {
-                    if let Some(cause) = cause {
+                ApplicationInput::PageHide { persisted: true } => {
+                    self.page_frozen = true;
+                    self.page_visible = false;
+                    self.application.invalidate_flight_input();
+                }
+                ApplicationInput::PageHide { persisted: false } => unreachable!(),
+                ApplicationInput::RendererReleased { failure, .. }
+                | ApplicationInput::DisplayReleased { failure, .. }
+                | ApplicationInput::RecordIoCancelled { failure, .. } => {
+                    if admitted_terminal && let Some(cause) = failure {
                         self.diagnostic = Some(cause);
                     }
-                    let next_id = self.allocate_request()?;
-                    requests.extend(
-                        self.display
-                            .ended(resource_id, next_id)
-                            .into_iter()
-                            .map(|request| ApplicationRequest::Display { request }),
-                    );
                 }
-            }
-            ApplicationInput::Dispose => {
-                self.close(&mut requests);
-            }
-            ApplicationInput::PageHide { persisted: true } => {
-                self.page_frozen = true;
-                self.page_visible = false;
-                self.application.invalidate_flight_input();
-            }
-            ApplicationInput::PageHide { persisted: false } => unreachable!(),
-            ApplicationInput::RendererReleased { failure, .. }
-            | ApplicationInput::DisplayReleased { failure, .. }
-            | ApplicationInput::RecordIoCancelled { failure, .. } => {
-                if admitted_terminal && let Some(cause) = failure {
-                    self.diagnostic = Some(cause);
-                }
-            }
-            ApplicationInput::RendererCreated { request_id, result } => {
-                if self.boot.accepts(request_id) {
-                    match result {
-                        ApplicationRendererCreation::Ready { renderer } => {
-                            self.graphics
-                                .adopt(Some(&renderer), self.render_scope(), observed_ms)
-                                .map_err(ApplicationRuntimeError::Graphics)?;
-                            self.boot = boot::BootOwner::Preparing;
-                        }
-                        ApplicationRendererCreation::Failed { cause } => {
-                            self.diagnostic = Some(cause);
-                            self.boot.fail(self.diagnostic.as_deref());
-                        }
-                    }
-                } else if let ApplicationRendererCreation::Ready { renderer } = result
-                    && self
-                        .graphics
-                        .renderer_id()
-                        .is_none_or(|id| id != renderer.resource_id)
-                {
-                    requests.push(ApplicationRequest::ReleaseRenderer {
-                        renderer_resource_id: renderer.resource_id,
-                    });
-                }
-            }
-            ApplicationInput::RecordPreviewObserved {
-                request_id,
-                observation,
-            } => {
-                if let Some(items) =
-                    self.storage
-                        .preview_observed(request_id, observation, &mut requests)
-                {
-                    self.platform.stored_records = items
-                        .into_iter()
-                        .map(
-                            |item| birdman_game_presentation::game_ui::GameUiStoredRecord {
-                                id: item.id,
-                                saved_at: item.saved_at,
-                                personal_best: item.personal_best,
-                            },
-                        )
-                        .collect::<Vec<_>>()
-                        .into();
-                }
-            }
-            ApplicationInput::DownloadCompleted {
-                request_id,
-                failure,
-            } => {
-                if let Some(notification) = self.storage.downloaded(request_id, failure) {
-                    self.platform.notification = notification;
-                }
-            }
-            ApplicationInput::RecordLoaded {
-                request_id,
-                completion,
-            } => {
-                let previous_phase = self.application.core_session().snapshot().phase();
-                if let Some(notification) =
-                    self.storage
-                        .loaded(request_id, completion, &mut self.application)
-                {
-                    self.platform.notification = notification;
-                }
-                self.observe_replay_entry(previous_phase);
-            }
-            ApplicationInput::RecordSaveOpened {
-                request_id,
-                unix_milliseconds,
-            } => {
-                requests.extend(self.storage.opened(request_id, unix_milliseconds));
-            }
-            ApplicationInput::RecordSaveObserved {
-                request_id,
-                observation,
-            } => {
-                self.storage
-                    .observe(request_id, observation, &self.application, &mut requests);
-            }
-            ApplicationInput::Graphics {
-                renderer_resource_id,
-                observation,
-            } => {
-                if let Some(cause) = self
-                    .graphics
-                    .observe(renderer_resource_id, observation, observed_ms)
-                    .map_err(ApplicationRuntimeError::Graphics)?
-                {
-                    self.diagnostic = Some(cause);
-                }
-            }
-            ApplicationInput::ResourcesReleased {
-                resource_id,
-                failure,
-            } => {
-                if self.assets.released(resource_id, failure.is_some())
-                    && let Some(cause) = failure
-                {
-                    self.diagnostic = Some(cause);
-                    self.graphics
-                        .cleanup_failed(observed_ms)
-                        .map_err(ApplicationRuntimeError::Graphics)?;
-                }
-            }
-            ApplicationInput::XrSelect {
-                display_resource_id,
-                presentation_id,
-                pointer,
-                timestamp_ms,
-            } => {
-                if timestamp_ms > observed_ms {
-                    return Err(ApplicationRuntimeError::InvalidTimestamp);
-                }
-                if self.spatial_input_focused()
-                    && self.display.active_resource() == display_resource_id
-                    && let Some(action) =
-                        self.surface
-                            .select(presentation_id, pointer, timestamp_ms)?
-                {
-                    self.apply_surface_action(action, &mut requests)?;
-                }
-            }
-            ApplicationInput::XrReferenceReset {
-                resource_id,
-                previous_from_new,
-            } => {
-                if self.display.state().active_mode() == Some(GameUiPresentationMode::Hmd)
-                    && self.display.active_resource() == Some(resource_id)
-                    && previous_from_new
-                        .is_none_or(|change| self.reset_xr_reference(resource_id, change).is_err())
-                {
-                    self.xr_viewer = None;
-                    self.recover_screen(
-                        "VRの基準位置を取得できないため通常画面へ戻る。",
-                        &mut requests,
-                    )?;
-                }
-            }
-            ApplicationInput::PointerMotion { delta_px, .. } => {
-                self.scene
-                    .observe_look(delta_px)
-                    .map_err(ApplicationRuntimeError::Camera)?
-            }
-            ApplicationInput::XrSessionState {
-                resource_id,
-                visibility,
-                input_focused,
-            } => {
-                if self.xr_resource == Some(resource_id) {
-                    self.xr_visibility = visibility;
-                    self.xr_input_focused = input_focused;
-                }
-            }
-            ApplicationInput::PageVisibility { visible } => {
-                self.page_visible = visible;
-                if visible {
-                    self.page_frozen = false;
-                }
-            }
-            ApplicationInput::PhoneOrientation {
-                resource_id,
-                observation,
-            } => {
-                self.phone
-                    .observe_orientation(resource_id, observation, observed_ms);
-            }
-            ApplicationInput::PhoneMotion {
-                resource_id,
-                observation,
-            } => {
-                self.phone
-                    .observe_motion(resource_id, observation, observed_ms);
-            }
-            ApplicationInput::PhoneScreenRotation {
-                resource_id,
-                angle_degrees,
-            } => {
-                self.phone.screen_changed(resource_id, angle_degrees);
-            }
-            ApplicationInput::Wake { request_id } => {
-                if let Some((id, at_ms)) = self.controller_wake
-                    && id == request_id
-                {
-                    self.controller_wake = None;
-                    if observed_ms >= at_ms {
-                        self.application
-                            .observe_controller_deadline()
-                            .map_err(ApplicationRuntimeError::Application)?;
-                        if !self.shutdown.closed()
-                            && self.application.controller_realtime()
-                            && self.application.core_session().snapshot().phase()
-                                == SessionPhase::FlightRunning
-                            && let Some(tick_at) = self.controller_next_tick_ms
-                            && observed_ms >= tick_at
-                        {
-                            let next=tick_at+birdman_game_format::external_controller::HITL_INTERVAL_MILLISECONDS;
-                            if observed_ms > next {
-                                self.application
-                                    .miss_controller_clock()
-                                    .map_err(ApplicationRuntimeError::Application)?;
-                            } else {
-                                self.controller_next_tick_ms = Some(next);
-                                self.application.arm_controller_tick_deadline(next);
-                                self.application
-                                    .advance_flight_frame(
-                                        observed_ms,
-                                        &self.controller_gamepads,
-                                        self.presentation_input_focused(),
-                                    )
-                                    .map_err(ApplicationRuntimeError::Flight)?;
+                ApplicationInput::RendererCreated { request_id, result } => {
+                    if self.boot.accepts(request_id) {
+                        match result {
+                            ApplicationRendererCreation::Ready { renderer } => {
+                                self.graphics
+                                    .adopt(Some(&renderer), self.render_scope(), observed_ms)
+                                    .map_err(ApplicationRuntimeError::Graphics)?;
+                                self.boot = boot::BootOwner::Preparing;
+                            }
+                            ApplicationRendererCreation::Failed { cause } => {
+                                self.diagnostic = Some(cause);
+                                self.boot.fail(self.diagnostic.as_deref());
                             }
                         }
-                    }
-                } else if self.phone_wake == Some(request_id) {
-                    self.phone_wake = None;
-                }
-            }
-            ApplicationInput::Frame {
-                display_resource_id,
-                timestamp_ms,
-                gamepads,
-                xr,
-                spatial,
-            } => {
-                if self.display.state().active_mode().is_some()
-                    && self.display.active_resource() == display_resource_id
-                {
-                    if !timestamp_ms.is_finite() || timestamp_ms < 0.0 {
-                        return Err(ApplicationRuntimeError::InvalidTimestamp);
-                    }
-                    let progression_ms = if self.display.state().active_mode()
-                        == Some(GameUiPresentationMode::Hmd)
+                    } else if let ApplicationRendererCreation::Ready { renderer } = result
+                        && self
+                            .graphics
+                            .renderer_id()
+                            .is_none_or(|id| id != renderer.resource_id)
                     {
-                        observed_ms
-                    } else {
-                        timestamp_ms
-                    };
-                    if progression_ms > observed_ms {
-                        return Err(ApplicationRuntimeError::InvalidTimestamp);
-                    }
-                    self.frame_rate.observe(timestamp_ms);
-                    if self.xr_resource.is_some() {
-                        self.xr_viewer = Some(match xr {
-                            Some(xr) => {
-                                self.xr_visibility = xr.visibility;
-                                self.xr_input_focused = xr.input_focused;
-                                capture_xr_viewer(xr.observation)
-                            }
-                            None => XrViewerFrame::Unavailable {
-                                reason: XrViewerUnavailableReason::ViewerUnavailable,
-                                tracking_from_head: None,
-                            },
+                        requests.push(ApplicationRequest::ReleaseRenderer {
+                            renderer_resource_id: renderer.resource_id,
                         });
                     }
-                    self.synchronize_xr()?;
-                    if !self.display.state().pending() {
-                        let flight_gamepads: Vec<_> = gamepads
-                            .iter()
-                            .filter(|_| self.document_focused)
-                            .filter_map(ApplicationGamepadObservation::flight)
-                            .collect();
-                        self.controller_gamepads.clone_from(&flight_gamepads);
-                        self.advance_frame(
-                            progression_ms,
-                            &flight_gamepads,
-                            self.presentation_input_focused(),
-                        )?;
-                        spatial_frame = Some((spatial, observed_ms));
+                }
+                ApplicationInput::RecordPreviewObserved {
+                    request_id,
+                    observation,
+                } => {
+                    if let Some(items) =
+                        self.storage
+                            .preview_observed(request_id, observation, &mut requests)
+                    {
+                        self.platform.stored_records = items
+                            .into_iter()
+                            .map(
+                                |item| birdman_game_presentation::game_ui::GameUiStoredRecord {
+                                    id: item.id,
+                                    saved_at: item.saved_at,
+                                    personal_best: item.personal_best,
+                                },
+                            )
+                            .collect::<Vec<_>>()
+                            .into();
                     }
-                    render_spatial = true;
                 }
-            }
-            ApplicationInput::Control {
-                view_revision,
-                input,
-            } => {
-                if self.presentation_input_focused() {
-                    self.apply_action(
-                        view_revision,
-                        GameUiAction::ControlInput { input },
-                        &mut requests,
-                    )?;
+                ApplicationInput::DownloadCompleted {
+                    request_id,
+                    failure,
+                } => {
+                    if let Some(notification) = self.storage.downloaded(request_id, failure) {
+                        self.platform.notification = notification;
+                    }
                 }
-            }
-            ApplicationInput::ChartMeasured {
-                view_revision,
-                control_id,
-                extent,
-            } => {
-                let current = self
-                    .retained
-                    .as_ref()
-                    .filter(|view| view.view_revision == view_revision)
-                    .and_then(|view| {
-                        view.panels
-                            .iter()
-                            .flat_map(|panel| &panel.controls)
-                            .find(|control| control.id == control_id)
-                    })
-                    .and_then(|control| match &control.content {
-                        birdman_game_presentation::game_ui::GameUiControlContent::Chart {
-                            plot,
-                            ..
-                        } => Some(plot.presentation.measurement_minimum),
-                        _ => None,
-                    });
-                if let Some(minimum) = current
-                    && extent.width.is_finite()
-                    && extent.height.is_finite()
-                    && extent.width >= minimum.width
-                    && extent.height >= minimum.height
-                    && self.platform.chart_extent != Some(extent)
-                {
-                    self.platform.chart_extent = Some(extent);
+                ApplicationInput::RecordLoaded {
+                    request_id,
+                    completion,
+                } => {
+                    let previous_phase = self.application.core_session().snapshot().phase();
+                    if let Some(notification) =
+                        self.storage
+                            .loaded(request_id, completion, &mut self.application)
+                    {
+                        self.platform.notification = notification;
+                    }
+                    self.observe_replay_entry(previous_phase);
                 }
-            }
-            ApplicationInput::ControlPointer {
-                view_revision,
-                control_id,
-                pointer_id,
-                pointer_kind,
-                phase,
-                button,
-                buttons,
-                is_primary,
-                position,
-                rect,
-            } => {
-                if self.observe_flight_pointer(
+                ApplicationInput::RecordSaveOpened {
+                    request_id,
+                    unix_milliseconds,
+                } => {
+                    requests.extend(self.storage.opened(request_id, unix_milliseconds));
+                }
+                ApplicationInput::RecordSaveObserved {
+                    request_id,
+                    observation,
+                } => {
+                    self.storage
+                        .observe(request_id, observation, &self.application, &mut requests);
+                }
+                ApplicationInput::Graphics {
+                    renderer_resource_id,
+                    observation,
+                } => {
+                    if let Some(cause) = self
+                        .graphics
+                        .observe(renderer_resource_id, observation, observed_ms)
+                        .map_err(ApplicationRuntimeError::Graphics)?
+                    {
+                        self.diagnostic = Some(cause);
+                    }
+                }
+                ApplicationInput::ResourcesReleased {
+                    resource_id,
+                    failure,
+                } => {
+                    if self.assets.released(resource_id, failure.is_some())
+                        && let Some(cause) = failure
+                    {
+                        self.diagnostic = Some(cause);
+                        self.graphics
+                            .cleanup_failed(observed_ms)
+                            .map_err(ApplicationRuntimeError::Graphics)?;
+                    }
+                }
+                ApplicationInput::XrSelect {
+                    display_resource_id,
+                    presentation_id,
+                    pointer,
+                    timestamp_ms,
+                } => {
+                    if self.spatial_input_focused()
+                        && self.display.active_resource() == display_resource_id
+                        && let Some(action) =
+                            self.surface
+                                .select(presentation_id, pointer, timestamp_ms)?
+                    {
+                        self.apply_surface_action(action, &mut requests)?;
+                    }
+                }
+                ApplicationInput::XrReferenceReset {
+                    resource_id,
+                    previous_from_new,
+                } => {
+                    if self.display.state().active_mode() == Some(GameUiPresentationMode::Hmd)
+                        && self.display.active_resource() == Some(resource_id)
+                        && previous_from_new.is_none_or(|change| {
+                            self.reset_xr_reference(resource_id, change).is_err()
+                        })
+                    {
+                        self.xr_viewer = None;
+                        self.recover_screen(
+                            "VRの基準位置を取得できないため通常画面へ戻る。",
+                            &mut requests,
+                        )?;
+                    }
+                }
+                ApplicationInput::PointerMotion { delta_px, .. } => self
+                    .scene
+                    .observe_look(delta_px)
+                    .map_err(ApplicationRuntimeError::Camera)?,
+                ApplicationInput::XrSessionState {
+                    resource_id,
+                    visibility,
+                    input_focused,
+                } => {
+                    if self.xr_resource == Some(resource_id) {
+                        self.xr_visibility = visibility;
+                        self.xr_input_focused = input_focused;
+                    }
+                }
+                ApplicationInput::PageVisibility { visible } => {
+                    self.page_visible = visible;
+                    if visible {
+                        self.page_frozen = false;
+                    }
+                }
+                ApplicationInput::PhoneOrientation {
+                    resource_id,
+                    observation,
+                } => {
+                    self.phone
+                        .observe_orientation(resource_id, observation, observed_ms);
+                }
+                ApplicationInput::PhoneMotion {
+                    resource_id,
+                    observation,
+                } => {
+                    self.phone
+                        .observe_motion(resource_id, observation, observed_ms);
+                }
+                ApplicationInput::PhoneScreenRotation {
+                    resource_id,
+                    angle_degrees,
+                } => {
+                    self.phone.screen_changed(resource_id, angle_degrees);
+                }
+                ApplicationInput::Wake { request_id } => {
+                    if let Some((id, at_ms)) = self.controller_wake
+                        && id == request_id
+                    {
+                        self.controller_wake = None;
+                        if observed_ms >= at_ms {
+                            self.application
+                                .observe_controller_deadline()
+                                .map_err(ApplicationRuntimeError::Application)?;
+                            if !self.shutdown.closed()
+                                && self.application.controller_realtime()
+                                && self.application.core_session().snapshot().phase()
+                                    == SessionPhase::FlightRunning
+                                && let Some(tick_at) = self.controller_next_tick_ms
+                                && observed_ms >= tick_at
+                            {
+                                let next=tick_at+birdman_game_format::external_controller::HITL_INTERVAL_MILLISECONDS;
+                                if observed_ms > next {
+                                    self.application
+                                        .miss_controller_clock()
+                                        .map_err(ApplicationRuntimeError::Application)?;
+                                } else {
+                                    self.controller_next_tick_ms = Some(next);
+                                    self.application.arm_controller_tick_deadline(next);
+                                    self.application
+                                        .advance_flight_frame(
+                                            observed_ms,
+                                            &self.controller_gamepads,
+                                            self.presentation_input_focused(),
+                                        )
+                                        .map_err(ApplicationRuntimeError::Flight)?;
+                                }
+                            }
+                        }
+                    } else if self.phone_wake == Some(request_id) {
+                        self.phone_wake = None;
+                    }
+                }
+                ApplicationInput::Frame {
+                    display_resource_id,
+                    timestamp_ms,
+                    gamepads,
+                    xr,
+                    spatial,
+                } => {
+                    if self.display.state().active_mode().is_some()
+                        && self.display.active_resource() == display_resource_id
+                    {
+                        self.frame_rate.observe(timestamp_ms);
+                        if self.xr_resource.is_some() {
+                            self.xr_viewer = Some(match xr {
+                                Some(xr) => {
+                                    self.xr_visibility = xr.visibility;
+                                    self.xr_input_focused = xr.input_focused;
+                                    capture_xr_viewer(xr.observation)
+                                }
+                                None => XrViewerFrame::Unavailable {
+                                    reason: XrViewerUnavailableReason::ViewerUnavailable,
+                                    tracking_from_head: None,
+                                },
+                            });
+                        }
+                        self.synchronize_xr()?;
+                        if !self.display.state().pending() {
+                            let flight_gamepads: Vec<_> = gamepads
+                                .iter()
+                                .filter(|_| self.document_focused)
+                                .filter_map(ApplicationGamepadObservation::flight)
+                                .collect();
+                            self.controller_gamepads.clone_from(&flight_gamepads);
+                            self.advance_frame(
+                                observed_ms,
+                                &flight_gamepads,
+                                self.presentation_input_focused(),
+                            )?;
+                            spatial_frame = Some((spatial, observed_ms));
+                        }
+                        render_spatial = true;
+                    }
+                }
+                ApplicationInput::Control {
                     view_revision,
-                    control_id.as_deref(),
+                    input,
+                } => {
+                    if self.presentation_input_focused() {
+                        self.apply_action(
+                            view_revision,
+                            GameUiAction::ControlInput { input },
+                            &mut requests,
+                        )?;
+                    }
+                }
+                ApplicationInput::ChartMeasured {
+                    view_revision,
+                    control_id,
+                    extent,
+                } => {
+                    let current = self
+                        .retained
+                        .as_ref()
+                        .filter(|view| view.view_revision == view_revision)
+                        .and_then(|view| {
+                            view.panels
+                                .iter()
+                                .flat_map(|panel| &panel.controls)
+                                .find(|control| control.id == control_id)
+                        })
+                        .and_then(|control| match &control.content {
+                            birdman_game_presentation::game_ui::GameUiControlContent::Chart {
+                                plot,
+                                ..
+                            } => Some(plot.presentation.measurement_minimum),
+                            _ => None,
+                        });
+                    if let Some(minimum) = current
+                        && extent.width.is_finite()
+                        && extent.height.is_finite()
+                        && extent.width >= minimum.width
+                        && extent.height >= minimum.height
+                        && self.platform.chart_extent != Some(extent)
+                    {
+                        self.platform.chart_extent = Some(extent);
+                    }
+                }
+                ApplicationInput::ControlPointer {
+                    view_revision,
+                    control_id,
                     pointer_id,
                     pointer_kind,
                     phase,
                     button,
                     buttons,
+                    is_primary,
                     position,
                     rect,
-                )? {
-                    // The same raw boundary serves controls and the scene canvas.
-                } else if let Some(control_id) = control_id {
-                    let identity = (view_revision, control_id.clone(), pointer_id, pointer_kind);
-                    if matches!(
+                } => {
+                    if self.observe_flight_pointer(
+                        view_revision,
+                        control_id.as_deref(),
+                        pointer_id,
+                        pointer_kind,
                         phase,
-                        ApplicationPointerPhase::Cancel | ApplicationPointerPhase::LostCapture
-                    ) || !is_primary
-                        || (phase == ApplicationPointerPhase::Move && buttons & 1 == 0)
-                    {
-                        if self.chart_pointer.as_ref() == Some(&identity) {
-                            self.chart_pointer = None;
-                        }
-                    } else if self.presentation_input_focused()
-                        && (phase != ApplicationPointerPhase::Down || button == 0)
-                        && (phase != ApplicationPointerPhase::Up || button == 0 || buttons & 1 == 0)
-                    {
-                        let chart = self
-                            .retained
-                            .as_ref()
-                            .filter(|view| view.view_revision == view_revision)
-                            .and_then(|view| {
-                                view.panels
-                                    .iter()
-                                    .flat_map(|panel| &panel.controls)
-                                    .find(|control| control.id == control_id)
-                            })
-                            .and_then(|control| {
-                                match &control.content {
+                        button,
+                        buttons,
+                        position,
+                        rect,
+                    )? {
+                        // The same raw boundary serves controls and the scene canvas.
+                    } else if let Some(control_id) = control_id {
+                        let identity =
+                            (view_revision, control_id.clone(), pointer_id, pointer_kind);
+                        if matches!(
+                            phase,
+                            ApplicationPointerPhase::Cancel | ApplicationPointerPhase::LostCapture
+                        ) || !is_primary
+                            || (phase == ApplicationPointerPhase::Move && buttons & 1 == 0)
+                        {
+                            if self.chart_pointer.as_ref() == Some(&identity) {
+                                self.chart_pointer = None;
+                            }
+                        } else if self.presentation_input_focused()
+                            && (phase != ApplicationPointerPhase::Down || button == 0)
+                            && (phase != ApplicationPointerPhase::Up
+                                || button == 0
+                                || buttons & 1 == 0)
+                        {
+                            let chart = self
+                                .retained
+                                .as_ref()
+                                .filter(|view| view.view_revision == view_revision)
+                                .and_then(|view| {
+                                    view.panels
+                                        .iter()
+                                        .flat_map(|panel| &panel.controls)
+                                        .find(|control| control.id == control_id)
+                                })
+                                .and_then(|control| {
+                                    match &control.content {
                             birdman_game_presentation::game_ui::GameUiControlContent::Chart {
                                 plot,
                                 ..
@@ -1167,188 +1214,193 @@ impl ApplicationRuntime {
                             )),
                             _ => None,
                         }
-                            });
-                        if let Some((target, value)) = chart {
-                            let range_id = self.retained.as_ref().unwrap().panels.iter().flat_map(|panel| &panel.controls).find_map(|control| match control.content { birdman_game_presentation::game_ui::GameUiControlContent::Range { target: candidate, .. } if candidate == target && control.enabled => Some(control.id.clone()), _ => None });
-                            if phase == ApplicationPointerPhase::Down
-                                && button == 0
-                                && buttons & 1 != 0
-                                && range_id.is_some()
-                            {
-                                self.chart_pointer = Some(identity.clone());
+                                });
+                            if let Some((target, value)) = chart {
+                                let range_id = self.retained.as_ref().unwrap().panels.iter().flat_map(|panel| &panel.controls).find_map(|control| match control.content { birdman_game_presentation::game_ui::GameUiControlContent::Range { target: candidate, .. } if candidate == target && control.enabled => Some(control.id.clone()), _ => None });
+                                if phase == ApplicationPointerPhase::Down
+                                    && button == 0
+                                    && buttons & 1 != 0
+                                    && range_id.is_some()
+                                {
+                                    self.chart_pointer = Some(identity.clone());
+                                }
+                                if self.chart_pointer.as_ref() == Some(&identity)
+                                    && matches!(
+                                        phase,
+                                        ApplicationPointerPhase::Down
+                                            | ApplicationPointerPhase::Move
+                                            | ApplicationPointerPhase::Up
+                                    )
+                                    && let Some(control_id) = range_id
+                                {
+                                    self.apply_action(view_revision, GameUiAction::ControlInput { input: birdman_game_presentation::game_ui::GameUiControlInput::SetRange { control_id, value } }, &mut requests)?;
+                                }
                             }
-                            if self.chart_pointer.as_ref() == Some(&identity)
-                                && matches!(
-                                    phase,
-                                    ApplicationPointerPhase::Down
-                                        | ApplicationPointerPhase::Move
-                                        | ApplicationPointerPhase::Up
-                                )
-                                && let Some(control_id) = range_id
+                            if phase == ApplicationPointerPhase::Up
+                                && self.chart_pointer.as_ref() == Some(&identity)
                             {
-                                self.apply_action(view_revision, GameUiAction::ControlInput { input: birdman_game_presentation::game_ui::GameUiControlInput::SetRange { control_id, value } }, &mut requests)?;
+                                self.chart_pointer = None;
                             }
-                        }
-                        if phase == ApplicationPointerPhase::Up
-                            && self.chart_pointer.as_ref() == Some(&identity)
-                        {
-                            self.chart_pointer = None;
                         }
                     }
                 }
-            }
 
-            ApplicationInput::Keyboard {
-                code,
-                pressed,
-                repeat,
-            } => {
-                if let Some(key) = browser_keyboard_key(&code) {
+                ApplicationInput::Keyboard {
+                    code,
+                    pressed,
+                    repeat,
+                } => {
+                    if let Some(key) = browser_keyboard_key(&code) {
+                        keyboard_consumed =
+                            self.observe_keyboard(key, pressed, repeat, &mut requests)?;
+                    }
+                }
+                ApplicationInput::PhysicalKey {
+                    key,
+                    pressed,
+                    repeat,
+                } => {
                     keyboard_consumed =
                         self.observe_keyboard(key, pressed, repeat, &mut requests)?;
                 }
-            }
-            ApplicationInput::PhysicalKey {
-                key,
-                pressed,
-                repeat,
-            } => {
-                keyboard_consumed = self.observe_keyboard(key, pressed, repeat, &mut requests)?;
-            }
-            ApplicationInput::Platform { observation } => {
-                self.graphics
-                    .request_gpu_timing(observation.gpu_timing_requested, observed_ms)
-                    .map_err(ApplicationRuntimeError::Graphics)?;
-                self.graphics
-                    .adopt(
-                        observation.renderer.as_ref(),
-                        self.render_scope(),
-                        observed_ms,
-                    )
-                    .map_err(ApplicationRuntimeError::Graphics)?;
-                self.surface_observation = observation.surface;
-                self.platform.viewport = observation.viewport;
-                let capabilities = observation.capabilities;
-                self.platform.hmd_available = capabilities.hmd_available;
-                self.platform.touch_available |= capabilities.touch_available;
-                self.phone.configure(capabilities.phone_sensors);
-                self.platform.analysis_available = capabilities.analysis_available;
-                self.replay_supported = capabilities.replay_available;
-                self.platform.replay_available = capabilities.replay_available;
-                self.platform.stored_records_available = capabilities.stored_records_available;
-                self.platform.flight_log_available = capabilities.flight_log_available;
-            }
-            ApplicationInput::Resources {
-                request_id,
-                observation,
-            } => {
-                let completion = self.assets.observe(request_id, observation);
-                requests.extend(completion.requests);
-                let mut commit_failed = false;
-                if let Some(renderer) = completion.invalidated_renderer {
+                ApplicationInput::Platform { observation } => {
                     self.graphics
-                        .invalidate_renderer(renderer, observed_ms)
+                        .request_gpu_timing(observation.gpu_timing_requested, observed_ms)
                         .map_err(ApplicationRuntimeError::Graphics)?;
-                    self.diagnostic = completion
-                        .failed
-                        .as_ref()
-                        .map(|failed| failed.cause.clone());
-                    commit_failed = true;
-                }
-                if let Some(committed) = &completion.committed
-                    && let Err(error) = self.graphics.committed(
-                        committed.target,
-                        committed.policy_request,
-                        committed.actual,
-                        observed_ms,
-                    )
-                {
-                    self.diagnostic = Some(format!(
-                        "描画資源の確定値を受理できない: {}",
-                        birdman_game_app::technical_error_text(&error)
-                    ));
-                    commit_failed = true;
-                }
-                if let Some(failed) = &completion.failed
-                    && !self
-                        .assets
-                        .has_policy_request(failed.target, failed.policy_request)
-                {
                     self.graphics
-                        .failed(failed.target, failed.policy_request, observed_ms)
+                        .adopt(
+                            observation.renderer.as_ref(),
+                            self.render_scope(),
+                            observed_ms,
+                        )
                         .map_err(ApplicationRuntimeError::Graphics)?;
+                    self.surface_observation = observation.surface;
+                    self.platform.viewport = observation.viewport;
+                    let capabilities = observation.capabilities;
+                    self.platform.hmd_available = capabilities.hmd_available;
+                    self.platform.touch_available |= capabilities.touch_available;
+                    self.phone.configure(capabilities.phone_sensors);
+                    self.platform.analysis_available = capabilities.analysis_available;
+                    self.replay_supported = capabilities.replay_available;
+                    self.platform.replay_available = capabilities.replay_available;
+                    self.platform.stored_records_available = capabilities.stored_records_available;
+                    self.platform.flight_log_available = capabilities.flight_log_available;
                 }
-                if !commit_failed {
-                    requests.extend(self.assets.continue_commit());
-                }
-                let terminal = completion
-                    .committed
-                    .as_ref()
-                    .is_some_and(|committed| committed.request_id == request_id)
-                    || completion
-                        .failed
-                        .as_ref()
-                        .is_some_and(|failed| failed.request_id == request_id);
-                if let Some(resources) = self.resources.as_mut()
-                    && resources.request_id == request_id
-                    && !resources.completed
-                    && terminal
-                {
-                    resources.completed = true;
-                    self.resource_readiness = match completion.failed {
-                        None if !commit_failed => BackendReadiness::Ready,
-                        None => BackendReadiness::Failed(
-                            birdman_game_core::BriefingFailure::AssetUnavailable,
-                        ),
-                        Some(failed) => {
-                            self.diagnostic = Some(failed.cause);
-                            if !self.boot.active() {
-                                self.platform.notification = "描画資源を準備できない。".to_owned();
-                            }
-                            BackendReadiness::Failed(
-                                birdman_game_core::BriefingFailure::AssetUnavailable,
-                            )
-                        }
-                    };
-                    if matches!(self.resource_readiness, BackendReadiness::Ready) {
-                        self.last_ready_resources = Some(resources.key);
+                ApplicationInput::Resources {
+                    request_id,
+                    observation,
+                } => {
+                    let completion = self.assets.observe(request_id, observation);
+                    requests.extend(completion.requests);
+                    let mut commit_failed = false;
+                    if let Some(renderer) = completion.invalidated_renderer {
+                        self.graphics
+                            .invalidate_renderer(renderer, observed_ms)
+                            .map_err(ApplicationRuntimeError::Graphics)?;
+                        self.diagnostic = completion
+                            .failed
+                            .as_ref()
+                            .map(|failed| failed.cause.clone());
+                        commit_failed = true;
                     }
-                    if self.boot.active()
-                        && matches!(self.resource_readiness, BackendReadiness::Failed(_))
+                    if let Some(committed) = &completion.committed
+                        && let Err(error) = self.graphics.committed(
+                            committed.target,
+                            committed.policy_request,
+                            committed.actual,
+                            observed_ms,
+                        )
                     {
-                        self.boot.fail(self.diagnostic.as_deref());
+                        self.diagnostic = Some(format!(
+                            "描画資源の確定値を受理できない: {}",
+                            birdman_game_app::technical_error_text(&error)
+                        ));
+                        commit_failed = true;
+                    }
+                    if let Some(failed) = &completion.failed
+                        && !self
+                            .assets
+                            .has_policy_request(failed.target, failed.policy_request)
+                    {
+                        self.graphics
+                            .failed(failed.target, failed.policy_request, observed_ms)
+                            .map_err(ApplicationRuntimeError::Graphics)?;
+                    }
+                    if !commit_failed {
+                        requests.extend(self.assets.continue_commit());
+                    }
+                    let terminal = completion
+                        .committed
+                        .as_ref()
+                        .is_some_and(|committed| committed.request_id == request_id)
+                        || completion
+                            .failed
+                            .as_ref()
+                            .is_some_and(|failed| failed.request_id == request_id);
+                    if let Some(resources) = self.resources.as_mut()
+                        && resources.request_id == request_id
+                        && !resources.completed
+                        && terminal
+                    {
+                        resources.completed = true;
+                        self.resource_readiness = match completion.failed {
+                            None if !commit_failed => BackendReadiness::Ready,
+                            None => BackendReadiness::Failed(
+                                birdman_game_core::BriefingFailure::AssetUnavailable,
+                            ),
+                            Some(failed) => {
+                                self.diagnostic = Some(failed.cause);
+                                if !self.boot.active() {
+                                    self.platform.notification =
+                                        "描画資源を準備できない。".to_owned();
+                                }
+                                BackendReadiness::Failed(
+                                    birdman_game_core::BriefingFailure::AssetUnavailable,
+                                )
+                            }
+                        };
+                        if matches!(self.resource_readiness, BackendReadiness::Ready) {
+                            self.last_ready_resources = Some(resources.key);
+                        }
+                        if self.boot.active()
+                            && matches!(self.resource_readiness, BackendReadiness::Failed(_))
+                        {
+                            self.boot.fail(self.diagnostic.as_deref());
+                        }
+                    }
+                    if !self.shutdown.closed()
+                        && matches!(
+                            self.application.core_session().snapshot().phase(),
+                            SessionPhase::BriefingPreparing
+                        )
+                    {
+                        self.application
+                            .observe_readiness(self.resource_readiness)
+                            .map_err(ApplicationRuntimeError::Session)?;
                     }
                 }
-                if !self.shutdown.closed()
-                    && matches!(
-                        self.application.core_session().snapshot().phase(),
-                        SessionPhase::BriefingPreparing
-                    )
-                {
-                    self.application
-                        .observe_readiness(self.resource_readiness)
-                        .map_err(ApplicationRuntimeError::Session)?;
-                }
-            }
-            ApplicationInput::DisplayCompleted {
-                request_id,
-                completion,
-            } => {
-                let was_pending = self.display.state().pending();
-                let next_id = if self.display.completion_advances(request_id, &completion) {
-                    self.allocate_request()?
-                } else {
-                    0
-                };
-                requests.extend(
-                    self.display
-                        .complete(request_id, completion, next_id)
-                        .into_iter()
-                        .map(|request| ApplicationRequest::Display { request }),
-                );
-                if was_pending && let DisplayState::Failed { cause, .. } = self.display.state() {
-                    self.diagnostic = Some(cause.clone());
-                    self.platform.notification = format!("表示を切り替えられない。原因: {cause}");
+                ApplicationInput::DisplayCompleted {
+                    request_id,
+                    completion,
+                } => {
+                    let was_pending = self.display.state().pending();
+                    let next_id = if self.display.completion_advances(request_id, &completion) {
+                        self.allocate_request()?
+                    } else {
+                        0
+                    };
+                    requests.extend(
+                        self.display
+                            .complete(request_id, completion, next_id)
+                            .into_iter()
+                            .map(|request| ApplicationRequest::Display { request }),
+                    );
+                    if was_pending && let DisplayState::Failed { cause, .. } = self.display.state()
+                    {
+                        self.diagnostic = Some(cause.clone());
+                        self.platform.notification =
+                            format!("表示を切り替えられない。原因: {cause}");
+                    }
                 }
             }
         }
@@ -2504,6 +2556,35 @@ impl ApplicationRuntime {
                 at_ms,
                 realtime: true,
             });
+        }
+        Ok(())
+    }
+
+    // A previously received candidate precedes the current event; a new I/O reply
+    // uses this same reconciliation after its own dispatch. Sealed demand is consumed once.
+    fn reconcile_controller_observation(
+        &mut self,
+        observed_ms: f64,
+    ) -> Result<(), ApplicationRuntimeError> {
+        if !self.shutdown.closed()
+            && self.application.core_session().snapshot().phase() == SessionPhase::BriefingPreparing
+        {
+            self.application
+                .observe_readiness(self.resource_readiness)
+                .map_err(ApplicationRuntimeError::Session)?;
+        }
+        if !self.shutdown.closed()
+            && self.application.controller_realtime()
+            && self.application.controller_has_candidate()
+            && self.application.core_session().snapshot().phase() == SessionPhase::FlightRunning
+        {
+            self.application
+                .advance_flight_frame(
+                    observed_ms,
+                    &self.controller_gamepads,
+                    self.presentation_input_focused(),
+                )
+                .map_err(ApplicationRuntimeError::Flight)?;
         }
         Ok(())
     }

@@ -218,9 +218,31 @@ struct PendingExchange {
     demand: Option<TailFlightTickInput>,
     write_id: u64,
     requested_ms: f64,
-    written_ms: Option<f64>,
-    reply: Option<(ControllerFrame, f64)>,
+    written_ms: Option<CompletionTime>,
+    reply: Option<(ControllerFrame, CompletionTime)>,
     deadline_ms: Option<f64>,
+}
+
+#[derive(Clone, Copy)]
+enum CompletionTime {
+    AwaitingArrival(f64),
+    Admitted(f64),
+}
+
+impl CompletionTime {
+    fn milliseconds(self) -> f64 {
+        match self {
+            Self::AwaitingArrival(time) | Self::Admitted(time) => time,
+        }
+    }
+
+    fn observed(time: f64, now: f64) -> Self {
+        if time > now {
+            Self::AwaitingArrival(time)
+        } else {
+            Self::Admitted(time)
+        }
+    }
 }
 impl ControllerExecutionState {
     pub(crate) fn select(&mut self, selected: SelectedControllerExecution) {
@@ -365,6 +387,9 @@ impl ControllerExecutionState {
         let Some(pending) = active.pending.take() else {
             return true;
         };
+        if pending.reply.is_some() {
+            return true;
+        }
         if let Some(slot) = active
             .retired_replies
             .iter_mut()
@@ -475,7 +500,12 @@ impl ControllerExecutionState {
             });
         }
     }
-    pub(crate) fn observe(&mut self, observation: ControllerIoObservation, now: f64) {
+    pub(crate) fn observe(
+        &mut self,
+        observation: ControllerIoObservation,
+        now: f64,
+        arrival_admitted: bool,
+    ) {
         let Some(active) = self.active.as_mut() else {
             return;
         };
@@ -522,9 +552,6 @@ impl ControllerExecutionState {
                     return;
                 }
                 active.opened = true;
-                if active.closing == Closing::Open && active.pending.is_none() && !active.ready {
-                    Self::send(active, active.init.clone(), None, now, &mut self.requests);
-                }
             }
             ControllerIoObservation::Written {
                 generation,
@@ -536,7 +563,7 @@ impl ControllerExecutionState {
                 {
                     if !sent_ms.is_finite()
                         || sent_ms < pending.requested_ms
-                        || sent_ms > now
+                        || (arrival_admitted && sent_ms > now)
                         || pending.written_ms.is_some()
                     {
                         Self::latch(
@@ -547,7 +574,7 @@ impl ControllerExecutionState {
                         );
                         return;
                     }
-                    pending.written_ms = Some(sent_ms);
+                    pending.written_ms = Some(CompletionTime::observed(sent_ms, now));
                 }
             }
             ControllerIoObservation::Received {
@@ -572,7 +599,7 @@ impl ControllerExecutionState {
                 };
                 if !received_ms.is_finite()
                     || received_ms < pending.requested_ms
-                    || received_ms > now
+                    || (arrival_admitted && received_ms > now)
                     || pending
                         .deadline_ms
                         .is_some_and(|deadline| received_ms > deadline)
@@ -606,7 +633,7 @@ impl ControllerExecutionState {
                     );
                     return;
                 }
-                pending.reply = Some((reply, received_ms));
+                pending.reply = Some((reply, CompletionTime::observed(received_ms, now)));
             }
             ControllerIoObservation::Failed {
                 generation,
@@ -619,14 +646,21 @@ impl ControllerExecutionState {
             }
             _ => {}
         }
+        if arrival_admitted {
+            self.admit_time(now);
+        }
+    }
+
+    fn complete_pending(active: &mut ActiveExecution, requests: &mut Vec<ControllerIoRequest>) {
         if (active.fault.is_none() || active.closing == Closing::Finishing)
-            && active
-                .pending
-                .as_ref()
-                .is_some_and(|p| p.written_ms.is_some() && p.reply.is_some())
+            && active.pending.as_ref().is_some_and(|p| {
+                matches!(p.written_ms, Some(CompletionTime::Admitted(_)))
+                    && matches!(p.reply.as_ref(), Some((_, CompletionTime::Admitted(_))))
+            })
         {
             let pending = active.pending.take().unwrap();
             let (reply, received_ms) = pending.reply.unwrap();
+            let received_ms = received_ms.milliseconds();
             match pending.frame.header().kind {
                 ExchangeKind::Init => {
                     if active.hitl {
@@ -646,7 +680,7 @@ impl ControllerExecutionState {
                                 active,
                                 ControllerFault::DeadlineMissed,
                                 "HITLの定常交換実測が10 msを超えている。".into(),
-                                &mut self.requests,
+                                requests,
                             );
                         } else {
                             active.ready = true;
@@ -655,9 +689,68 @@ impl ControllerExecutionState {
                         }
                     }
                 }
-                ExchangeKind::Finish => Self::close_native(active, &mut self.requests),
+                ExchangeKind::Finish => Self::close_native(active, requests),
             }
         }
+    }
+
+    /// Reauthorizes the two retained completion times at the first valid arrival.
+    pub(crate) fn admit_time(&mut self, now: f64) -> bool {
+        let Some(active) = self.active.as_mut() else {
+            return false;
+        };
+        if matches!(active.closing, Closing::ClosePending | Closing::Closed) {
+            return false;
+        }
+        if let Some(pending) = active.pending.as_ref() {
+            if pending.written_ms.is_some_and(|time| {
+                let time = time.milliseconds();
+                !time.is_finite() || time < pending.requested_ms || time > now
+            }) {
+                Self::latch(
+                    active,
+                    ControllerFault::BadFrame,
+                    "制御器の書込完了時刻を次の到着時刻で認可できない。".into(),
+                    &mut self.requests,
+                );
+                return true;
+            }
+            if pending.reply.as_ref().is_some_and(|(_, time)| {
+                let time = time.milliseconds();
+                !time.is_finite()
+                    || time < pending.requested_ms
+                    || time > now
+                    || pending.deadline_ms.is_some_and(|deadline| time > deadline)
+            }) {
+                Self::latch(
+                    active,
+                    ControllerFault::DeadlineMissed,
+                    "制御器の応答時刻を次の到着時刻で認可できない。".into(),
+                    &mut self.requests,
+                );
+                return true;
+            }
+            let pending = active.pending.as_mut().unwrap();
+            if let Some(time) = &mut pending.written_ms {
+                *time = CompletionTime::Admitted(time.milliseconds());
+            }
+            if let Some((_, time)) = &mut pending.reply {
+                *time = CompletionTime::Admitted(time.milliseconds());
+            }
+            Self::complete_pending(active, &mut self.requests);
+            return active.pending.is_none();
+        }
+        if active.opened
+            && active.fault.is_none()
+            && active.closing == Closing::Open
+            && !active.ready
+            && active.probe.is_none()
+            && active.sequence == 0
+        {
+            Self::send(active, active.init.clone(), None, now, &mut self.requests);
+            return true;
+        }
+        false
     }
     pub(crate) fn pause(&mut self, tick: u64, time: f64, incidence: [f64; 2], now: f64) {
         let Some(active) = self.active.as_mut() else {

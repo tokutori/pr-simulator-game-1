@@ -145,7 +145,8 @@ pub enum ApplicationResourceObservation {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationObservation {
-    /// Monotonic receipt time in milliseconds; source clocks are converted to this origin at I/O.
+    /// Monotonic receipt time in milliseconds on the platform's common epoch.
+    /// Drives application deadlines and physical frame budgets independently of source sample clocks.
     pub observed_ms: f64,
     /// Raw frame, event or I/O completion received at this time.
     pub input: ApplicationInput,
@@ -446,7 +447,8 @@ pub enum ApplicationInput {
     Frame {
         /// Active display that supplied the callback; absent for the initial Screen resource.
         display_resource_id: Option<u32>,
-        /// Monotonic presentation timestamp in milliseconds.
+        /// Raw presentation callback timestamp in milliseconds, retained for frame-rate measurement.
+        /// Source discontinuities restart the FPS measurement; physical time uses the envelope's receipt time.
         timestamp_ms: f64,
         /// Unfiltered same-frame flight device samples.
         gamepads: Vec<super::ApplicationGamepadObservation>,

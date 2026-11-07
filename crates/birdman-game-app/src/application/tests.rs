@@ -1113,14 +1113,20 @@ fn hitl_accepted_timeout_retains_last_boundary_first_fault_and_unranked_record()
             panic!("HITL preparation must request one connection");
         };
         let generation = *generation;
-        application.observe_controller_time(1.0);
+        application.observe_controller_time(1.0).unwrap();
         application
-            .observe_controller_io(ControllerIoObservation::Opened {
-                generation,
-                failure: None,
-            })
+            .observe_controller_io(
+                ControllerIoObservation::Opened {
+                    generation,
+                    failure: None,
+                },
+                true,
+            )
             .unwrap();
-        let reply = |application: &mut ApplicationSession, expected: ExchangeKind, now: f64| {
+        let reply = |application: &mut ApplicationSession,
+                     expected: ExchangeKind,
+                     now: f64,
+                     arrival_admitted: bool| {
             let requests = application.take_controller_io();
             let [
                 ControllerIoRequest::Write {
@@ -1145,25 +1151,33 @@ fn hitl_accepted_timeout_retains_last_boundary_first_fault_and_unranked_record()
             } else {
                 ControllerFrame::acknowledgement(request.header()).unwrap()
             };
-            application.observe_controller_time(now);
+            if arrival_admitted {
+                application.observe_controller_time(now).unwrap();
+            }
             application
-                .observe_controller_io(ControllerIoObservation::Written {
-                    generation: *generation,
-                    write_id: *write_id,
-                    sent_ms: now,
-                })
+                .observe_controller_io(
+                    ControllerIoObservation::Written {
+                        generation: *generation,
+                        write_id: *write_id,
+                        sent_ms: now,
+                    },
+                    arrival_admitted,
+                )
                 .unwrap();
             application
-                .observe_controller_io(ControllerIoObservation::Received {
-                    generation: *generation,
-                    bytes: response.as_bytes().to_vec(),
-                    received_ms: now,
-                })
+                .observe_controller_io(
+                    ControllerIoObservation::Received {
+                        generation: *generation,
+                        bytes: response.as_bytes().to_vec(),
+                        received_ms: now,
+                    },
+                    arrival_admitted,
+                )
                 .unwrap();
         };
-        reply(&mut application, ExchangeKind::Init, 1.0);
-        reply(&mut application, ExchangeKind::Evaluate, 2.0);
-        reply(&mut application, ExchangeKind::Accepted, 3.0);
+        reply(&mut application, ExchangeKind::Init, 1.0, true);
+        reply(&mut application, ExchangeKind::Evaluate, 2.0, true);
+        reply(&mut application, ExchangeKind::Accepted, 3.0, true);
         assert!(application.controller_execution_ready());
         application
             .observe_readiness(BackendReadiness::Ready)
@@ -1181,7 +1195,10 @@ fn hitl_accepted_timeout_retains_last_boundary_first_fault_and_unranked_record()
                 .tick_index(),
             0
         );
-        reply(&mut application, ExchangeKind::Evaluate, 15.0);
+        reply(&mut application, ExchangeKind::Evaluate, 15.0, false);
+        assert!(!application.controller_has_candidate());
+        application.observe_controller_time(15.0).unwrap();
+        assert!(application.controller_has_candidate());
         application.advance_flight_frame(15.0, &[], true).unwrap();
         let boundary = application
             .core_session()
@@ -1206,25 +1223,31 @@ fn hitl_accepted_timeout_retains_last_boundary_first_fault_and_unranked_record()
             accepted.accepted_payload().unwrap().admission,
             Admission::Full
         );
-        application.observe_controller_time(15.0);
+        application.observe_controller_time(15.0).unwrap();
         application
-            .observe_controller_io(ControllerIoObservation::Written {
-                generation: *generation,
-                write_id: *write_id,
-                sent_ms: 15.0,
-            })
+            .observe_controller_io(
+                ControllerIoObservation::Written {
+                    generation: *generation,
+                    write_id: *write_id,
+                    sent_ms: 15.0,
+                },
+                true,
+            )
             .unwrap();
         if let Some(cleanup_fault) = cleanup_failure {
-            application.observe_controller_time(16.0);
+            application.observe_controller_time(16.0).unwrap();
             application
-                .observe_controller_io(ControllerIoObservation::Received {
-                    generation: *generation,
-                    bytes: ControllerFrame::acknowledgement(accepted.header())
-                        .unwrap()
-                        .as_bytes()
-                        .to_vec(),
-                    received_ms: 16.0,
-                })
+                .observe_controller_io(
+                    ControllerIoObservation::Received {
+                        generation: *generation,
+                        bytes: ControllerFrame::acknowledgement(accepted.header())
+                            .unwrap()
+                            .as_bytes()
+                            .to_vec(),
+                        received_ms: 16.0,
+                    },
+                    true,
+                )
                 .unwrap();
             execute(&mut application, SessionCommand::Abort {});
             let finalized = application.flight_record_document().unwrap();
@@ -1242,30 +1265,39 @@ fn hitl_accepted_timeout_retains_last_boundary_first_fault_and_unranked_record()
                     panic!("expected one Finish write");
                 };
                 application
-                    .observe_controller_io(ControllerIoObservation::Written {
-                        generation: *generation,
-                        write_id: *write_id,
-                        sent_ms: 16.0,
-                    })
+                    .observe_controller_io(
+                        ControllerIoObservation::Written {
+                            generation: *generation,
+                            write_id: *write_id,
+                            sent_ms: 16.0,
+                        },
+                        true,
+                    )
                     .unwrap();
                 application
-                    .observe_controller_io(ControllerIoObservation::Received {
-                        generation: *generation,
-                        bytes: vec![0; 64],
-                        received_ms: 16.0,
-                    })
+                    .observe_controller_io(
+                        ControllerIoObservation::Received {
+                            generation: *generation,
+                            bytes: vec![0; 64],
+                            received_ms: 16.0,
+                        },
+                        true,
+                    )
                     .unwrap();
             } else if cleanup_fault == ControllerFault::DeadlineMissed {
                 let deadline = application.controller_next_deadline().unwrap();
-                application.observe_controller_time(deadline);
+                application.observe_controller_time(deadline).unwrap();
                 application.observe_controller_deadline().unwrap();
             } else {
                 application
-                    .observe_controller_io(ControllerIoObservation::Failed {
-                        generation: *generation,
-                        fault: ControllerFault::TransportClosed,
-                        cause: "Finish delivery failed".to_owned(),
-                    })
+                    .observe_controller_io(
+                        ControllerIoObservation::Failed {
+                            generation: *generation,
+                            fault: ControllerFault::TransportClosed,
+                            cause: "Finish delivery failed".to_owned(),
+                        },
+                        true,
+                    )
                     .unwrap();
             }
             assert!(application.controller_fault().is_none());
@@ -1279,7 +1311,7 @@ fn hitl_accepted_timeout_retains_last_boundary_first_fault_and_unranked_record()
             continue;
         }
         assert_eq!(application.controller_next_deadline(), Some(24.0));
-        application.observe_controller_time(24.0);
+        application.observe_controller_time(24.0).unwrap();
         application.observe_controller_deadline().unwrap();
         assert_eq!(
             application.core_session().snapshot().phase(),
@@ -1288,11 +1320,14 @@ fn hitl_accepted_timeout_retains_last_boundary_first_fault_and_unranked_record()
         let fault = application.controller_fault().unwrap().clone();
         assert_eq!(fault.fault, ControllerFault::DeadlineMissed);
         application
-            .observe_controller_io(ControllerIoObservation::Failed {
-                generation: *generation,
-                fault: ControllerFault::TransportClosed,
-                cause: "later transport failure".into(),
-            })
+            .observe_controller_io(
+                ControllerIoObservation::Failed {
+                    generation: *generation,
+                    fault: ControllerFault::TransportClosed,
+                    cause: "later transport failure".into(),
+                },
+                true,
+            )
             .unwrap();
         assert_eq!(application.controller_fault(), Some(&fault));
         let record = application.core_session().flight_record().unwrap();
