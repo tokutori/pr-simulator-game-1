@@ -440,6 +440,7 @@ impl ApplicationSession {
                     SessionPhase::Title
                         | SessionPhase::FlightSetup
                         | SessionPhase::FlightPaused { .. }
+                        | SessionPhase::Replay
                 ) {
                     return Err(ApplicationError::Session(
                         GameSessionError::InvalidTransition,
