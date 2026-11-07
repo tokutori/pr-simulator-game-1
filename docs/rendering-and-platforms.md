@@ -22,15 +22,15 @@
 
 ## 描画解像度とAuto
 
-- Flight SetupとPause SettingsはAuto・100%・75%・50%・25%を提供する。
+- Flight Setup、Pause SettingsとReplayはAuto・100%・75%・50%・25%を提供する。
 - 既定はAuto。共有Rustが初期要求の基準として100%・影2048・水面Highを所有し、使用中の品質は実commit後に表示する。
 - 各軸50%は3D画素数のおよそ25%、25%はおよそ6.25%に対応し、UIの論理解像度、画角、入力座標、物理tick、記録を維持する。
 - Screenと設定済みPhone VRは同じ倍率から描画寸法を導出する。HMDはruntimeが所有する最終framebuffer寸法を使用し、解像度選択を無効化する一方、保持した選択値と影・水面・Autoの共通方針を継続する。
 
 | Scene | 有効な品質方針 |
 |---|---|
-| FlightSetup・Briefing・Countdown・FlightとPause | 保持したフライト用の選択を適用する |
-| Boot・Title/Attract・Result・Replay | Autoを使用し、フライト用の手動三値を保持する。背景の水面上限はHigh |
+| FlightSetup・Briefing・Countdown・FlightとPause・Replay | 保持したフライト用の選択を適用する |
+| Boot・Title/Attract・Result | Autoを使用し、フライト用の手動三値を保持する。背景の水面上限はHigh |
 
 - 共有UIが全Sceneをフライト設定用・背景用のscopeへ分類し、描画policyはscopeと品質組を受け取る。同じscope内のScene切替では計測窓を継続する。
 

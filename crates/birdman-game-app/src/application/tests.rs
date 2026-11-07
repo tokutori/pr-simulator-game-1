@@ -991,7 +991,7 @@ fn shared_attract_keeps_player_selection_and_reuses_the_installed_record() {
 }
 
 #[test]
-fn display_settings_are_admitted_on_title_setup_and_pause_only() {
+fn display_settings_are_admitted_on_title_setup_pause_and_replay() {
     use crate::display_settings::DisplaySettings;
     let settings = DisplaySettings {
         brightness: 1.25,
@@ -1058,6 +1058,13 @@ fn display_settings_are_admitted_on_title_setup_and_pause_only() {
     assert_eq!(application.display_settings().brightness, 0.5);
     // The flight record identity never carries the display-only selection.
     assert_eq!(application.display_settings().contrast, settings.contrast);
+    execute(&mut application, SessionCommand::Abort {});
+    execute(&mut application, SessionCommand::EnterReplay {});
+    execute(
+        &mut application,
+        SessionCommand::SetDisplaySettings { settings },
+    );
+    assert_eq!(application.display_settings(), settings);
 }
 
 #[test]

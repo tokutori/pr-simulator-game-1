@@ -372,6 +372,83 @@ fn display_preferences_validate_restore_and_drain_only_the_latest_accepted_write
     assert!(!storage.display_loading());
     assert!(!storage.display_needs_write());
     assert!(!storage.display_notification().is_empty());
+
+    let mut platform = screen_platform();
+    platform.capabilities.replay_available = true;
+    let mut runtime = ApplicationRuntime::new(finalized_application(), platform.clone()).unwrap();
+    let initial = runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: platform,
+        })
+        .unwrap();
+    let result = structure(finish_boot(&mut runtime, initial));
+    let replay = structure(activate(
+        &mut runtime,
+        &result,
+        SessionCommand::EnterReplay {},
+    ));
+    let record = runtime
+        .application
+        .core_session()
+        .playback_record()
+        .unwrap();
+    let retained = (
+        record.header(),
+        record.samples().to_vec(),
+        record.finalization(),
+    );
+    let source_id = runtime.application.record_source_id();
+    let replay_settings = DisplaySettings {
+        brightness: settings.brightness,
+        ..DisplaySettings::default()
+    };
+    let output = activate(
+        &mut runtime,
+        &replay,
+        SessionCommand::SetDisplaySettings {
+            settings: replay_settings,
+        },
+    );
+    assert_eq!(
+        output.drawing.as_ref().unwrap().display,
+        replay_settings.adjustment()
+    );
+    let request_id = output
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::WriteDisplaySettings { request_id, json } => {
+                let document: serde_json::Value = serde_json::from_str(json).unwrap();
+                assert_eq!(
+                    document["display_settings"],
+                    serde_json::to_value(replay_settings).unwrap()
+                );
+                Some(*request_id)
+            }
+            _ => None,
+        })
+        .unwrap();
+    runtime
+        .observe_test(ApplicationInput::DisplaySettingsSaved {
+            request_id,
+            failure: None,
+        })
+        .unwrap();
+    assert_eq!(runtime.storage.display_notification(), "保存済み");
+    assert_eq!(runtime.application.record_source_id(), source_id);
+    let record = runtime
+        .application
+        .core_session()
+        .playback_record()
+        .unwrap();
+    assert_eq!(
+        (
+            record.header(),
+            record.samples().to_vec(),
+            record.finalization()
+        ),
+        retained
+    );
 }
 
 #[test]

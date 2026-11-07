@@ -369,6 +369,7 @@ pub fn game_ui_view(
                 );
             }
             replay(&mut menu, state, context)?;
+            graphics_settings(&mut menu, context);
             logs(&mut menu, context);
         }
         SessionPhase::Attract => {
@@ -1045,6 +1046,11 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_>) {
             keyboard.pilot_target_rate_mps == rate,
         );
     }
+    graphics_settings(menu, context);
+}
+
+/// Shared graphics settings section used by flight setup and replay.
+fn graphics_settings(menu: &mut Menu, context: &GameUiContext<'_>) {
     menu.section(
         "graphics-settings",
         "グラフィックス",
