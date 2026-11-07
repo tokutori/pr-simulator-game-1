@@ -1,6 +1,12 @@
-//! Cold version admission shared by independent JSON source contracts.
+//! Cold text and version admission shared by independent JSON source contracts.
 
 use serde::Deserialize;
+
+/// Borrows UTF-8 JSON for parsing while retaining the original bytes for identity and storage.
+pub(crate) fn source_text(input: &[u8]) -> Result<&str, core::str::Utf8Error> {
+    let text = core::str::from_utf8(input)?;
+    Ok(text.strip_prefix('\u{feff}').unwrap_or(text))
+}
 
 pub(crate) fn declared_schema_version(input: &str) -> Result<u32, serde_json::Error> {
     use serde::de::{Error, IgnoredAny, MapAccess, Visitor};

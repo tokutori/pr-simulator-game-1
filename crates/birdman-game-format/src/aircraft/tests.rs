@@ -214,6 +214,10 @@ fn roundtrip_preserves_external_parameters_and_uses_core_validation() {
     let encoded = serde_json::to_vec(&document).unwrap();
     let decoded = AircraftDocument::decode_json(&encoded).unwrap();
     assert_eq!(decoded, document);
+    assert_eq!(
+        AircraftDocument::decode_json(&[b"\xef\xbb\xbf".as_slice(), &encoded].concat()).unwrap(),
+        document
+    );
     let model = decoded.aircraft_model().unwrap();
     assert_eq!(model.airframe_mass_kg(), 3.0);
     assert_eq!(model.pilot_mass_kg(), 1.0);
@@ -268,6 +272,16 @@ fn decoding_rejects_unknown_fields_types_versions_and_oversized_input() {
     }
     let error = AircraftDocument::decode_json(&serde_json::to_vec(&legacy).unwrap()).unwrap_err();
     assert_eq!(error, AircraftFormatError::unsupported_schema_version(4));
+    assert_eq!(
+        AircraftDocument::decode_json(
+            &[
+                b"\xef\xbb\xbf".as_slice(),
+                &serde_json::to_vec(&legacy).unwrap()
+            ]
+            .concat()
+        ),
+        Err(AircraftFormatError::unsupported_schema_version(4))
+    );
     let [issue] = error.validation_issues() else {
         panic!("missing schema diagnostic")
     };
@@ -288,6 +302,9 @@ fn decoding_rejects_unknown_fields_types_versions_and_oversized_input() {
         b"{\"schema_version\":4,\"mass\":[}",
         b"{\"schema_version\":\"4\"}",
         b"{\"schema_version\":4,\"extra\":\"\xff\"}",
+        b"\xef\xbb\xbf{",
+        b"\xef\xbb\xbf\xef\xbb\xbf{\"schema_version\":4}",
+        b"\xef\xbb\xbf\xff",
     ] {
         assert_eq!(
             AircraftDocument::decode_json(input),
@@ -306,8 +323,10 @@ fn decoding_rejects_unknown_fields_types_versions_and_oversized_input() {
         AircraftDocument::decode_json(b"{\"schema_version\":NaN}"),
         Err(AircraftFormatError::InvalidJson)
     );
+    let mut oversized = vec![b' '; MAX_AIRCRAFT_JSON_BYTES + 1];
+    oversized[..3].copy_from_slice(b"\xef\xbb\xbf");
     assert_eq!(
-        AircraftDocument::decode_json(&vec![b' '; MAX_AIRCRAFT_JSON_BYTES + 1]),
+        AircraftDocument::decode_json(&oversized),
         Err(AircraftFormatError::InputTooLarge)
     );
 }

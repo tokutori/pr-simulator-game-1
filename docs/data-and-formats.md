@@ -11,6 +11,8 @@
 
 外部データのcodecは`birdman-game-format`、実行環境・archiveの準備は`birdman-game-app`、filesystem・IndexedDB・ダウンロードはplatform adapterが所有する。runtimeで気象APIやGISサービスへ接続しない。
 
+機体・制御設定JSONは解析時に先頭のUTF-8 BOMを1個無視し、サイズ制限・保存・SHA-256はBOMを含む原文bytesに適用する。
+
 | 対象 | 現行契約 |
 | --- | --- |
 | 機体JSON | `AircraftDocument`、schema 5、最大256 KiB |

@@ -316,8 +316,8 @@ impl ControllerDocument {
         if bytes.len() > MAX_CONTROLLER_JSON_BYTES {
             return Err(ControllerFormatError::InputTooLarge);
         }
-        let text =
-            core::str::from_utf8(bytes).map_err(|e| ControllerFormatError::Json(format!("{e}")))?;
+        let text = crate::json_version::source_text(bytes)
+            .map_err(|e| ControllerFormatError::Json(format!("{e}")))?;
         let version = crate::json_version::declared_schema_version(text)
             .map_err(|e| ControllerFormatError::Json(format!("{e}")))?;
         if version != CONTROLLER_SCHEMA_VERSION {
@@ -713,6 +713,17 @@ mod tests {
     #[test]
     fn independent_document_reports_all_pid_errors_and_rejects_unknown_or_oversized_source() {
         let mut document = bundled();
+        assert_eq!(
+            ControllerDocument::decode_json(
+                &[
+                    b"\xef\xbb\xbf".as_slice(),
+                    include_bytes!("../../../assets/controllers/default-rate-v1.json").as_slice(),
+                ]
+                .concat()
+            )
+            .unwrap(),
+            document
+        );
         assert_eq!(document.shared_authority, 0.5);
         document
             .core_profile(ControllerReference::try_new(0.0, 9.7).unwrap(), 0.0)
@@ -738,7 +749,7 @@ mod tests {
             ]
         );
         for version in [0, CONTROLLER_SCHEMA_VERSION + 1] {
-            let bytes = format!("{{\"schema_version\":{version}}}");
+            let bytes = format!("\u{feff}{{\"schema_version\":{version}}}");
             assert!(matches!(ControllerDocument::decode_json(bytes.as_bytes()),
                 Err(ControllerFormatError::Validation(issues))
                 if issues.len() == 1 && issues[0].code == ControllerValidationCode::SchemaVersion));
@@ -749,8 +760,20 @@ mod tests {
             ControllerDocument::decode_json(&serde_json::to_vec(&value).unwrap()),
             Err(ControllerFormatError::Json(_))
         ));
+        for bytes in [
+            b"\xef\xbb\xbf{".as_slice(),
+            b"\xef\xbb\xbf\xef\xbb\xbf{\"schema_version\":0}",
+            b"\xef\xbb\xbf\xff",
+        ] {
+            assert!(matches!(
+                ControllerDocument::decode_json(bytes),
+                Err(ControllerFormatError::Json(_))
+            ));
+        }
+        let mut oversized = alloc::vec![b' '; MAX_CONTROLLER_JSON_BYTES + 1];
+        oversized[..3].copy_from_slice(b"\xef\xbb\xbf");
         assert_eq!(
-            ControllerDocument::decode_json(&alloc::vec![b' '; MAX_CONTROLLER_JSON_BYTES + 1]),
+            ControllerDocument::decode_json(&oversized),
             Err(ControllerFormatError::InputTooLarge)
         );
     }

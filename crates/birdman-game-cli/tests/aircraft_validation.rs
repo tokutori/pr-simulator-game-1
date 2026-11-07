@@ -88,7 +88,10 @@ fn aircraft_command_admits_only_prepared_geometry_and_a_feasible_trim() {
             ],
         ),
     ] {
-        let bytes = serde_json::to_vec(&document).unwrap();
+        let mut bytes = serde_json::to_vec(&document).unwrap();
+        if matches!(name, "valid" | "schema-four") {
+            bytes.splice(..0, [0xef, 0xbb, 0xbf]);
+        }
         let serial = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()

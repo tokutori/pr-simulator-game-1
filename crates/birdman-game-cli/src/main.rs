@@ -128,12 +128,28 @@ mod tests {
         std::fs::create_dir_all(&directory).unwrap();
         let controller_path = directory.join("controller.json");
         let aircraft_path = directory.join("aircraft.json");
-        std::fs::write(&aircraft_path, birdman_game_content::PLAYABLE_AIRCRAFT_JSON).unwrap();
+        std::fs::write(
+            &aircraft_path,
+            [
+                b"\xef\xbb\xbf".as_slice(),
+                birdman_game_content::PLAYABLE_AIRCRAFT_JSON,
+            ]
+            .concat(),
+        )
+        .unwrap();
         let mut source: serde_json::Value =
             serde_json::from_slice(birdman_game_content::DEFAULT_CONTROLLER_JSON).unwrap();
         // Intrinsically valid authoring data can conflict with this aircraft's mechanical stops.
         source["incidence_bounds_rad"][0] = serde_json::json!([-0.3, 0.3]);
-        std::fs::write(&controller_path, serde_json::to_vec(&source).unwrap()).unwrap();
+        std::fs::write(
+            &controller_path,
+            [
+                b"\xef\xbb\xbf".as_slice(),
+                &serde_json::to_vec(&source).unwrap(),
+            ]
+            .concat(),
+        )
+        .unwrap();
         let controller = controller_path.to_str().unwrap();
         assert!(validate_controller(controller, None).is_ok());
         let pair =

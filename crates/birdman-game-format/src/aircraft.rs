@@ -528,14 +528,15 @@ impl AircraftDocument {
         if input.len() > MAX_AIRCRAFT_JSON_BYTES {
             return Err(AircraftFormatError::InputTooLarge);
         }
-        let text = core::str::from_utf8(input).map_err(|_| AircraftFormatError::InvalidJson)?;
+        let text = crate::json_version::source_text(input)
+            .map_err(|_| AircraftFormatError::InvalidJson)?;
         let version = crate::json_version::declared_schema_version(text)
             .map_err(|_| AircraftFormatError::InvalidJson)?;
         if version != AIRCRAFT_SCHEMA_VERSION {
             return Err(AircraftFormatError::unsupported_schema_version(version));
         }
         let document: Self =
-            serde_json::from_slice(input).map_err(|_| AircraftFormatError::InvalidJson)?;
+            serde_json::from_str(text).map_err(|_| AircraftFormatError::InvalidJson)?;
         document.validate()?;
         Ok(document)
     }

@@ -707,7 +707,7 @@ it("passes original configuration bytes to Rust and persists each exact UTF-8 so
       state.click(`game-setup-load-${kind}`);
       await flush();
       const key = `tokutori.pr-simulator-game-1.${kind}`;
-      expect(state.browser.localStorage.getItem(key)).toBeNull();
+      expect(state.browser.localStorage.getItem(key)).toBe(`\uFEFF${source}`);
       const observed = state.updates.mock.calls.map(([json]) => JSON.parse(json) as ApplicationObservation)
         .find(observation => observation.input.kind === "configuration_loaded" && observation.input.document === kind && observation.input.completion.kind === "found");
       expect(observed?.input).toMatchObject({ kind: "configuration_loaded", document: kind, completion: { kind: "found", bytes: [...bytes] } });
