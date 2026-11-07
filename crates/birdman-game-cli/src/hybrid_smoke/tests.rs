@@ -20,6 +20,22 @@ fn three_authorities_preserve_two_axis_intent_and_independent_pilot_target() {
         assert_eq!(first.finalization.terminal_tick, TICK_LIMIT);
         assert_eq!(first.finalization.failure, None);
         assert_eq!(first.header.maximum_flight_ticks, TICK_LIMIT);
+        assert_eq!(
+            first.schema_version,
+            birdman_game_format::TAIL_FLIGHT_RECORD_SCHEMA_VERSION
+        );
+        assert_eq!(first.header.control_mode, Some(mode.into()));
+        assert_eq!(first.header.controller_profile_version, None);
+        let raw_sha = first.control_identity.controller_sha256.as_deref().unwrap();
+        let core = first.to_finalized_core_record().unwrap();
+        assert_eq!(
+            core.header().scenario.controller_identity,
+            Some(birdman_game_format::controller_identity(
+                &first.control_identity.controller_profile_id,
+                raw_sha,
+            ))
+        );
+        assert_eq!(core.header().control_mode, Some(mode));
         assert_eq!(first.samples.len(), TICK_LIMIT as usize + 1);
         for sample in first.samples.iter().skip(1) {
             let TailFlightRecordControlsDocument::TailIncidence {
@@ -64,12 +80,13 @@ fn named_terminal_and_saved_query_share_exact_controls_and_terminal_metadata() {
     let named: Value =
         serde_json::from_str(&named_terminal_json("manual", &document).unwrap()).unwrap();
     assert_eq!(named["kind"], "native_hybrid_smoke");
-    assert_eq!(named["record_schema_version"], 8);
+    assert_eq!(named["record_schema_version"], document.schema_version);
     assert_eq!(named["sample_count"], TICK_LIMIT + 1);
     assert_eq!(named["controls"]["layout"], "tail_incidence");
     assert!(named["controls"].get("roll_rad").is_none());
     let expected_identity = HybridSessionPreparation::try_new_for_weather(
         &birdman_game_app::SelectedAircraft::bundled().unwrap(),
+        &birdman_game_app::SelectedController::bundled().unwrap(),
         ControlMode::Manual,
         TICK_LIMIT,
         0,

@@ -28,7 +28,7 @@ enum InputSequence {
 }
 
 impl InputSequence {
-    fn input(self, tick: u64) -> TailFlightTickInput {
+    fn input(self, tick: u64, rate_bounds: [[f64; 2]; 2]) -> TailFlightTickInput {
         let pitch = match self {
             Self::SmallNoseUp => 0.05,
             Self::SmallNoseDown => -0.05,
@@ -79,10 +79,14 @@ impl InputSequence {
             }
             _ => TailPilotPositionCommand::Hold,
         };
-        let limits = TailRateTarget::limits_rad_per_second();
+        let pitch_rate = if pitch < 0.0 {
+            -pitch * rate_bounds[0][0]
+        } else {
+            pitch * rate_bounds[0][1]
+        };
         TailFlightTickInput::new(
             TailPilotIntent::try_new(pitch, 0.0).unwrap(),
-            TailRateTarget::try_new(pitch * limits[0], 0.0).unwrap(),
+            TailRateTarget::try_new(pitch_rate, 0.0).unwrap(),
             position,
         )
     }
@@ -128,7 +132,12 @@ fn main() {
     initialize_bundled_environment().unwrap();
     let wind = bundled_environment().unwrap().wind_field().unwrap();
     let selected = SelectedAircraft::bundled().unwrap();
+    let controller = birdman_game_app::SelectedController::bundled().unwrap();
     let definition = selected.definition();
+    let rate_bounds = controller
+        .prepare(definition)
+        .unwrap()
+        .body_rate_bounds_rad_per_second();
     let surfaces = definition.surfaces().unwrap();
     let loads = birdman_game_core::HybridAerodynamicLoad::try_new(
         birdman_game_core::HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
@@ -164,6 +173,7 @@ fn main() {
         ] {
             let (configuration, _) = HybridSessionPreparation::try_new_for_weather(
                 &selected,
+                &controller,
                 mode,
                 DEFAULT_MAXIMUM_FLIGHT_TICKS,
                 DEFAULT_SESSION_SEED,
@@ -200,7 +210,7 @@ fn main() {
             for tick in 1..=DEFAULT_MAXIMUM_FLIGHT_TICKS {
                 returned_error = session
                     .advance_tail_flight_tick_with_shape_provider(
-                        sequence.input(tick),
+                        sequence.input(tick, rate_bounds),
                         &mut contact.bind(definition),
                         &loads,
                     )
