@@ -382,9 +382,15 @@ pub(super) fn game_ui_hud(
         // sits inside the vertical center band, so a rail stacked above them
         // occupies the forward view. Anchor the rail to the top edge instead
         // and place the instruments first, so the instruments stay inside the
-        // top band, which is otherwise unused while flying.
-        let gap = 0.75 * context.platform.viewport.root_font_size;
-        layout.offset_px[1] = (context.platform.viewport.height - gap - layout.height_px).max(0.0);
+        // top band, which is otherwise unused while flying. The frame-rate
+        // badge sits at the top-right corner outside this layout, so the
+        // rail starts below the badge's bottom edge.
+        let font = context.platform.viewport.root_font_size;
+        let gap = 0.75 * font;
+        let frame_rate_reserve = super::view::theme(font).frame_rate_badge_bottom_px();
+        layout.offset_px[1] =
+            (context.platform.viewport.height - gap - frame_rate_reserve - layout.height_px)
+                .max(0.0);
     }
     Ok(Some(GameUiHud { layout, groups }))
 }

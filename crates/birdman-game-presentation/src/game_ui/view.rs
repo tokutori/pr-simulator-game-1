@@ -2036,7 +2036,7 @@ pub(super) fn layout(
     })
 }
 
-fn theme(font: f64) -> GameUiTheme {
+pub(super) fn theme(font: f64) -> GameUiTheme {
     GameUiTheme {
         title_text: GameUiTextStyle {
             font_size_px: 1.75 * font,

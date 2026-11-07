@@ -259,6 +259,39 @@ fn portrait_touch_instruments_avoid_the_center_band() {
 }
 
 #[test]
+fn portrait_touch_instruments_clear_the_frame_rate_badge() {
+    let session = launched();
+    let mut platform = platform();
+    platform.touch_available = true;
+    platform.viewport = GameUiViewport {
+        width: 390.0,
+        height: 844.0,
+        root_font_size: 16.0,
+    };
+    let full = difficulty().with_information(InformationLevel::Full);
+    let state = GameUiState::default();
+    let view = game_ui_view(&state, &context(&session, full, &platform)).unwrap();
+    let badge_bottom = view.theme.frame_rate_badge_bottom_px();
+    let hud = view.hud.as_ref().unwrap();
+    let rail_top = 844.0 - hud.layout.offset_px[1] - hud.layout.height_px;
+    let instruments: Vec<_> = hud
+        .groups
+        .iter()
+        .filter(|group| group.placement == GameUiHudPlacement::Instruments)
+        .flat_map(|group| &group.nodes)
+        .collect();
+    assert!(!instruments.is_empty());
+    for node in instruments {
+        let top = rail_top + node.bounds.y * hud.layout.height_px;
+        assert!(
+            top >= badge_bottom,
+            "{}: top {top} overlaps the frame-rate badge ending at {badge_bottom}",
+            node.id
+        );
+    }
+}
+
+#[test]
 fn bottom_hud_preserves_all_information_and_shared_nonoverlapping_rows() {
     let session = launched();
     assert_touch_hud_lower_band(&session, None);
