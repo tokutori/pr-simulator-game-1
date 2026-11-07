@@ -724,10 +724,10 @@ impl GameUiScene {
         use crate::screen_render_auto::ScreenRenderScope;
 
         match self {
-            Self::FlightSetup | Self::Briefing | Self::Countdown | Self::Flight => {
+            Self::FlightSetup | Self::Briefing | Self::Countdown | Self::Flight | Self::Replay => {
                 ScreenRenderScope::FlightSettings
             }
-            Self::Boot | Self::Title | Self::Result | Self::Replay => ScreenRenderScope::Background,
+            Self::Boot | Self::Title | Self::Result => ScreenRenderScope::Background,
         }
     }
 }

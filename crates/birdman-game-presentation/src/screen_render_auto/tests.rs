@@ -52,14 +52,9 @@ fn default_auto_and_scene_scope_preserve_the_flight_selection() {
         .select_manual(ScreenRenderScale::Full, 0.0)
         .unwrap();
     let selection = controller.snapshot().selection;
-    for (index, scene) in [
-        GameUiScene::Boot,
-        GameUiScene::Title,
-        GameUiScene::Result,
-        GameUiScene::Replay,
-    ]
-    .into_iter()
-    .enumerate()
+    for (index, scene) in [GameUiScene::Boot, GameUiScene::Title, GameUiScene::Result]
+        .into_iter()
+        .enumerate()
     {
         let epoch = controller.epoch();
         controller
@@ -74,6 +69,7 @@ fn default_auto_and_scene_scope_preserve_the_flight_selection() {
         GameUiScene::Briefing,
         GameUiScene::Countdown,
         GameUiScene::Flight,
+        GameUiScene::Replay,
     ]
     .into_iter()
     .enumerate()

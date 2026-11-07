@@ -97,6 +97,37 @@ fn control<'view>(view: &'view GameUiView, id: &str) -> &'view GameUiControl {
 }
 
 #[test]
+fn replay_menu_offers_the_shared_graphics_settings() {
+    assert_eq!(
+        GameUiScene::Replay.screen_render_scope(),
+        crate::screen_render_auto::ScreenRenderScope::FlightSettings
+    );
+    let mut session = finalized();
+    session.enter_replay().unwrap();
+    let platform = platform();
+    let view = game_ui_view(
+        &GameUiState::default(),
+        &context(&session, difficulty(), &platform),
+    )
+    .unwrap();
+    assert!(
+        view.panels
+            .iter()
+            .flat_map(|panel| &panel.sections)
+            .any(|section| section.id == "graphics-settings" && section.label == "グラフィックス")
+    );
+    for id in [
+        "presentation-render-scale-auto",
+        "presentation-render-scale-100",
+        "presentation-render-scale-75",
+        "presentation-render-scale-50",
+        "presentation-render-scale-25",
+    ] {
+        assert!(control(&view, id).enabled, "{id}");
+    }
+}
+
+#[test]
 fn unknown_archive_metadata_has_bounded_unranked_technical_information() {
     let mut session = finalized();
     session.enter_replay().unwrap();

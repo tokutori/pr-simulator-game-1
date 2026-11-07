@@ -97,7 +97,7 @@ type ProbeAssets<'world> = (
     ResMut<'world, Assets<bevy::render::storage::ShaderBuffer>>,
 );
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 enum ProbeState {
     #[default]
     Waiting,
@@ -106,7 +106,7 @@ enum ProbeState {
     Failed(String),
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Debug)]
 pub(crate) struct WaterShaderVerification {
     state: ProbeState,
 }
