@@ -48,7 +48,7 @@ jobs:
         timeout-minutes: 15
         run: |
           sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=3 update --error-on=any
-          sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=3 install -y --no-install-recommends pkg-config libudev-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0
+          sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=3 install -y --no-install-recommends pkg-config libudev-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libvulkan1 mesa-vulkan-drivers
       - name: Cache Rust dependencies and tools
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
@@ -128,6 +128,39 @@ jobs:
         run: cargo run -p birdman-game-cli --locked -- verify-hybrid-flight all
       - run: npm ci
       - run: npm run verify
+      - name: Compare Native and WASM application traces with software Vulkan
+        if: runner.os == 'Linux'
+        timeout-minutes: 15
+        shell: bash
+        env:
+          WGPU_BACKEND: vulkan
+          VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          XDG_RUNTIME_DIR: ${{ runner.temp }}/cross-target-xdg
+        run: |
+          set -euo pipefail
+          output="target/cross-target-check-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$output"
+          test -r "$VK_DRIVER_FILES"
+          install -d -m 700 "$XDG_RUNTIME_DIR"
+          record_result() {
+            status=$?
+            trap - EXIT
+            set +e
+            {
+              echo 'Cross-target Native/WASM result and SHA-256:'
+              if [ -f "$output/result.json" ]; then cat "$output/result.json"; printf '\n'; fi
+              for file in result.json native/application-trace.jsonl native/source-evidence.json; do
+                if [ -f "$output/$file" ]; then sha256sum "$output/$file"; fi
+              done
+              if [ -f "$output/native.log" ]; then
+                grep -m 1 'AdapterInfo' "$output/native.log"
+                if [ "$status" -ne 0 ]; then tail -n 80 "$output/native.log"; fi
+              fi
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+            exit "$status"
+          }
+          trap record_result EXIT
+          npm run test:cross-target -- "$output"
       - name: Configure GitHub Pages
         if: matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.deploy_pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0

@@ -38,7 +38,7 @@ npm ci
 npm run verify
 ~~~
 
-- cross-target接続は`npm run test:cross-target -- target/cross-target-check`で検査する。Nativeとfresh WASMの同じApplicationRuntimeへ生観測とI/O完了を渡し、集約出力・保存原文・終了分類を照合する。入力接続世代・不規則なframe時刻・遅延回復は共有ownerの代表接続で確認する。
+- cross-target接続は`npm run test:cross-target -- target/cross-target-check`で検査する。CheckのUbuntuジョブは`npm run verify`後にMesaのソフトウェアVulkanで一度実行し、run ID・attempt固有の出力先と、結果・trace・source照合情報のSHA-256をジョブログとStep Summaryへ記録する。Nativeとfresh WASMの同じApplicationRuntimeへ生観測とI/O完了を渡し、集約出力・保存原文・終了分類を照合する。入力接続世代・不規則なframe時刻・遅延回復は共有ownerの代表接続で確認する。
 - Nativeの`--verify`は本番updateが受けた観測・文字計測結果・I/O要求を`application-trace.jsonl`へ記録する。描画はcapture境界だけを比較点とし、WASM再生へ同じ文字計測の成功・失敗を返す。
 - 新規保存のJSONは実build来歴のtarget/profileを個別に記録し、それ以外の内容を比較する。公開Title操作からNativeの保存原文を読み戻し、同原文のJSON/CSV出力をbyte一致で検査する。
 - cross-targetの浮動小数点値は絶対許容差 $10^{-9}$ と相対許容差 $10^{-10}$ の和で比較する。identity・比較key・source fingerprint・終了分類は完全一致、保存原文とそのCSV再出力はbyte一致とする。実行結果にはsourceとWASMのhashを記録する。
