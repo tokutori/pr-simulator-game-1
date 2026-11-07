@@ -451,8 +451,65 @@ fn undefined_or_unavailable_datum_alpha_keeps_original_physics_and_first_stage_f
         HybridAerodynamicLoad::try_new(model, 1.225, WindField::uniform(NedVector::zero()))
             .unwrap();
     assert_eq!(
-        datum_alpha_for_guard(previous.flight_state(), &uniform),
+        datum_angle_of_attack(previous.flight_state(), &uniform),
+        Ok(None)
+    );
+    assert_eq!(
+        observe_tail_controller(&aircraft, previous, &uniform)
+            .unwrap()
+            .datum_alpha_rad,
         None
+    );
+    // A field can cover the composite CG while excluding the distinct datum point.
+    let displaced = TailFlightTickState::try_new(
+        &aircraft,
+        previous.tick_index(),
+        FlightState::try_new(
+            previous.flight_state().datum_position_ned(),
+            NedVector::try_new(10.0, 0.0, 1.0).unwrap(),
+            UnitQuaternion::IDENTITY,
+            BodyVector::zero(),
+            0.2,
+            0.0,
+        )
+        .unwrap(),
+        TailIncidence::neutral(),
+        previous.pilot_position_target(),
+    )
+    .unwrap();
+    let cg = observe_tail_controller(&aircraft, displaced, &uniform)
+        .unwrap()
+        .telemetry
+        .composite_cg_position_ned_m
+        .components();
+    assert_ne!(
+        cg[0],
+        displaced.flight_state().datum_position_ned().components()[0]
+    );
+    let samples = [NedVector::zero(); 8];
+    let cg_only = HybridAerodynamicLoad::try_new(
+        model,
+        1.225,
+        WindField::grid(
+            NedPoint::try_new(cg[0] - 0.001, cg[1] - 0.001, cg[2] - 0.001).unwrap(),
+            NedVector::try_new(0.002, 0.002, 0.002).unwrap(),
+            [2; 3],
+            &samples,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        crate::scenario::derive_flight_telemetry(&aircraft, displaced.flight_state(), |point| {
+            cg_only.wind_velocity_at(point)
+        },)
+        .is_ok()
+    );
+    assert_eq!(
+        observe_tail_controller(&aircraft, displaced, &cg_only),
+        Err(TailFlightTickError::Telemetry(
+            crate::FlightTelemetryError::Wind(WindError::OutsideGrid)
+        ))
     );
     assert_eq!(
         advance_tail_flight_tick(&aircraft, previous, guarded_config, input, &uniform),

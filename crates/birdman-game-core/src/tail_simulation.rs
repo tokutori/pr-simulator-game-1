@@ -844,8 +844,11 @@ fn evaluate_tail_flight_tick(
     let (control, commands, hardware, pilot_guard) = match (config.profile, input.external_request)
     {
         (Some(profile), None) => {
+            // The builtin guard defers unavailable wind to the original physical-stage check.
             let datum_alpha_rad = if profile.angle_of_attack_guard().is_some() {
-                datum_alpha_for_guard(previous.flight_state, loads)
+                datum_angle_of_attack(previous.flight_state, loads)
+                    .ok()
+                    .flatten()
             } else {
                 None
             };
@@ -1033,19 +1036,29 @@ fn admit_pilot_target(
     Ok((guarded, None))
 }
 
-fn datum_alpha_for_guard(state: FlightState, loads: &HybridAerodynamicLoad<'_>) -> Option<f64> {
-    let wind = loads.wind_velocity_at(state.datum_position_ned()).ok()?;
+fn datum_angle_of_attack(
+    state: FlightState,
+    loads: &HybridAerodynamicLoad<'_>,
+) -> Result<Option<f64>, crate::FlightTelemetryError> {
+    let wind = loads
+        .wind_velocity_at(state.datum_position_ned())
+        .map_err(crate::FlightTelemetryError::Wind)?;
     let velocity = state
         .datum_velocity_ned()
         .minus(wind)
         .and_then(|relative| state.attitude_body_to_ned().ned_to_body(relative))
-        .ok()?;
+        .map_err(|error| {
+            crate::FlightTelemetryError::Dynamics(match error {
+                crate::MathError::NonFinite => DynamicsError::NonFinite,
+                other => DynamicsError::InvalidMathValue(other),
+            })
+        })?;
     let [forward, _, down] = velocity.components();
-    if forward == 0.0 && down == 0.0 {
+    Ok(if forward == 0.0 && down == 0.0 {
         None
     } else {
         Some(libm::atan2(down, forward))
-    }
+    })
 }
 
 /// Applies shared contact geometry and same-time state interpolation with quaternion slerp.

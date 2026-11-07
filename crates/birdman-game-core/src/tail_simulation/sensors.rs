@@ -27,6 +27,8 @@ pub fn observe_tail_controller(
         |position| loads.wind_velocity_at(position),
     )
     .map_err(TailFlightTickError::Telemetry)?;
+    let datum_alpha_rad = datum_angle_of_attack(previous.flight_state, loads)
+        .map_err(TailFlightTickError::Telemetry)?;
     let load = loads
         .evaluate_hybrid(&previous.flight_state, previous.incidence)
         .map_err(|error| {
@@ -47,7 +49,7 @@ pub fn observe_tail_controller(
     Ok(TailControllerSensors {
         telemetry,
         composite_cg_velocity_ned_mps: velocity,
-        datum_alpha_rad: datum_alpha_for_guard(previous.flight_state, loads),
+        datum_alpha_rad,
         specific_force_frd_mps2: force,
         water_clearance_m: telemetry.altitude_m,
     })

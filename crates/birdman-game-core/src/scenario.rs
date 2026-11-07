@@ -220,7 +220,7 @@ pub struct FlightTelemetry {
 pub enum FlightTelemetryError {
     /// Composite-center kinematics could not be calculated.
     Dynamics(DynamicsError),
-    /// The ambient wind field could not be sampled at the composite center.
+    /// The ambient wind field could not be sampled at the telemetry observation point.
     Wind(crate::wind_field::WindError),
 }
 
@@ -228,7 +228,7 @@ impl core::fmt::Display for FlightTelemetryError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Dynamics(_) => f.write_str("composite-center kinematics"),
-            Self::Wind(_) => f.write_str("composite-center wind"),
+            Self::Wind(_) => f.write_str("telemetry wind"),
         }
     }
 }
