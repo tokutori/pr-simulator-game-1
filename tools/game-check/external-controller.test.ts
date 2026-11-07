@@ -20,7 +20,10 @@ it("runs the same real controller bytes and accepted flight to termination on Na
   const manifest = resolve(root, "tools/controller-sample-guest/Cargo.toml");
   run(["fmt", "--manifest-path", manifest, "--", "--check"]);
   run(["clippy", "--manifest-path", manifest, "--all-targets", "--locked", "--", "-D", "warnings"]);
-  const stdio = run(["test", "--manifest-path", manifest, "--test", "stdio", "--release", "--locked"]);
+  // Cargo builds cdylib twice for an abort-profile binary plus an unwind-profile test.
+  // Use one native test profile; the subsequent Wasm build retains panic=abort.
+  const stdio = run(["test", "--manifest-path", manifest, "--test", "stdio", "--release",
+    "--config", 'profile.release.panic="unwind"', "--locked"]);
   expect(stdio).toMatch(/test result: ok\. 1 passed; 0 failed;/u);
   const output = parseCargoWasmBuildOutput(run(["build", "--manifest-path", manifest,
     "--config", resolve(root, "tools/controller-sample-guest/.cargo/config.toml"), "--lib",
