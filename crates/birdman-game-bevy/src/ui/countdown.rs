@@ -27,7 +27,21 @@ pub(super) fn setup_countdown(commands: &mut Commands) -> RetainedCountdown {
             Pickable::IGNORE,
         ))
         .id();
-    RetainedCountdown { shell, texts: None }
+    let row = commands
+        .spawn((
+            Node {
+                align_items: AlignItems::Baseline,
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    commands.entity(shell).add_child(row);
+    RetainedCountdown {
+        shell,
+        row,
+        texts: None,
+    }
 }
 
 /// Game-side countdown display: a full-screen overlay with no panel, matching

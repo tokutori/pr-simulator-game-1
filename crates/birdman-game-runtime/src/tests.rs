@@ -3330,7 +3330,6 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             drawing
         } else {
             runtime.observe_test(input).unwrap().drawing
-
         };
         if let Some(camera) = drawing
             .as_ref()

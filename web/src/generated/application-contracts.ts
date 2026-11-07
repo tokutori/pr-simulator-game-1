@@ -1489,6 +1489,10 @@ export type GameUiReplayView = "cinematic" | "telemetry" | "analysis";
  */
 export type GameUiFlightCamera = "pilot" | "chase";
 /**
+ * Engine-independent anchor.
+ */
+export type GameUiAnchor = "menu" | "head" | "cockpit" | "world";
+/**
  * Widget implementations must exhaustively handle each display primitive.
  */
 export type GameUiHudNodeContent = {
@@ -1714,10 +1718,6 @@ export type GameUiHudPlacement = "readouts" | "instruments";
  * Shared viewport-relative placement.
  */
 export type GameUiShell = "center" | "flight_bar" | "pause_settings" | "analysis" | "cinematic";
-/**
- * Engine-independent anchor.
- */
-export type GameUiAnchor = "menu" | "head" | "cockpit" | "world";
 /**
  * Exclusive shared control representation.
  */
@@ -3905,18 +3905,56 @@ export interface DisplaySettings {
  */
 export interface GameUiCountdown {
     /**
+     * Head-relative centre; Screen adapters map this anchor to the viewport centre.
+     */
+    readonly anchor: GameUiAnchor;
+    /**
+     * Completed digit typography.
+     */
+    readonly digit_text: GameUiTextStyle;
+    /**
      * Remaining whole seconds, shown as the large digits.
      */
     readonly digits: string;
     /**
-     * Digit font size in logical pixels, derived from the viewport so the
-     * digit width or height is about half the viewport width or height.
+     * Baseline-row spacing between digits and unit, in logical pixels.
      */
-    readonly font_size_px: number;
+    readonly gap_px: number;
+    /**
+     * Logical viewport used to scale this completed composition uniformly in XR.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly logical_size_px: readonly [
+        number,
+        number
+    ];
     /**
      * Unit label rendered small beside the digits.
      */
     readonly unit: string;
+    /**
+     * Completed unit typography.
+     */
+    readonly unit_text: GameUiTextStyle;
+}
+/**
+ * Completed logical-pixel typography; adapters retain their observed font resource.
+ */
+export interface GameUiTextStyle {
+    /**
+     * Completed logical-pixel font size.
+     */
+    readonly font_size_px: number;
+    /**
+     * Requested font weight, in the range 1 through 1000.
+     */
+    readonly font_weight: number;
+    /**
+     * Completed line advance in logical pixels.
+     */
+    readonly line_height_px: number;
 }
 /**
  * Shared Web-baseline HUD model; no adapter rederives flight values or labels.
@@ -4909,23 +4947,6 @@ export interface GameUiTheme {
      * Mandatory warning text color.
      */
     readonly warning_text: string;
-}
-/**
- * Completed logical-pixel typography; adapters retain their observed font resource.
- */
-export interface GameUiTextStyle {
-    /**
-     * Completed logical-pixel font size.
-     */
-    readonly font_size_px: number;
-    /**
-     * Requested font weight, in the range 1 through 1000.
-     */
-    readonly font_weight: number;
-    /**
-     * Completed line advance in logical pixels.
-     */
-    readonly line_height_px: number;
 }
 /**
  * Lightweight per-frame UI observation associated with one published structural view.
