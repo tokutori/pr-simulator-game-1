@@ -33,6 +33,8 @@ use std::sync::Arc;
 
 #[path = "ui/chart.rs"]
 mod chart;
+#[path = "ui/countdown.rs"]
+mod countdown;
 #[path = "ui/hud.rs"]
 mod hud;
 #[path = "ui/projection.rs"]
@@ -44,6 +46,7 @@ pub(crate) use chart::align_chart_text_baselines;
 #[path = "ui/touch.rs"]
 mod touch;
 use chart::*;
+use countdown::{RetainedCountdown, project_countdown, setup_countdown};
 use hud::{RetainedHud, project_hud, setup_hud};
 use projection::*;
 
@@ -108,6 +111,7 @@ struct RetainedUi {
     sections: BTreeMap<String, Entity>,
     widgets: BTreeMap<String, Widget>,
     hud: RetainedHud,
+    countdown: RetainedCountdown,
 }
 
 #[cfg(feature = "verify-harness")]
@@ -207,6 +211,7 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
         ))
         .id();
     let hud = setup_hud(&mut commands);
+    let countdown = setup_countdown(&mut commands);
     commands.insert_resource(RetainedUi {
         shell,
         heading,
@@ -217,6 +222,7 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
         sections: BTreeMap::new(),
         widgets: BTreeMap::new(),
         hud,
+        countdown,
     });
 }
 
@@ -619,9 +625,24 @@ pub(crate) fn submit(world: &mut World, drawing: &ApplicationDrawingOutput) -> R
     let font = world.resource::<NativeFont>().0.clone();
     let result = match &drawing.ui {
         ApplicationUiProjection::View { view } => project_view(world, &mut retained, view, &font)
-            .and_then(|()| project_hud(world, &mut retained.hud, view.hud.as_ref(), &view.theme)),
+            .and_then(|()| project_hud(world, &mut retained.hud, view.hud.as_ref(), &view.theme))
+            .and_then(|()| {
+                project_countdown(
+                    world,
+                    &mut retained.countdown,
+                    view.countdown.as_ref(),
+                    &view.theme,
+                )
+            }),
         ApplicationUiProjection::Frame { frame } => project_frame(world, &mut retained, frame),
     };
+    world
+        .entity_mut(retained.countdown.shell)
+        .insert(if drawing.presentation.screen_ui_visible {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
     if let Some(mut visibility) = world.get_mut::<Visibility>(retained.shell) {
         *visibility = if drawing.presentation.screen_ui_visible {
             Visibility::Inherited

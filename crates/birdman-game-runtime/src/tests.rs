@@ -3292,6 +3292,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             .simulation_time_seconds,
         0.0
     );
+    let mut countdown_cameras = Vec::new();
     for frame in 0..=30 {
         let input = ApplicationInput::Frame {
             display_resource_id: None,
@@ -3300,7 +3301,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             xr: None,
             spatial: Default::default(),
         };
-        if frame == 0 {
+        let drawing = if frame == 0 {
             let (begin, work) = runtime
                 .begin_update(ApplicationObservation {
                     observed_ms: 10_000.0,
@@ -3321,15 +3322,21 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
                 })
                 .unwrap();
             assert!(continuation.0.drawing.is_none() && continuation.1.is_none());
-            assert!(
-                runtime
-                    .admit_presentation(work.project(&mut no_text_metrics))
-                    .unwrap()
-                    .is_some()
-            );
+            let drawing = runtime
+                .admit_presentation(work.project(&mut no_text_metrics))
+                .unwrap();
+            assert!(drawing.is_some());
             assert!(runtime.presentation_lease.is_none());
+            drawing
         } else {
-            runtime.observe_test(input).unwrap();
+            runtime.observe_test(input).unwrap().drawing
+        };
+        if let Some(camera) = drawing
+            .as_ref()
+            .and_then(|drawing| drawing.scene.camera.as_ref())
+            .and_then(|camera| camera.world_from_head)
+        {
+            countdown_cameras.push(camera.position);
         }
         if frame == 0 {
             assert!(matches!(
@@ -3340,6 +3347,18 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             ));
         }
     }
+    // The countdown camera rides the aircraft, so it travels along the deck
+    // with the launch roll instead of holding the stationary exhibition pose.
+    let first_camera = countdown_cameras.first().unwrap();
+    let last_camera = countdown_cameras.last().unwrap();
+    let travelled = ((last_camera.x - first_camera.x).powi(2)
+        + (last_camera.y - first_camera.y).powi(2)
+        + (last_camera.z - first_camera.z).powi(2))
+    .sqrt();
+    assert!(
+        travelled > 1.0,
+        "countdown camera must follow the launch roll: {travelled}"
+    );
     assert_eq!(
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::FlightRunning

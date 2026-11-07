@@ -1489,6 +1489,10 @@ export type GameUiReplayView = "cinematic" | "telemetry" | "analysis";
  */
 export type GameUiFlightCamera = "pilot" | "chase";
 /**
+ * Engine-independent anchor.
+ */
+export type GameUiAnchor = "menu" | "head" | "cockpit" | "world";
+/**
  * Widget implementations must exhaustively handle each display primitive.
  */
 export type GameUiHudNodeContent = {
@@ -1715,10 +1719,6 @@ export type GameUiHudPlacement = "readouts" | "instruments";
  */
 export type GameUiShell = "center" | "flight_bar" | "pause_settings" | "analysis" | "cinematic";
 /**
- * Engine-independent anchor.
- */
-export type GameUiAnchor = "menu" | "head" | "cockpit" | "world";
-/**
  * Exclusive shared control representation.
  */
 export type GameUiControlContent = {
@@ -1881,7 +1881,7 @@ export type GameUiRangeTarget = "analysis" | "replay";
 /**
  * Shared source for frame-varying readouts, independent of element identity.
  */
-export type GameUiReadoutSource = "static" | "countdown" | "playback_time" | "playback_summary" | "analysis_cursor";
+export type GameUiReadoutSource = "static" | "playback_time" | "playback_summary" | "analysis_cursor";
 /**
  * Independent channels belonging to one touch flight device.
  */
@@ -3812,6 +3812,10 @@ export interface GameUiView {
      */
     readonly back_action?: GameUiAction | null;
     /**
+     * Game-side countdown display, present only while a countdown runs.
+     */
+    readonly countdown?: GameUiCountdown | null;
+    /**
      * Shared explanatory text.
      */
     readonly description: string;
@@ -3893,6 +3897,64 @@ export interface DisplaySettings {
      * Saturation mix from linear luminance; 1.0 keeps the existing saturation.
      */
     readonly saturation: number;
+}
+/**
+ * Game-side countdown display. Unlike a menu readout it has no panel and
+ * does not use menu emphasis; the shared derivation owns its size so every
+ * adapter renders the same digits.
+ */
+export interface GameUiCountdown {
+    /**
+     * Head-relative centre; Screen adapters map this anchor to the viewport centre.
+     */
+    readonly anchor: GameUiAnchor;
+    /**
+     * Completed digit typography.
+     */
+    readonly digit_text: GameUiTextStyle;
+    /**
+     * Remaining whole seconds, shown as the large digits.
+     */
+    readonly digits: string;
+    /**
+     * Baseline-row spacing between digits and unit, in logical pixels.
+     */
+    readonly gap_px: number;
+    /**
+     * Logical viewport used to scale this completed composition uniformly in XR.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly logical_size_px: readonly [
+        number,
+        number
+    ];
+    /**
+     * Unit label rendered small beside the digits.
+     */
+    readonly unit: string;
+    /**
+     * Completed unit typography.
+     */
+    readonly unit_text: GameUiTextStyle;
+}
+/**
+ * Completed logical-pixel typography; adapters retain their observed font resource.
+ */
+export interface GameUiTextStyle {
+    /**
+     * Completed logical-pixel font size.
+     */
+    readonly font_size_px: number;
+    /**
+     * Requested font weight, in the range 1 through 1000.
+     */
+    readonly font_weight: number;
+    /**
+     * Completed line advance in logical pixels.
+     */
+    readonly line_height_px: number;
 }
 /**
  * Shared Web-baseline HUD model; no adapter rederives flight values or labels.
@@ -4887,23 +4949,6 @@ export interface GameUiTheme {
     readonly warning_text: string;
 }
 /**
- * Completed logical-pixel typography; adapters retain their observed font resource.
- */
-export interface GameUiTextStyle {
-    /**
-     * Completed logical-pixel font size.
-     */
-    readonly font_size_px: number;
-    /**
-     * Requested font weight, in the range 1 through 1000.
-     */
-    readonly font_weight: number;
-    /**
-     * Completed line advance in logical pixels.
-     */
-    readonly line_height_px: number;
-}
-/**
  * Lightweight per-frame UI observation associated with one published structural view.
  */
 export interface GameUiFrame {
@@ -4915,6 +4960,10 @@ export interface GameUiFrame {
      * Cursor-only chart observation; plotted series and bounds remain in the view.
      */
     readonly chart_cursor?: GameUiChartCursor | null;
+    /**
+     * Game-side countdown display, advancing once per second.
+     */
+    readonly countdown?: GameUiCountdown | null;
     /**
      * Numeric readouts that advance with the retained record cursor.
      */

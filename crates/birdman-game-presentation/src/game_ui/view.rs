@@ -221,14 +221,7 @@ pub fn game_ui_view(
                 feedback(&mut menu, context);
             }
         }
-        SessionPhase::Countdown { remaining_seconds } => {
-            menu.status("game-countdown-caption", "", "発進まで");
-            menu.live_status(
-                "game-countdown-status",
-                "",
-                &format!("{remaining_seconds} 秒"),
-                GameUiReadoutSource::Countdown,
-            );
+        SessionPhase::Countdown { .. } => {
             menu.section("flight-actions", "", GameUiSectionLayout::Row);
             menu.session(
                 "game-countdown-cancel",
@@ -542,6 +535,7 @@ pub fn game_ui_view(
         } else {
             super::hud::game_ui_hud(state, context)?
         },
+        countdown: super::hud::game_ui_countdown(context),
     };
     view.back_action = view.back_action();
     view.interaction_scope = match scene {
@@ -624,11 +618,7 @@ impl Menu {
             false,
             id,
             GameUiControlContent::Status {
-                emphasis: if source == GameUiReadoutSource::Countdown {
-                    GameUiEmphasis::Primary
-                } else {
-                    GameUiEmphasis::Normal
-                },
+                emphasis: GameUiEmphasis::Normal,
                 source,
                 value: value.to_owned(),
             },
@@ -2021,6 +2011,7 @@ pub(super) fn layout(
             GameUiShell::Center
         }
         SessionPhase::FlightRunning => GameUiShell::FlightBar,
+        SessionPhase::Countdown { .. } => GameUiShell::FlightBar,
         SessionPhase::FlightPaused { .. }
             if (state.pause_overlay == GameUiPauseOverlay::Settings
                 || context.platform.renderer_failure.is_some())

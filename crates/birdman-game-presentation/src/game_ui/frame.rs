@@ -16,6 +16,7 @@ pub fn game_ui_frame(
     let mut frame = GameUiFrame {
         view_revision: retained.view_revision,
         hud: super::hud::game_ui_hud(state, context)?,
+        countdown: super::hud::game_ui_countdown(context),
         ranges: Vec::new(),
         readouts: Vec::new(),
         fields: Vec::new(),
@@ -28,21 +29,6 @@ pub fn game_ui_frame(
         .iter()
         .flat_map(|panel| &panel.controls)
         .collect();
-    if let SessionPhase::Countdown { remaining_seconds } = phase {
-        for control in &controls {
-            if matches!(
-                control.content,
-                GameUiControlContent::Status {
-                    source: GameUiReadoutSource::Countdown,
-                    ..
-                }
-            ) {
-                frame
-                    .readouts
-                    .push(readout(control, format!("{remaining_seconds} 秒")));
-            }
-        }
-    }
     if !matches!(
         phase,
         SessionPhase::Result | SessionPhase::Replay | SessionPhase::Attract
@@ -83,7 +69,7 @@ pub fn game_ui_frame(
             }),
             GameUiControlContent::Status { source, .. } => {
                 let value = match source {
-                    GameUiReadoutSource::Static | GameUiReadoutSource::Countdown => continue,
+                    GameUiReadoutSource::Static => continue,
                     GameUiReadoutSource::PlaybackTime => format!("{time:.2} / {duration:.2} s"),
                     GameUiReadoutSource::PlaybackSummary => {
                         let distance = record

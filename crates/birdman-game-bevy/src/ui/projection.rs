@@ -13,6 +13,12 @@ pub(super) fn project_frame(
         return Err("UI frameのview revisionが一致しない".to_owned());
     }
     project_hud(world, &mut retained.hud, frame.hud.as_ref(), &view.theme)?;
+    project_countdown(
+        world,
+        &mut retained.countdown,
+        frame.countdown.as_ref(),
+        &view.theme,
+    )?;
     let controls = view
         .panels
         .iter()

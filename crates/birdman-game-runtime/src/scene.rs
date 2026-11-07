@@ -277,7 +277,8 @@ impl SceneOwner {
         let mount = if let Some(flight) = aircraft.filter(|_| {
             matches!(
                 phase,
-                SessionPhase::FlightRunning
+                SessionPhase::Countdown { .. }
+                    | SessionPhase::FlightRunning
                     | SessionPhase::FlightPaused { .. }
                     | SessionPhase::Result
                     | SessionPhase::Replay

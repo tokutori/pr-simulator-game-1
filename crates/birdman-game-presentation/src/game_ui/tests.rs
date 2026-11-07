@@ -1009,44 +1009,31 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
     // The countdown carries no heading or description text.
     assert!(view.title.is_empty());
     assert!(view.description.is_empty());
-    // The seconds are separated from their label: the readout carries the
-    // value alone with primary emphasis, and the label is a subordinate
-    // static line of its own.
-    let seconds = control(&view, "game-countdown-status");
-    assert!(seconds.label.is_empty());
-    assert!(matches!(
-        seconds.content,
-        GameUiControlContent::Status {
-            emphasis: GameUiEmphasis::Primary,
-            source: GameUiReadoutSource::Countdown,
-            ref value,
-        } if value == "3 秒"
-    ));
-    let caption = control(&view, "game-countdown-caption");
-    assert!(caption.label.is_empty());
-    assert!(matches!(
-        caption.content,
-        GameUiControlContent::Status {
-            emphasis: GameUiEmphasis::Normal,
-            source: GameUiReadoutSource::Static,
-            ref value,
-        } if value == "発進まで"
-    ));
+    // The seconds are a game-side display, not a menu readout: the view
+    // carries them outside the panels, sized from the viewport by the shared
+    // derivation (1280x720: the height quotient binds at 500 px).
+    let overlay = view.countdown.as_ref().unwrap();
+    assert_eq!(overlay.digits, "3");
+    assert_eq!(overlay.unit, "秒");
+    assert_eq!(overlay.digit_text.font_size_px, 500.0);
+    assert_eq!(overlay.anchor, GameUiAnchor::Head);
+    assert_eq!(overlay.unit_text.font_size_px, 175.0);
+    assert_eq!(
+        overlay.digit_text.font_weight,
+        view.theme.body_text.font_weight
+    );
+    assert_eq!(overlay.gap_px, 35.0);
+    // The panel uses the flight bar shell, so the cancel button and the
+    // build-version line render exactly as on the flight screen.
+    assert_eq!(view.layout.shell, GameUiShell::FlightBar);
     let order: Vec<&str> = view.panels[0]
         .controls
         .iter()
         .map(|control| control.id.as_str())
         .collect();
-    // The countdown screen consists of the countdown and the cancel button
-    // alone: no preparation progress and no feedback line.
-    assert_eq!(
-        order,
-        [
-            "game-countdown-caption",
-            "game-countdown-status",
-            "game-countdown-cancel"
-        ]
-    );
+    // The countdown screen's panel consists of the cancel button alone: no
+    // preparation progress, no caption and no feedback line.
+    assert_eq!(order, ["game-countdown-cancel"]);
     // A pending notification adds no feedback line to the countdown.
     let mut notified = platform.clone();
     notified.notification = "試験通知".to_owned();
@@ -1078,7 +1065,8 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
             ..
         }
     ));
-    // The completed Primary role reserves and paints its real font-sized line box.
+    // The spatial menu paint carries the cancel button alone: the seconds
+    // are a game-side display and never enter the menu surface.
     {
         use crate::xr::*;
         let viewer = crate::xr::tests::viewer(XrDepthRange::NegativeOneToOne);
@@ -1093,6 +1081,55 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
             view.view_revision,
         )
         .unwrap();
+        // The frame carries the seconds on the game-side countdown display,
+        // with the same viewport-derived size as the view.
+        let frame_countdown = frame.countdown.as_ref().unwrap();
+        assert_eq!(frame_countdown.digits, overlay.digits);
+        assert_eq!(frame_countdown.unit, overlay.unit);
+        assert_eq!(
+            frame_countdown.digit_text.font_size_px,
+            overlay.digit_text.font_size_px
+        );
+        let font = MenuFont {
+            family: "test-font".into(),
+            weight: 400,
+            style: MenuFontStyle::Normal,
+            generation: 1,
+        };
+        let head = prepare_game_ui_head_hud(
+            &view,
+            &frame,
+            HeadHudPreparationInput {
+                view_revision: view.view_revision,
+                viewer: &viewer,
+                profile: XrHeadHudProfile::default(),
+                font: &font,
+                locale: "ja",
+                frame_rate_label: None,
+            },
+            &mut SurfaceFontCache::default(),
+            |request, _, value| {
+                let advance = value.chars().count() as f64 * request.font_meters * 0.5;
+                Ok(MenuGlyphMetrics {
+                    advance,
+                    left: 0.0,
+                    right: advance,
+                    ascent: request.font_meters * 0.8,
+                    descent: request.font_meters * 0.2,
+                })
+            },
+        );
+        let HeadHudPaintReply::Ready { projection: head } = head else {
+            panic!("both eyes must retain the complete head-anchored countdown: {head:?}");
+        };
+        assert!(head.local_pose.position.z < 0.0);
+        assert_eq!(head.clear_region.width, 0.0);
+        for expected in [&overlay.digits, &overlay.unit] {
+            assert!(head.items.iter().any(|item| matches!(item,
+                SurfacePaintItem::Text { value, color, .. }
+                if value == expected && color == &view.theme.text
+            )));
+        }
         let reply = prepare_game_ui_menu(
             &view,
             &frame,
@@ -1123,80 +1160,34 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
             },
         );
         let MenuLayoutReply::Ready { projection } = reply else {
-            panic!("countdown must fit with completed role metrics: {reply:?}")
+            panic!("countdown menu paint must fit: {reply:?}")
         };
         assert_eq!(projection.opacity, 0.0);
-        let caption = &control(&view, "game-countdown-status").display_label;
-        let cancel = &control(&view, "game-countdown-cancel").display_label;
-        let (primary_font, primary_anchor) = projection
-            .content
-            .items
-            .iter()
-            .find_map(|item| match item {
-                SurfacePaintItem::Text {
-                    value,
-                    font_meters,
-                    anchor,
-                    color,
-                    ..
-                } if value == caption && color == &view.theme.text => Some((*font_meters, *anchor)),
-                _ => None,
-            })
-            .unwrap();
-        let cancel_font = projection
-            .content
-            .items
-            .iter()
-            .find_map(|item| match item {
-                SurfacePaintItem::Text {
-                    value, font_meters, ..
-                } if value == cancel => Some(*font_meters),
-                _ => None,
-            })
-            .unwrap();
-        assert_eq!(primary_font, 2.0 * cancel_font);
-        let reserved = projection
+        // The only reserved control is the cancel button; no status control
+        // exists for the seconds.
+        let reserved_ids: Vec<&str> = projection
             .geometry_key
             .controls
             .iter()
-            .find(|control| control.identity[0] == "game-countdown-status")
-            .unwrap()
-            .bounds;
-        assert!(reserved.height >= primary_font * 1.35);
-        assert!(primary_anchor.y - 0.8 * primary_font >= projection.content.clip.y - 1e-10);
-        assert!(
-            primary_anchor.y + 0.2 * primary_font
-                <= projection.content.clip.y + projection.content.clip.height + 1e-10
-        );
-        let shadow_anchor = projection
+            .map(|control| control.identity[0].as_str())
+            .collect();
+        assert_eq!(reserved_ids, ["game-countdown-cancel"]);
+        // The cancel caption is painted, and no text item carries the
+        // seconds in either their digit or labelled form.
+        let cancel_label = &control(&view, "game-countdown-cancel").display_label;
+        let painted_texts: Vec<&str> = projection
             .content
             .items
             .iter()
-            .find_map(|item| match item {
-                SurfacePaintItem::Text {
-                    value,
-                    anchor,
-                    color,
-                    ..
-                } if value == caption && color == &view.theme.text_shadow_color => Some(*anchor),
+            .filter_map(|item| match item {
+                SurfacePaintItem::Text { value, .. } => Some(value.as_str()),
                 _ => None,
             })
-            .unwrap();
-        let offset = view
-            .theme
-            .text_shadow_offset_px
-            .map(|px| px * cancel_font / view.theme.body_text.font_size_px);
-        assert!((shadow_anchor.x - primary_anchor.x - offset[0]).abs() < 1e-12);
-        assert!((shadow_anchor.y - primary_anchor.y - offset[1]).abs() < 1e-12);
-        assert!(shadow_anchor.x >= projection.content.clip.x);
-        assert!(
-            shadow_anchor.x + caption.chars().count() as f64 * primary_font * 0.5
-                <= projection.content.clip.x + projection.content.clip.width + 1e-10
-        );
-        assert!(
-            shadow_anchor.y + 0.2 * primary_font
-                <= projection.content.clip.y + projection.content.clip.height + 1e-10
-        );
+            .collect();
+        assert!(painted_texts.contains(&cancel_label.as_str()));
+        assert!(!painted_texts.iter().any(|value| {
+            value.contains(overlay.digits.as_str()) || value.contains(overlay.unit.as_str())
+        }));
     }
     let actions = view.panels[0]
         .sections
@@ -2815,7 +2806,9 @@ fn retained_preflight_and_initial_flight_frames_do_not_query_record_duration() {
         assert!(frame.ranges.is_empty());
         assert!(frame.chart_cursor.is_none());
         if phase_code == 4 {
-            assert_eq!(frame.readouts[0].id, "game-countdown-status");
+            assert_eq!(frame.countdown.as_ref().unwrap().digits, "1");
+        } else {
+            assert!(frame.countdown.is_none());
         }
     }
 }

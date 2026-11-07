@@ -765,6 +765,8 @@ pub struct GameUiView {
     pub theme: GameUiTheme,
     /// Shared telemetry and instrument projection, absent outside a flight or record.
     pub hud: Option<GameUiHud>,
+    /// Game-side countdown display, present only while a countdown runs.
+    pub countdown: Option<GameUiCountdown>,
 }
 
 /// Lightweight per-frame UI observation associated with one published structural view.
@@ -776,6 +778,8 @@ pub struct GameUiFrame {
     pub view_revision: u32,
     /// Shared HUD projection, never a second physical state.
     pub hud: Option<GameUiHud>,
+    /// Game-side countdown display, advancing once per second.
+    pub countdown: Option<GameUiCountdown>,
     /// Existing range values that advance without a structural change.
     pub ranges: Vec<GameUiRangeValue>,
     /// Fixed record-clock and analysis-cursor readouts.
@@ -865,6 +869,29 @@ pub enum GameUiOverlay {
     PauseSettings,
     /// Paused input help.
     PauseHelp,
+}
+
+/// Game-side countdown display. Unlike a menu readout it has no panel and
+/// does not use menu emphasis; the shared derivation owns its size so every
+/// adapter renders the same digits.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiCountdown {
+    /// Remaining whole seconds, shown as the large digits.
+    pub digits: String,
+    /// Unit label rendered small beside the digits.
+    pub unit: String,
+    /// Head-relative centre; Screen adapters map this anchor to the viewport centre.
+    pub anchor: GameUiAnchor,
+    /// Logical viewport used to scale this completed composition uniformly in XR.
+    pub logical_size_px: [f64; 2],
+    /// Completed digit typography.
+    pub digit_text: GameUiTextStyle,
+    /// Completed unit typography.
+    pub unit_text: GameUiTextStyle,
+    /// Baseline-row spacing between digits and unit, in logical pixels.
+    pub gap_px: f64,
 }
 
 /// Shared Web-baseline HUD model; no adapter rederives flight values or labels.
@@ -1348,8 +1375,6 @@ pub struct GameUiFieldsValue {
 pub enum GameUiReadoutSource {
     /// Value retained in the structural view.
     Static,
-    /// Remaining countdown duration.
-    Countdown,
     /// Current playback time and record duration.
     PlaybackTime,
     /// Terminal distance and current playback time.
