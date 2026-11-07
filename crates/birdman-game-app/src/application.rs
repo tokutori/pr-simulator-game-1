@@ -299,7 +299,7 @@ impl ApplicationSession {
             | SessionPhase::Replay
             | SessionPhase::Attract => self
                 .session
-                .flight_record()
+                .playback_record()
                 .and_then(|record| record.header().control_mode),
             SessionPhase::BriefingPreparing
             | SessionPhase::BriefingReady

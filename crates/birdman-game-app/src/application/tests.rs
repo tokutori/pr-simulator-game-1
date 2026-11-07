@@ -922,6 +922,11 @@ fn shared_attract_keeps_player_selection_and_reuses_the_installed_record() {
     assert_ne!(source, empty_source);
     let record = application.core_session().playback_record().unwrap();
     let address = record.samples().as_ptr();
+    assert!(record.header().control_mode.is_some());
+    assert_eq!(
+        application.display_control_mode(),
+        record.header().control_mode
+    );
     assert!(record.duration_seconds().unwrap() > 0.0);
     assert!(
         record

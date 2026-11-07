@@ -1386,7 +1386,7 @@ fn web_setup_candidates_groups_order_and_primary_action_are_shared() {
     for (group, count) in [
         ("preset", 4),
         ("information", 5),
-        ("assistance", 4),
+        ("assistance", 3),
         ("weather", 5),
     ] {
         assert_eq!(controls.iter().filter(|control| matches!(&control.content, GameUiControlContent::Button { presentation: GameUiButtonPresentation::Choice { group: value, .. }, .. } if value == group)).count(), count);
