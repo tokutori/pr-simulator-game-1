@@ -197,10 +197,6 @@ impl HybridSessionPreparation {
     }
 
     /// Prepares either the built-in policy or an admitted external execution against the same model.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Explicit sealed sources and execution are one preparation contract"
-    )]
     pub fn try_new_for_weather_with_execution(
         aircraft: &crate::SelectedAircraft,
         controller: &crate::SelectedController,

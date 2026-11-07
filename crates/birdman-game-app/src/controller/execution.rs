@@ -172,6 +172,7 @@ pub enum ControllerIoObservation {
 }
 pub use birdman_game_format::external_controller::ControllerExecutionFault;
 
+#[derive(Default)]
 pub(crate) struct ControllerExecutionState {
     pub(crate) selected: SelectedControllerExecution,
     generation: u64,
@@ -219,16 +220,6 @@ struct PendingExchange {
     written_ms: Option<f64>,
     reply: Option<(ControllerFrame, f64)>,
     deadline_ms: Option<f64>,
-}
-impl Default for ControllerExecutionState {
-    fn default() -> Self {
-        Self {
-            selected: SelectedControllerExecution::default(),
-            generation: 0,
-            active: None,
-            requests: Vec::new(),
-        }
-    }
 }
 impl ControllerExecutionState {
     pub(crate) fn select(&mut self, selected: SelectedControllerExecution) {

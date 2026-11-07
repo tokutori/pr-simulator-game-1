@@ -183,10 +183,9 @@ impl ApplicationSession {
     pub(super) fn synchronize_controller_fault(&mut self) {
         if let Some(fault) = self.controller_execution.fault().cloned()
             && let Some(prepared) = self.prepared.as_mut()
+            && prepared.controller_fault.is_none()
         {
-            if prepared.controller_fault.is_none() {
-                prepared.controller_fault = Some(fault);
-            }
+            prepared.controller_fault = Some(fault);
         }
         if self.controller_execution.fault().is_some() {
             self.finish_controller(
