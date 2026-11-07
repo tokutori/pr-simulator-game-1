@@ -71,6 +71,9 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 - 初期rendererが未取得の場合、runtimeは`CreateRenderer`を要求し、request IDで`RendererCreated`を認可する。空と会場のcommit完了までBoot Viewを表示し、初期化失敗の再試行と再読み込みも同じ入力・I/O要求へ統合する。取得済みrendererを渡すnative起動はその資源を採用する。
 - WASM読込前の初期表示・失敗表示は、共有Rustからbuild時に生成した静的HTMLを使う。実行開始後のView・操作認可・初期化世代はruntimeが所有する。
 
+- 空間paint: `begin_update`は入力認可とI/O要求を一度返し、元のSurfaceOwnerを唯一のowned PresentationWorkへ貸し出す。font計測と既存surface投影はruntime lock外で実行し、`admit_presentation`がscopeとlease IDを照合してownerを返却する。Webのupdateも同じ3段階を内部で同期実行する。
+- lease中の進行: ControllerIo・現在のcontroller Wake・終端cleanupだけを認可する。同じScene/layoutの物理tick進行は旧観測paintの採用を許し、phase・表示資源・font・interaction/scroll scopeの変更時は旧publicationを退役する。失敗時もbeginのI/O要求を一度返し、ownerを回収する。
+
 ### GameSessionとApplicationSession
 
 - `GameSession`はdomain phase、停止理由、封印済みconfiguration、飛行状態、終了理由、score、確定record、RetryとReplayを所有する。
@@ -83,6 +86,8 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 
 - `ApplicationSession`はprivateなGameSessionと、選択機体・controllerの検証済み定義・原文・SHA、最新pair診断、難易度、seed、tick上限、準備metadata、archive原文、記録の制御identityを所有する。
 - 制御設定: formatが文書単独の検査と機体との整合診断を提供し、appが実trimを使ってcoreの固定長PID設定へ解決する。有効な各文書は独立に選択・保存し、最新pairの診断で準備・開始・Retryを認可する。
+- 外部controller: appがWasm実行、Nativeのpending・sequence・最初のfaultと取消/終了drainを所有する。coreは有限の最終尾翼要求へ共通stop/slewを一度適用し、実採用境界を記録する。Nativeのraw I/Oは同じRuntimeへ完了を通知し、既存Wake IDでHITLの絶対期限とtickを認可する。
+- Native観測時刻: Frame・transport受信・Wakeは一つの単調epochを使う。受信済みcompletionを期限Wakeより先にdrainし、実OS received_msとlock取得時のenvelope時刻を区別する。renderer・font・process/serial I/Oはruntime lock外で実行し、effectを一度配送する。
 - 機体の借用: `GameSession`の封印configurationは数値と固定長identityを所有する。appはframe batch中だけ選択定義から空力viewとcontact providerを借用し、既存の評価・telemetry・score callbackで進行する。
 - 描画資源: sceneの機体templateと変形scratchを所有し、更新時だけ定義を借用する。runtimeはactive・pending資源が参照する機体世代のCPU bufferを保持し、完了・取消に合わせて回収する。camera・mesh・尾翼metadataは同じ選択世代で交換する。
 - 候補資源: Prepareは毎回その候補のscene descriptorを渡し、adapterは候補自身のmanifestで構築・commit・解放する。mesh・material・buffer IDはrenderer寿命内で単調発行し、raw bufferはcache miss時にuploadする。

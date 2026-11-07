@@ -636,6 +636,69 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
 
 #[test]
 fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_destruction() {
+    // Disposal during font work retires the old spatial publication at return.
+    {
+        let mut runtime =
+            ApplicationRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
+        let (begin, work) = runtime
+            .begin_update(ApplicationObservation {
+                observed_ms: 0.0,
+                input: ApplicationInput::Frame {
+                    display_resource_id: None,
+                    timestamp_ms: 0.0,
+                    gamepads: Vec::new(),
+                    xr: None,
+                    spatial: Default::default(),
+                },
+            })
+            .unwrap();
+        assert!(begin.drawing.is_none());
+        let work = work.expect("owned painting work");
+        let effect_count = begin.requests.len();
+        assert!(effect_count > 0);
+        let mut failed = work.project(&mut no_text_metrics);
+        failed.drawing = Err(ApplicationRuntimeError::SpatialInput(
+            "text measurement failed",
+        ));
+        let preserved = runtime.complete_presentation_update(begin, failed);
+        assert_eq!(preserved.requests.len(), effect_count);
+        assert!(
+            preserved
+                .diagnostic
+                .as_ref()
+                .unwrap()
+                .contains("text measurement failed")
+        );
+        assert!(runtime.presentation_lease.is_none());
+        let (_, work) = runtime
+            .begin_update(ApplicationObservation {
+                observed_ms: 0.0,
+                input: ApplicationInput::Frame {
+                    display_resource_id: None,
+                    timestamp_ms: 0.0,
+                    gamepads: Vec::new(),
+                    xr: None,
+                    spatial: Default::default(),
+                },
+            })
+            .unwrap();
+        let work = work.expect("returned owner permits the next painting lease");
+        let (closing, replacement) = runtime
+            .begin_update(ApplicationObservation {
+                observed_ms: 0.0,
+                input: ApplicationInput::Dispose,
+            })
+            .unwrap();
+        assert!(replacement.is_none());
+        assert!(closing.drawing.is_none());
+        assert!(
+            runtime
+                .admit_presentation(work.project(&mut no_text_metrics))
+                .unwrap()
+                .is_none()
+        );
+        assert!(runtime.presentation_lease.is_none());
+    }
     for binding_lost in [false, true] {
         let mut platform = ApplicationPlatformObservation {
             capabilities: ApplicationCapabilities {
@@ -2821,7 +2884,9 @@ fn phone_start_deadline_requests_screen_recovery_without_an_adapter_timer_policy
         .requests
         .iter()
         .find_map(|request| match request {
-            ApplicationRequest::ScheduleWake { request_id, at_ms } => {
+            ApplicationRequest::ScheduleWake {
+                request_id, at_ms, ..
+            } => {
                 assert_eq!(*at_ms, 13_000.0);
                 Some(*request_id)
             }
@@ -2866,6 +2931,109 @@ fn phone_start_deadline_requests_screen_recovery_without_an_adapter_timer_policy
 
 #[test]
 fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_state() {
+    {
+        use birdman_game_app::{
+            ControllerIoObservation, ControllerIoRequest, SelectedControllerExecution,
+        };
+        use birdman_game_format::external_controller::{
+            ControllerFrame, NativeControllerConnection, NativeControllerDocument,
+        };
+        let mut application = ApplicationSession::default();
+        let source = serde_json::to_vec(&NativeControllerDocument {
+            schema_version: 1,
+            connection: NativeControllerConnection::Sitl {
+                program: "controller-sample-stdio".to_owned(),
+                arguments: Vec::new(),
+                program_id: "readiness".to_owned(),
+                version: "1".to_owned(),
+                binary_sha256: "a".repeat(64),
+            },
+        })
+        .unwrap();
+        application
+            .select_controller_execution(SelectedControllerExecution::decode(source).unwrap())
+            .unwrap();
+        let platform = screen_platform();
+        let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+        let initial = runtime
+            .observe_test(ApplicationInput::Platform {
+                observation: platform,
+            })
+            .unwrap();
+        let title = structure(finish_boot(&mut runtime, initial));
+        let setup = structure(activate(&mut runtime, &title, SessionCommand::OpenSetup {}));
+        let preparing = activate(&mut runtime, &setup, SessionCommand::Prepare {});
+        let generation = preparing
+            .requests
+            .iter()
+            .find_map(|request| match request {
+                ApplicationRequest::ControllerIo {
+                    request: ControllerIoRequest::Open { generation, .. },
+                } => Some(*generation),
+                _ => None,
+            })
+            .unwrap();
+        if let Some(id) = preparing.requests.iter().find_map(|request| match request {
+            ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
+            _ => None,
+        }) {
+            resources_ready(&mut runtime, id).unwrap();
+        }
+        assert!(matches!(
+            runtime.resource_readiness,
+            BackendReadiness::Ready
+        ));
+        assert_eq!(
+            runtime.application().core_session().snapshot().phase(),
+            SessionPhase::BriefingPreparing
+        );
+        let opened = runtime
+            .observe_test(ApplicationInput::ControllerIo {
+                observation: ControllerIoObservation::Opened {
+                    generation,
+                    failure: None,
+                },
+            })
+            .unwrap();
+        let (write_id, init) = opened
+            .requests
+            .iter()
+            .find_map(|request| match request {
+                ApplicationRequest::ControllerIo {
+                    request:
+                        ControllerIoRequest::Write {
+                            write_id, bytes, ..
+                        },
+                } => Some((*write_id, ControllerFrame::decode(bytes).unwrap())),
+                _ => None,
+            })
+            .unwrap();
+        runtime
+            .observe_test(ApplicationInput::ControllerIo {
+                observation: ControllerIoObservation::Written {
+                    generation,
+                    write_id,
+                    sent_ms: runtime.observed_ms,
+                },
+            })
+            .unwrap();
+        runtime
+            .observe_test(ApplicationInput::ControllerIo {
+                observation: ControllerIoObservation::Received {
+                    generation,
+                    bytes: ControllerFrame::acknowledgement(init.header())
+                        .unwrap()
+                        .as_bytes()
+                        .to_vec(),
+                    received_ms: runtime.observed_ms,
+                },
+            })
+            .unwrap();
+        assert_eq!(
+            runtime.application().core_session().snapshot().phase(),
+            SessionPhase::BriefingReady
+        );
+    }
     use birdman_game_presentation::camera::{Pose, Vector3, compose_pose};
     let platform = ApplicationPlatformObservation {
         gpu_timing_requested: true,
@@ -3125,15 +3293,44 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         0.0
     );
     for frame in 0..=30 {
-        runtime
-            .observe_test(ApplicationInput::Frame {
-                display_resource_id: None,
-                timestamp_ms: 10_000.0 + f64::from(frame) * 100.0,
-                gamepads: Vec::new(),
-                xr: None,
-                spatial: Default::default(),
-            })
-            .unwrap();
+        let input = ApplicationInput::Frame {
+            display_resource_id: None,
+            timestamp_ms: 10_000.0 + f64::from(frame) * 100.0,
+            gamepads: Vec::new(),
+            xr: None,
+            spatial: Default::default(),
+        };
+        if frame == 0 {
+            let (begin, work) = runtime
+                .begin_update(ApplicationObservation {
+                    observed_ms: 10_000.0,
+                    input,
+                })
+                .unwrap();
+            assert!(begin.drawing.is_none());
+            let work = work.expect("owned frame painting lease");
+            let continuation = runtime
+                .begin_update(ApplicationObservation {
+                    observed_ms: 10_000.0,
+                    input: ApplicationInput::ControllerIo {
+                        observation: birdman_game_app::ControllerIoObservation::Closed {
+                            generation: u64::MAX,
+                            failure: None,
+                        },
+                    },
+                })
+                .unwrap();
+            assert!(continuation.0.drawing.is_none() && continuation.1.is_none());
+            assert!(
+                runtime
+                    .admit_presentation(work.project(&mut no_text_metrics))
+                    .unwrap()
+                    .is_some()
+            );
+            assert!(runtime.presentation_lease.is_none());
+        } else {
+            runtime.observe_test(input).unwrap();
+        }
         if frame == 0 {
             assert!(matches!(
                 runtime.application().core_session().snapshot().phase(),

@@ -10,9 +10,11 @@ pub use pilot_position::{
     TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping,
 };
 
+mod actuator;
 mod config;
 mod controller;
 mod pid;
+pub use actuator::{TailActuatorUpdate, TailIncidenceRequest, advance_tail_actuators};
 pub use config::{ControllerReference, PitchController, TailControlProfile, YawController};
 use controller::ControllerCandidate;
 pub use controller::{TailControlObservation, TailControllerState, advance_tail_control};
@@ -256,6 +258,18 @@ pub struct TailControlCommands {
 }
 
 impl TailControlCommands {
+    /// Restores saved software command components without running control laws.
+    pub const fn from_recorded(
+        manual: TailIncidence,
+        feedback: TailIncidence,
+        mixed: TailIncidence,
+    ) -> Self {
+        Self {
+            manual,
+            feedback,
+            mixed,
+        }
+    }
     /// Returns manual intent mapped to horizontal/vertical tail incidence targets in rad.
     #[cfg_attr(verus_only, verus_verify(dual_spec))]
     #[cfg_attr(verus_only, verus_spec(returns self.manual_incidence_target()))]
@@ -282,16 +296,29 @@ impl TailControlCommands {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailControlUpdate {
     commands: TailControlCommands,
-    incidence: TailIncidence,
+    hardware: TailActuatorUpdate,
     candidate: ControllerCandidate,
 }
 
 impl TailControlUpdate {
     /// Commits PID history and integration only for a successfully admitted physical interval.
-    pub(crate) fn admitted_state(
+    pub fn admitted_state(
         self,
         elapsed_seconds: f64,
     ) -> Result<TailControllerState, TailControlError> {
+        self.candidate.admitted(elapsed_seconds)
+    }
+
+    /// Admits a cooperative guest candidate after the host confirms the same hardware result.
+    /// The duration is the host's actual adopted interval, including partial or zero time.
+    pub fn admitted_state_with_hardware(
+        self,
+        elapsed_seconds: f64,
+        accepted: TailActuatorUpdate,
+    ) -> Result<TailControllerState, TailControlError> {
+        if self.hardware != accepted {
+            return Err(TailControlError::InvalidController);
+        }
         self.candidate.admitted(elapsed_seconds)
     }
     /// Returns the authority-mixed, saturated physical target.
@@ -306,7 +333,12 @@ impl TailControlUpdate {
 
     /// Returns the slew-limited physical incidence held for the next integration interval.
     pub const fn incidence(self) -> TailIncidence {
-        self.incidence
+        self.hardware.incidence()
+    }
+
+    /// Final software request and the shared structural/actuator evaluation.
+    pub const fn hardware(self) -> TailActuatorUpdate {
+        self.hardware
     }
 }
 

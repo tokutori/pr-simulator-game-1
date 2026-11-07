@@ -60,7 +60,7 @@ pub(super) fn result(
                     &format!(
                         "{}\n終了理由: {}\n失敗したtickの診断:\n{:#?}",
                         technical_configuration(context),
-                        super::super::game_ui_result_reason_label(result.reason),
+                        result_reason(context, result.reason),
                         result.failure
                     ),
                 );
@@ -106,9 +106,9 @@ fn summary(menu: &mut Menu, context: &GameUiContext<'_>) -> Result<(), GameUiErr
         return Ok(());
     };
     let summary = record.summary().map_err(GameUiError::Record)?;
-    let terminal = record.finalization().map_or("", |result| {
-        super::super::game_ui_result_reason_label(result.reason)
-    });
+    let terminal = record
+        .finalization()
+        .map_or_else(String::new, |result| result_reason(context, result.reason));
     let score = summary.score.map_or_else(
         || "飛距離は記録されていない".to_owned(),
         |score| format!("距離 {:.1} m", score.course_parallel_m()),
@@ -144,4 +144,20 @@ fn summary(menu: &mut Menu, context: &GameUiContext<'_>) -> Result<(), GameUiErr
         );
     }
     Ok(())
+}
+
+fn result_reason(
+    context: &GameUiContext<'_>,
+    reason: birdman_game_core::SessionEndReason,
+) -> String {
+    if context.controller_fault_terminal
+        && let Some(fault) = context.controller_fault
+    {
+        format!(
+            "制御器の異常で飛行を終了した（tick {}）: {}",
+            fault.tick, fault.cause
+        )
+    } else {
+        super::super::game_ui_result_reason_label(reason).to_owned()
+    }
 }

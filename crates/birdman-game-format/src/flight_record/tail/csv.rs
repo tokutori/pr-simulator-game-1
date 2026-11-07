@@ -142,6 +142,7 @@ pub(super) fn encode(
     let version_eight = document.schema_version >= 8;
     let version_nine = document.schema_version >= 9;
     let version_ten = document.schema_version >= 10;
+    let version_eleven = document.schema_version >= 11;
     let mut columns = COLUMNS.to_vec();
     if version_seven {
         columns.extend(["row_kind", "wing_bending_factor"]);
@@ -173,9 +174,23 @@ pub(super) fn encode(
         ]);
         columns.retain(|column| *column != "controller_profile_version");
     }
+    if version_eleven {
+        columns.extend([
+            "controller_execution_json",
+            "requested_control_mode_json",
+            "controller_fault_json",
+            "external_requested_horizontal_tail_rad",
+            "external_requested_vertical_tail_rad",
+            "external_structural_horizontal_tail_rad",
+            "external_structural_vertical_tail_rad",
+            "external_obstruction_mask",
+        ]);
+    }
     let header = &document.header;
     let mut metadata = vec![
-        if version_ten {
+        if version_eleven {
+            "8"
+        } else if version_ten {
             "7"
         } else if version_nine {
             "6"
@@ -391,10 +406,14 @@ pub(super) fn encode(
                 input.fbw_incidence_target,
                 input.mixed_incidence_target,
             ] {
-                numbers(
-                    &mut row,
-                    [incidence.horizontal_tail_rad, incidence.vertical_tail_rad],
-                );
+                if let Some(incidence) = incidence {
+                    numbers(
+                        &mut row,
+                        [incidence.horizontal_tail_rad, incidence.vertical_tail_rad],
+                    );
+                } else {
+                    row.extend([String::new(), String::new()]);
+                }
             }
         } else {
             row.extend(core::iter::repeat_n(String::new(), INPUT_COLUMNS.len() - 1));
@@ -439,9 +458,6 @@ pub(super) fn encode(
             );
         }
         if version_ten {
-            let mode = header
-                .control_mode
-                .ok_or(FlightRecordFormatError::InvalidRecord)?;
             row.push(
                 document
                     .control_identity
@@ -449,22 +465,69 @@ pub(super) fn encode(
                     .clone()
                     .ok_or(FlightRecordFormatError::InvalidRecord)?,
             );
+            if let Some(mode) = header.control_mode {
+                row.push(
+                    match mode {
+                        crate::FlightRecordControlMode::Manual => "manual",
+                        crate::FlightRecordControlMode::Shared { .. } => "shared",
+                        crate::FlightRecordControlMode::Automatic => "automatic",
+                    }
+                    .to_string(),
+                );
+                row.push(
+                    match mode.to_core()? {
+                        birdman_game_core::ControlMode::Manual => 0.0,
+                        birdman_game_core::ControlMode::Shared(authority) => authority.value(),
+                        birdman_game_core::ControlMode::Automatic => 1.0,
+                    }
+                    .to_string(),
+                );
+            } else {
+                row.extend([String::new(), String::new()]);
+            }
+        }
+        if version_eleven {
             row.push(
-                match mode {
-                    crate::FlightRecordControlMode::Manual => "manual",
-                    crate::FlightRecordControlMode::Shared { .. } => "shared",
-                    crate::FlightRecordControlMode::Automatic => "automatic",
-                }
-                .to_string(),
+                document
+                    .control_identity
+                    .execution
+                    .as_ref()
+                    .map(json)
+                    .transpose()?
+                    .unwrap_or_default(),
             );
             row.push(
-                match mode.to_core()? {
-                    birdman_game_core::ControlMode::Manual => 0.0,
-                    birdman_game_core::ControlMode::Shared(authority) => authority.value(),
-                    birdman_game_core::ControlMode::Automatic => 1.0,
-                }
-                .to_string(),
+                header
+                    .requested_control_mode
+                    .as_ref()
+                    .map(json)
+                    .transpose()?
+                    .unwrap_or_default(),
             );
+            row.push(
+                document
+                    .controller_fault
+                    .as_ref()
+                    .map(json)
+                    .transpose()?
+                    .unwrap_or_default(),
+            );
+            if let Some(report) = input_from_previous
+                .as_ref()
+                .and_then(|input| input.external_report.as_ref())
+            {
+                numbers(&mut row, report.requested_rad);
+                numbers(
+                    &mut row,
+                    [
+                        report.structural_target.horizontal_tail_rad,
+                        report.structural_target.vertical_tail_rad,
+                    ],
+                );
+                row.push(report.obstruction_mask.to_string());
+            } else {
+                row.extend(core::iter::repeat_n(String::new(), 5));
+            }
         }
         if row.len() != columns.len() {
             return Err(FlightRecordFormatError::EncodingFailed);

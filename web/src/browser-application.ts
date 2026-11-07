@@ -155,11 +155,22 @@ export class BrowserApplication {
 
   private execute(request: ApplicationRequest, drawing: ApplicationDrawingOutput | null | undefined): void {
     switch (request.kind) {
+      case "controller_io": {
+        const generation = request.request.generation;
+        const observation = request.request.kind === "close"
+          ? { kind: "closed" as const, generation, failure: null }
+          : { kind: "failed" as const, generation, fault: "transport_closed" as const, cause: "このブラウザーでは外部プロセス・シリアル通信を利用できない。" };
+        this.observe({kind:"controller_io", observation});
+        break;
+      }
       case "read_configuration": {
         let completion: Extract<ApplicationInput, { kind: "configuration_loaded" }>["completion"];
         try {
           const source = window.localStorage.getItem(configurationStorageKey(request));
-          completion = source === null ? { kind: "missing" } : { kind: "found", bytes: Array.from(new TextEncoder().encode(source).slice(0, request.maximum_bytes + 1)) };
+          const bytes = source === null ? null : request.document === "controller_execution"
+            ? Uint8Array.from(atob(source.slice(0, 4 * Math.ceil((request.maximum_bytes + 1) / 3))), c => c.charCodeAt(0))
+            : new TextEncoder().encode(source);
+          completion = bytes === null ? {kind:"missing"} : {kind:"found", bytes:Array.from(bytes.slice(0,request.maximum_bytes+1))};
         } catch (cause) { completion = { kind: "failed", cause: errorMessage(cause) }; }
         this.observe({ kind: "configuration_loaded", document: request.document, request_id: request.request_id, completion });
         break;
@@ -167,7 +178,7 @@ export class BrowserApplication {
       case "pick_configuration": {
         const picker = this.mount.ownerDocument.createElement("input");
         picker.type = "file";
-        picker.accept = ".json,application/json";
+        picker.accept = request.document === "controller_execution" ? ".wasm,.json,application/wasm,application/json" : ".json,application/json";
         picker.addEventListener("cancel", () => { picker.remove(); this.observe({ kind: "configuration_loaded", document: request.document, request_id: request.request_id, completion: { kind: "cancelled" } }); }, { once: true });
         picker.addEventListener("change", () => {
           const file = picker.files?.[0];
@@ -187,7 +198,9 @@ export class BrowserApplication {
       case "write_configuration": {
         let failure: string | null = null;
         try {
-          const source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(new Uint8Array(request.bytes));
+          const source = request.document === "controller_execution"
+            ? btoa(request.bytes.map(byte => String.fromCharCode(byte)).join(""))
+            : new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(new Uint8Array(request.bytes));
           window.localStorage.setItem(configurationStorageKey(request), source);
         } catch (cause) { failure = errorMessage(cause); }
         this.observe({ kind: "configuration_saved", document: request.document, request_id: request.request_id, failure });

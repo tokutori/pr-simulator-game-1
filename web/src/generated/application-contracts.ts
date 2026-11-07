@@ -7,6 +7,12 @@ export type MenuFontStyle = "normal" | "italic";
  * Payload of one externally observed event.
  */
 export type ApplicationInput = {
+    readonly kind: "controller_io";
+    /**
+     * One bounded operation and its OS-completion timestamp.
+     */
+    readonly observation: ControllerIoObservation;
+} | {
     /**
      * Unmodified I/O result.
      */
@@ -500,6 +506,76 @@ export type ApplicationInput = {
     readonly request_id: number;
 };
 /**
+ * Raw Native I/O completion, with actual OS-completion timestamps.
+ */
+export type ControllerIoObservation = {
+    /**
+     * Original I/O diagnostic, absent on success.
+     */
+    readonly failure?: string | null;
+    /**
+     * Preparation lifetime.
+     */
+    readonly generation: number;
+    readonly kind: "opened";
+} | {
+    /**
+     * Preparation lifetime.
+     */
+    readonly generation: number;
+    readonly kind: "written";
+    /**
+     * Common-epoch OS write-completion observation.
+     */
+    readonly sent_ms: number;
+    /**
+     * Opaque identity from the original Write request.
+     */
+    readonly write_id: number;
+} | {
+    /**
+     * Unmodified returned frame.
+     */
+    readonly bytes: readonly number[];
+    /**
+     * Preparation lifetime.
+     */
+    readonly generation: number;
+    readonly kind: "received";
+    /**
+     * OS read-completion time on the common epoch.
+     */
+    readonly received_ms: number;
+} | {
+    /**
+     * Original cleanup diagnostic, absent on success.
+     */
+    readonly failure?: string | null;
+    /**
+     * Preparation lifetime.
+     */
+    readonly generation: number;
+    readonly kind: "closed";
+} | {
+    /**
+     * Original I/O diagnostic.
+     */
+    readonly cause: string;
+    /**
+     * Classified disconnection or transport failure.
+     */
+    readonly fault: ControllerFault;
+    /**
+     * Preparation lifetime.
+     */
+    readonly generation: number;
+    readonly kind: "failed";
+};
+/**
+ * First retained execution fault, independent of the final flight outcome.
+ */
+export type ControllerFault = "none" | "bad_frame" | "non_finite_output" | "guest_rejected" | "trap" | "fuel_exhausted" | "transport_closed" | "process_exited" | "deadline_missed" | "resource_limit";
+/**
  * Original configuration bytes produced by a requested storage or file-picker operation.
  */
 export type ApplicationConfigurationLoad = {
@@ -520,9 +596,9 @@ export type ApplicationConfigurationLoad = {
     readonly kind: "failed";
 };
 /**
- * Independent original JSON sources selectable by the application.
+ * Independent original sources selectable by the application.
  */
-export type ConfigurationDocumentKind = "aircraft" | "controller";
+export type ConfigurationDocumentKind = "aircraft" | "controller" | "controller_execution";
 /**
  * Raw completion of the requested user keyboard-settings read.
  */
@@ -1378,6 +1454,8 @@ export type GameUiPlatformCommand = {
 } | {
     readonly kind: "recenter_menu";
 } | {
+    readonly kind: "download_software_licenses";
+} | {
     readonly kind: "download_record_json";
 } | {
     readonly kind: "download_flight_csv";
@@ -1828,6 +1906,13 @@ export type ApplicationLifecycle = "running" | "closing" | "drained";
  * Ordered platform operations produced by the application owner.
  */
 export type ApplicationRequest = {
+    readonly kind: "controller_io";
+    /**
+     * Bounded open, exchange or terminal retirement operation.
+     */
+    readonly request: ControllerIoRequest;
+    readonly [k: string]: unknown | undefined;
+} | {
     /**
      * Independently selected original document kind.
      */
@@ -2037,6 +2122,10 @@ export type ApplicationRequest = {
     readonly at_ms: number;
     readonly kind: "schedule_wake";
     /**
+     * Routes controller deadlines to Native background I/O.
+     */
+    readonly realtime: boolean;
+    /**
      * Owner-issued timer identity.
      */
     readonly request_id: number;
@@ -2108,6 +2197,84 @@ export type ApplicationRequest = {
      */
     readonly request_id: number;
     readonly [k: string]: unknown | undefined;
+};
+/**
+ * Native I/O demanded by the same application owner that admits physical time.
+ */
+export type ControllerIoRequest = {
+    /**
+     * Validated platform connection.
+     */
+    readonly connection: NativeControllerConnection;
+    /**
+     * Preparation lifetime.
+     */
+    readonly generation: number;
+    readonly kind: "open";
+} | {
+    /**
+     * Encoded fixed ABI request.
+     */
+    readonly bytes: readonly number[];
+    /**
+     * Preparation lifetime.
+     */
+    readonly generation: number;
+    readonly kind: "write";
+    /**
+     * Opaque owner-issued write identity echoed only by Written.
+     */
+    readonly write_id: number;
+} | {
+    /**
+     * Preparation lifetime.
+     */
+    readonly generation: number;
+    readonly kind: "close";
+};
+/**
+ * User-selected Native connection, transported as an independently bounded document.
+ */
+export type NativeControllerConnection = {
+    /**
+     * Exact process arguments.
+     */
+    readonly arguments: readonly string[];
+    /**
+     * Expected exact executable SHA-256.
+     */
+    readonly binary_sha256: string;
+    readonly kind: "sitl";
+    /**
+     * Absolute or explicitly resolved executable path.
+     */
+    readonly program: string;
+    /**
+     * Program identifier.
+     */
+    readonly program_id: string;
+    /**
+     * Program version.
+     */
+    readonly version: string;
+} | {
+    /**
+     * Serial bitrate.
+     */
+    readonly baud_rate: number;
+    /**
+     * Firmware identity.
+     */
+    readonly firmware_id: string;
+    /**
+     * Hardware identity.
+     */
+    readonly hardware_id: string;
+    readonly kind: "hitl";
+    /**
+     * OS serial port path.
+     */
+    readonly port: string;
 };
 /**
  * Primitive reads following the initial bounded cursor.

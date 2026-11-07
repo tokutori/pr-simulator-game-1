@@ -893,7 +893,7 @@ fn failed_retry_reservation_preserves_result_record_and_replay_until_retry_succe
     let configuration = &session.configured().unwrap().configuration;
     let initial_state = configuration.initial_state();
     let scenario = configuration.scenario;
-    let mode = configuration.control_mode;
+    let mode = configuration.execution;
     let maximum_ticks = configuration.maximum_flight_ticks;
     let record = session.flight_record().unwrap();
     let header = record.header();
@@ -914,7 +914,7 @@ fn failed_retry_reservation_preserves_result_record_and_replay_until_retry_succe
         assert_eq!(session.snapshot(), snapshot);
         let retained_configuration = &session.configured().unwrap().configuration;
         assert_eq!(retained_configuration.scenario, scenario);
-        assert_eq!(retained_configuration.control_mode, mode);
+        assert_eq!(retained_configuration.execution, mode);
         assert_eq!(retained_configuration.maximum_flight_ticks, maximum_ticks);
         assert_eq!(retained_configuration.initial_state(), initial_state);
         let retained_record = session.flight_record().unwrap();
@@ -935,7 +935,7 @@ fn failed_retry_reservation_preserves_result_record_and_replay_until_retry_succe
     assert_eq!(session.prepared_launch_state(), Some(initial_state));
     let retried_configuration = &session.configured().unwrap().configuration;
     assert_eq!(retried_configuration.scenario, scenario);
-    assert_eq!(retried_configuration.control_mode, mode);
+    assert_eq!(retried_configuration.execution, mode);
     assert_eq!(retried_configuration.maximum_flight_ticks, maximum_ticks);
     assert!(session.snapshot().result().is_none());
     session.start_countdown(1).unwrap();
@@ -1121,11 +1121,24 @@ fn briefing_record_factory_preserves_the_owner_on_failure_and_receives_the_seale
         .unwrap()
     };
     let sealed = configure();
-    assert_eq!(sealed.control_mode, effective_mode);
+    assert!(matches!(
+        GameSessionConfiguration::try_new_external(
+            sealed.scenario,
+            requested_mode,
+            100,
+            sealed.identity,
+        ),
+        Err(GameSessionError::InvalidControllerExecution)
+    ));
+    assert_eq!(
+        sealed.execution,
+        crate::ControllerExecution::BuiltIn {
+            mode: effective_mode
+        }
+    );
     let identity = sealed.identity;
     let initial = sealed.initial_state();
-    let header =
-        crate::FlightRecordHeader::try_new(identity, 100, Some(sealed.control_mode)).unwrap();
+    let header = crate::FlightRecordHeader::try_new(identity, 100, Some(sealed.execution)).unwrap();
     let attract_storage = session.attract_record.as_ref().unwrap().samples().as_ptr();
     let setup = session.snapshot();
     assert_eq!(
@@ -1177,8 +1190,10 @@ fn briefing_record_factory_preserves_the_owner_on_failure_and_receives_the_seale
         attract_storage
     );
     assert_eq!(
-        session.flight_record().unwrap().header().control_mode,
-        Some(effective_mode)
+        session.flight_record().unwrap().header().execution,
+        Some(crate::ControllerExecution::BuiltIn {
+            mode: effective_mode
+        })
     );
     session.mark_briefing_ready().unwrap();
     session.start_countdown(1).unwrap();
@@ -1201,10 +1216,11 @@ fn briefing_record_factory_preserves_the_owner_on_failure_and_receives_the_seale
         .controls
         .input_from_previous
         .unwrap();
-    let manual = recorded.manual_incidence_target().elevator_rad();
-    let feedback = recorded.fbw_incidence_target().elevator_rad();
+    let manual = recorded.manual_incidence_target().unwrap().elevator_rad();
+    let feedback = recorded.fbw_incidence_target().unwrap().elevator_rad();
     assert!(
-        (recorded.mixed_incidence_target().elevator_rad() - (manual + 0.8 * (feedback - manual)))
+        (recorded.mixed_incidence_target().unwrap().elevator_rad()
+            - (manual + 0.8 * (feedback - manual)))
             .abs()
             < 1e-15
     );

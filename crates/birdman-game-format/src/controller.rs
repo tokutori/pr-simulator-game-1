@@ -125,6 +125,10 @@ pub struct ControllerAlphaGuardDocument {
 /// Stable independent/pair diagnostic categories.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControllerValidationCode {
+    /// Unsupported independent JSON document version.
+    SchemaVersion,
+    /// Native process/serial connection parameters.
+    Transport,
     /// Controller identity.
     Identity,
     /// PID coefficient or stage-output interval.
@@ -184,8 +188,6 @@ impl core::fmt::Display for ControllerValidationIssue {
 pub enum ControllerFormatError {
     /// Original bytes exceed the document budget.
     InputTooLarge,
-    /// Unsupported independent document contract.
-    UnsupportedSchemaVersion,
     /// JSON syntax, type or unknown-field diagnostic, with original location.
     Json(String),
     /// Independent semantic violations.
@@ -198,9 +200,6 @@ impl core::fmt::Display for ControllerFormatError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::InputTooLarge => f.write_str("Controller JSON exceeds 65536 bytes"),
-            Self::UnsupportedSchemaVersion => {
-                f.write_str("Controller schema version is unsupported")
-            }
             Self::Json(cause) => write!(f, "Controller JSON: {cause}"),
             Self::Core(cause) => write!(f, "Controller configuration: {cause}"),
             Self::Validation(issues) => {
@@ -317,17 +316,29 @@ impl ControllerDocument {
         if bytes.len() > MAX_CONTROLLER_JSON_BYTES {
             return Err(ControllerFormatError::InputTooLarge);
         }
-        let document: Self = serde_json::from_slice(bytes)
+        let text =
+            core::str::from_utf8(bytes).map_err(|e| ControllerFormatError::Json(format!("{e}")))?;
+        let version = crate::json_version::declared_schema_version(text)
             .map_err(|e| ControllerFormatError::Json(format!("{e}")))?;
+        if version != CONTROLLER_SCHEMA_VERSION {
+            return Err(ControllerFormatError::Validation(alloc::vec![
+                ControllerValidationIssue {
+                    code: ControllerValidationCode::SchemaVersion,
+                    path: "/schema_version".into(),
+                    value: format!("{version}"),
+                    expected: format!("schema_version == {CONTROLLER_SCHEMA_VERSION}"),
+                    aircraft: None,
+                }
+            ]));
+        }
+        let document: Self =
+            serde_json::from_str(text).map_err(|e| ControllerFormatError::Json(format!("{e}")))?;
         document.validate()?;
         Ok(document)
     }
 
     /// Validates the controller independently of the currently selected aircraft.
     pub fn validate(&self) -> Result<(), ControllerFormatError> {
-        if self.schema_version != CONTROLLER_SCHEMA_VERSION {
-            return Err(ControllerFormatError::UnsupportedSchemaVersion);
-        }
         let issues = self.validation_issues();
         if issues.is_empty() {
             Ok(())
@@ -340,6 +351,16 @@ impl ControllerDocument {
     pub fn validation_issues(&self) -> Vec<ControllerValidationIssue> {
         use ControllerValidationCode as C;
         let mut issues = Vec::new();
+        if self.schema_version != CONTROLLER_SCHEMA_VERSION {
+            issue(
+                &mut issues,
+                C::SchemaVersion,
+                "/schema_version",
+                self.schema_version,
+                &format!("schema_version == {CONTROLLER_SCHEMA_VERSION}"),
+            );
+            return issues;
+        }
         if self.controller_id.is_empty()
             || self.controller_id.len() > 128
             || !self
@@ -716,6 +737,12 @@ mod tests {
                 "/yaw/rate/output_bounds"
             ]
         );
+        for version in [0, CONTROLLER_SCHEMA_VERSION + 1] {
+            let bytes = format!("{{\"schema_version\":{version}}}");
+            assert!(matches!(ControllerDocument::decode_json(bytes.as_bytes()),
+                Err(ControllerFormatError::Validation(issues))
+                if issues.len() == 1 && issues[0].code == ControllerValidationCode::SchemaVersion));
+        }
         let mut value = serde_json::to_value(bundled()).unwrap();
         value["pitch"]["extra"] = true.into();
         assert!(matches!(

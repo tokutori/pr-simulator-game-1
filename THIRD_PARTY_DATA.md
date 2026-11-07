@@ -85,14 +85,12 @@ OpenStreetMapの[ゲーム・シミュレーション向け帰属指針](https:/
 | --- | --- |
 | `assets/fonts/MPLUS1p-Regular.ttf` | M PLUS 1p Regular。M+ Project AuthorsとRounded M+ Project Authorsの著作物。[SIL Open Font License 1.1](assets/fonts/MPLUS1p-OFL.txt)。元のフォントを改変せず、日本語表示に使用する。 |
 | `assets/test-fonts/FiraMono-subset.ttf` | Mozilla FoundationとTelefonica S.A.の著作物。[SIL Open Font License 1.1](assets/test-fonts/FiraMono-LICENSE.txt)。CPU試験専用であり、製品のフォント読込みとNative配布物には含めない。 |
-| `assets/earcut.LICENSE.txt` | GeoRust earcutのMITと、派生元MapboxのISCの両告知。ポリゴンの三角形分割に使用する。 |
-| `assets/ryu-js.LICENSE.txt` | ryu-jsのBoost Software License 1.0。数値の文字列変換に使用する。 |
-| `assets/time.LICENSE.txt` | timeと有効な依存ライブラリのMITを選択した告知。保存日時の変換に使用する。 |
-| `assets/unicode-width.LICENSE.txt` | unicode-widthのMITを選択した告知。表示幅の見積りに使用する。 |
+| `assets/wasm-runtime.LICENSE.html` | 固定したCargo.lockと実wasm32依存graphからcargo-aboutで生成した全文。Wasmiを含む共有RustとWeb境界の利用条件・著作権を保持し、クレジットの保存操作から取得できる。 |
 
-WebのThree.js・SnabbdomとNativeのBevyを含む依存ライブラリにも、各ライセンスを適用する。
-Native配布物の第三者ソフトウェア一覧は、固定した`Cargo.lock`と対象構成から生成する。
-上記の同梱告知を、この依存一覧で置き換えない。
+- 追加帰属: earcutの派生元Mapbox ISCとunicode-width生成tableの著作権を、登録した原文から生成noticeへ統合する。既存の個別Rust告知は出典原文として保持する。
+- Web: Three.js・Snabbdomを含むJavaScript依存にも各ライセンスを適用する。生成Rust noticeの対象はWebAssemblyの実依存graphである。
+- Native: Bevy・Tokio・serialport等を含む完全な利用条件は、配布物の`THIRD-PARTY-LICENSES.html`で提供する。MPL-2.0のSource Code Form取得先は実package sourceと固定version/commitから生成し、registry版はCargo.lockのchecksumを記録する。
+- 再生成: `tools/native-release/package_native.py licenses --web`は共有Rust notice、同コマンドのNative設定は6対象の配布noticeを生成する。データ・画像・フォントの帰属は各登録assetで保持する。
 
 ## プロジェクト作成データ・画像
 

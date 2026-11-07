@@ -200,7 +200,7 @@ verus! {
 
 #[cfg_attr(verus_only, verus_spec(outcome =>
     requires forall|header: FlightRecordHeader| create_record.requires((header,)),
-    ensures match FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks, Some(configuration.control_mode)) {
+    ensures match FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks, Some(configuration.execution)) {
         Ok(header) => create_record.ensures((header,), outcome),
         Err(error) => outcome == Err(error),
     },
@@ -212,7 +212,7 @@ fn create_configured_record(
     let header = FlightRecordHeader::try_new(
         configuration.identity,
         configuration.maximum_flight_ticks,
-        Some(configuration.control_mode),
+        Some(configuration.execution),
     )?;
     create_record(header)
 }
@@ -229,7 +229,7 @@ impl GameSession {
                     && match final(self).lifecycle {
                         SessionLifecycle::Configured(next) => next.configuration == configuration
                             && next.phase == ConfiguredPhase::Preparing
-                            && match FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks, Some(configuration.control_mode)) {
+                            && match FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks, Some(configuration.execution)) {
                                 Ok(header) => create_record.ensures((header,), Ok(next.record)),
                                 Err(_) => false,
                             },
@@ -237,7 +237,7 @@ impl GameSession {
                     },
                 Err(GameSessionError::InvalidTransition) => old(self).phase() != SessionPhase::FlightSetup,
                 Err(GameSessionError::Record(error)) => old(self).phase() == SessionPhase::FlightSetup
-                    && match FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks, Some(configuration.control_mode)) {
+                    && match FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks, Some(configuration.execution)) {
                         Ok(header) => create_record.ensures((header,), Err(error)),
                         Err(cause) => error == cause,
                     },
@@ -276,13 +276,13 @@ impl GameSession {
                     && match outcome {
                         Ok(()) => matches!(previous.phase, ConfiguredPhase::Failed { .. })
                             && next.phase == ConfiguredPhase::Preparing
-                            && match FlightRecordHeader::try_new(previous.configuration.identity, previous.configuration.maximum_flight_ticks, Some(previous.configuration.control_mode)) {
+                            && match FlightRecordHeader::try_new(previous.configuration.identity, previous.configuration.maximum_flight_ticks, Some(previous.configuration.execution)) {
                                 Ok(header) => create_record.ensures((header,), Ok(next.record)),
                                 Err(_) => false,
                             },
                         Err(GameSessionError::InvalidTransition) => !matches!(previous.phase, ConfiguredPhase::Failed { .. }),
                         Err(GameSessionError::Record(error)) => matches!(previous.phase, ConfiguredPhase::Failed { .. })
-                            && match FlightRecordHeader::try_new(previous.configuration.identity, previous.configuration.maximum_flight_ticks, Some(previous.configuration.control_mode)) {
+                            && match FlightRecordHeader::try_new(previous.configuration.identity, previous.configuration.maximum_flight_ticks, Some(previous.configuration.execution)) {
                                 Ok(header) => create_record.ensures((header,), Err(error)),
                                 Err(cause) => error == cause,
                             },
@@ -322,13 +322,13 @@ impl GameSession {
                     next.configuration == previous.configuration
                     && match outcome {
                         Ok(()) => previous.phase.is_result() && next.phase == ConfiguredPhase::Ready
-                            && match FlightRecordHeader::try_new(previous.configuration.identity, previous.configuration.maximum_flight_ticks, Some(previous.configuration.control_mode)) {
+                            && match FlightRecordHeader::try_new(previous.configuration.identity, previous.configuration.maximum_flight_ticks, Some(previous.configuration.execution)) {
                                 Ok(header) => create_record.ensures((header,), Ok(next.record)),
                                 Err(_) => false,
                             },
                         Err(GameSessionError::InvalidTransition) => !previous.phase.is_result(),
                         Err(GameSessionError::Record(error)) => previous.phase.is_result()
-                            && match FlightRecordHeader::try_new(previous.configuration.identity, previous.configuration.maximum_flight_ticks, Some(previous.configuration.control_mode)) {
+                            && match FlightRecordHeader::try_new(previous.configuration.identity, previous.configuration.maximum_flight_ticks, Some(previous.configuration.execution)) {
                                 Ok(header) => create_record.ensures((header,), Err(error)),
                                 Err(cause) => error == cause,
                             },
@@ -345,7 +345,7 @@ impl GameSession {
         match configured.retry_with_record_factory(
             #[cfg_attr(verus_only, verus_spec(outcome =>
                 requires forall|header: FlightRecordHeader| create_record.requires((header,)),
-                ensures match FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks, Some(configuration.control_mode)) {
+                ensures match FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks, Some(configuration.execution)) {
                     Ok(header) => create_record.ensures((header,), outcome),
                     Err(error) => outcome == Err(error),
                 },

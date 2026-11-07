@@ -375,7 +375,9 @@ fn adopted_shape_contact_matches_independent_rotated_support_and_record_query() 
     let trim = definition.trim().unwrap();
     let mapping = TailPilotPositionMapping::try_new(&aircraft, trim.pilot_position_m()).unwrap();
     let preparation = HybridSessionPreparation::try_default().unwrap();
-    let profile = preparation.controller_profile();
+    let profile = preparation
+        .controller_profile()
+        .expect("default preparation uses the built-in controller");
     let loads = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
         definition.document().trim.air_density_kg_m3,
@@ -821,7 +823,9 @@ fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revisio
                     scenario,
                     difficulty,
                     identity: &document.control_identity,
-                    control_mode: ControlMode::Manual,
+                    execution: birdman_game_core::ControllerExecution::BuiltIn {
+                        mode: ControlMode::Manual,
+                    },
                 },
                 course,
                 birdman_game_app::record_archive::record_build_provenance(),

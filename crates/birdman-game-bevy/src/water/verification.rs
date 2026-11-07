@@ -153,40 +153,43 @@ fn setup(
     let Some(runtime) = runtime else {
         return;
     };
-    let condition = (|| {
-        let EnvironmentProjection::Available { metadata, .. } =
-            EnvironmentSelection::for_session(runtime.0.application())
-                .map_err(|cause| {
-                    format!(
-                        "Shader probe environment: {}",
-                        birdman_game_app::technical_error_text(&cause)
-                    )
-                })?
-                .resolve()
-                .map_err(|cause| {
-                    format!(
-                        "Shader probe environment: {}",
-                        birdman_game_app::technical_error_text(&cause)
-                    )
-                })?
-        else {
-            return Err("Shader probe environment is unavailable".to_string());
-        };
-        let waves = metadata.waves;
-        LakeVisualCondition::try_new(
-            waves.wind_velocity_ne_mps[0],
-            waves.wind_velocity_ne_mps[1],
-            waves.fetch_m,
-            waves.detail_amplitude_scale,
-            u64::from(waves.pattern_seed),
-        )
-        .map_err(|cause| {
-            format!(
-                "Shader probe waves: {}",
-                birdman_game_app::technical_error_text(&cause)
+    let condition = {
+        let runtime = runtime.lock();
+        (|| {
+            let EnvironmentProjection::Available { metadata, .. } =
+                EnvironmentSelection::for_session(runtime.application())
+                    .map_err(|cause| {
+                        format!(
+                            "Shader probe environment: {}",
+                            birdman_game_app::technical_error_text(&cause)
+                        )
+                    })?
+                    .resolve()
+                    .map_err(|cause| {
+                        format!(
+                            "Shader probe environment: {}",
+                            birdman_game_app::technical_error_text(&cause)
+                        )
+                    })?
+            else {
+                return Err("Shader probe environment is unavailable".to_string());
+            };
+            let waves = metadata.waves;
+            LakeVisualCondition::try_new(
+                waves.wind_velocity_ne_mps[0],
+                waves.wind_velocity_ne_mps[1],
+                waves.fetch_m,
+                waves.detail_amplitude_scale,
+                u64::from(waves.pattern_seed),
             )
-        })
-    })();
+            .map_err(|cause| {
+                format!(
+                    "Shader probe waves: {}",
+                    birdman_game_app::technical_error_text(&cause)
+                )
+            })
+        })()
+    };
     let condition = match condition {
         Ok(condition) => condition,
         Err(cause) => {

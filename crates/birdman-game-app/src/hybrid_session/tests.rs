@@ -610,9 +610,11 @@ fn assert_playable_sequence(sequence: PlayabilitySequence) {
         .unwrap();
         let rate_bounds = preparation
             .controller_profile()
+            .unwrap()
             .body_rate_bounds_rad_per_second();
         let guard = preparation
             .controller_profile()
+            .unwrap()
             .angle_of_attack_guard()
             .unwrap();
         assert_eq!(guard.alpha_interval_rad(), [-0.09, 0.09]);

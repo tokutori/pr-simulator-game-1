@@ -706,7 +706,7 @@ fn running_owner_preserves_callback_order_and_stage_failure_priority() {
                     }
                     let report = configuration.scenario.advance_tick_with_contact_report(
                         state,
-                        configuration.control_mode,
+                        configuration.requested_mode(),
                         sampled_input,
                         &loads,
                         crate::WaterContactGeometry::try_new(&CONTACT_POINTS).unwrap(),
@@ -717,7 +717,7 @@ fn running_owner_preserves_callback_order_and_stage_failure_priority() {
                         };
                         configuration.scenario.advance_tick_with_contact_report(
                             next,
-                            configuration.control_mode,
+                            configuration.requested_mode(),
                             sampled_input,
                             &loads,
                             crate::WaterContactGeometry::try_new(&CONTACT_POINTS).unwrap(),
@@ -897,4 +897,38 @@ impl FixtureSession<'_> {
             crate::WaterContactGeometry::try_new(&CONTACT_POINTS).unwrap(),
         )
     }
+}
+
+#[test]
+fn failed_physical_observation_finalizes_the_exact_accepted_boundary() {
+    let definition = TestAircraft::try_new().unwrap();
+    let surfaces = definition.surfaces().unwrap();
+    let mut session = launch(configuration(
+        &definition,
+        &surfaces,
+        WindField::uniform(NedVector::zero()),
+        -10.5,
+        10,
+        ControlMode::Manual,
+    ));
+    let previous = session.snapshot().tail_flight_state().unwrap();
+    let samples = session.flight_record().unwrap().samples().to_vec();
+    let cause = TailFlightTickError::Telemetry(FlightTelemetryError::Wind(WindError::OutsideGrid));
+    assert_eq!(
+        session.fail_tail_flight_observation(cause),
+        Err(GameSessionError::TailTick(cause))
+    );
+    let result = session.snapshot().result().unwrap();
+    assert_eq!(result.state, SessionTerminalState::TailTick(previous));
+    assert_eq!(result.failure, Some(cause));
+    let record = session.flight_record().unwrap();
+    assert_eq!(record.samples(), samples);
+    let finalization = record.finalization().unwrap();
+    assert_eq!(finalization.terminal_tick, previous.tick_index());
+    assert_eq!(finalization.terminal_fraction, 0.0);
+    assert_eq!(finalization.failure, Some(cause));
+    assert_eq!(
+        session.fail_tail_flight_observation(cause),
+        Err(GameSessionError::InvalidTransition)
+    );
 }

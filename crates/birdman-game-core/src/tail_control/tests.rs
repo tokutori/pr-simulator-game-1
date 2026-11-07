@@ -6,6 +6,75 @@ fn pid(kp: f64, ki: f64, kd: f64) -> PidConfig {
     PidConfig::try_new(kp, ki, kd, [-1.0, 1.0], [-2.0, 2.0], 0.0).unwrap()
 }
 
+#[test]
+fn cooperative_candidate_checks_hardware_and_admits_the_actual_interval() {
+    let profile = profile(
+        PitchController::Rate {
+            rate: pid(0.2, 0.4, 0.03),
+        },
+        YawController::Rate {
+            rate: pid(0.2, 0.3, 0.02),
+        },
+        0.6,
+    )
+    .with_angle_of_attack_guard(
+        TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.0, 1.0, 1.6).unwrap(),
+    );
+    let memory = TailControllerState::try_new(Some(0.3)).unwrap();
+    let previous = TailIncidence::try_new(0.03, -0.02).unwrap();
+    let limits = [TailActuatorLimits::try_new([-0.2, 0.2], 0.2).unwrap(); 2];
+    let mut observed = observation(0.1, -0.2, Some([0.2, 0.1, 0.3]));
+    observed.datum_alpha_rad = Some(0.15);
+    let candidate = advance_tail_control(
+        previous,
+        memory,
+        profile,
+        ControlMode::Shared(FbwAuthority::try_new(0.6).unwrap()),
+        TailPilotIntent::try_new(0.4, -0.3).unwrap(),
+        TailRateTarget::try_new(0.2, -0.1).unwrap(),
+        observed,
+        0.01,
+        limits,
+    )
+    .unwrap();
+    let host =
+        advance_tail_actuators(previous, candidate.hardware().requested(), limits, 0.01).unwrap();
+    assert_eq!(host, candidate.hardware());
+    for actual_seconds in [0.0, 0.003, 0.01] {
+        let accepted = candidate
+            .admitted_state_with_hardware(actual_seconds, host)
+            .unwrap();
+        assert_eq!(accepted, candidate.admitted_state(actual_seconds).unwrap());
+        if actual_seconds == 0.0 {
+            assert_eq!(accepted, memory);
+        }
+    }
+    let mismatched = TailActuatorUpdate::try_from_recorded(
+        host.requested(),
+        host.structural_target(),
+        host.incidence(),
+        host.obstruction_mask() ^ 1,
+    )
+    .unwrap();
+    assert_eq!(
+        candidate.admitted_state_with_hardware(0.01, mismatched),
+        Err(TailControlError::InvalidController)
+    );
+    let limited = advance_tail_actuators(
+        previous,
+        TailIncidenceRequest::try_new(f64::MAX, -f64::MAX).unwrap(),
+        limits,
+        0.01,
+    )
+    .unwrap();
+    assert_eq!(
+        limited.structural_target(),
+        TailIncidence::try_new(0.2, -0.2).unwrap()
+    );
+    assert_eq!(limited.obstruction_mask(), 0x5a);
+    assert!(TailIncidenceRequest::try_new(f64::NAN, 0.0).is_err());
+}
+
 fn observation(q: f64, r: f64, euler_rad: Option<[f64; 3]>) -> TailControlObservation {
     TailControlObservation {
         body_rate: BodyVector::try_new(0.0, q, r).unwrap(),

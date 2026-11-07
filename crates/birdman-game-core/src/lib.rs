@@ -62,31 +62,33 @@ pub use game_session::{
 };
 pub use scenario::{
     CompositeCgLaunchConditions, FlightScenarioError, FlightTelemetry, FlightTelemetryError,
-    flight_state_during_launch_roll, flight_state_from_composite_cg_launch,
+    flight_euler_angles, flight_state_during_launch_roll, flight_state_from_composite_cg_launch,
 };
 pub use scoring::{
     COURSE_DISTANCE_SCORE_VERSION, CourseAxis, DistanceScore, DistanceScoreError,
     course_distance_score,
 };
-pub use session_contract::{SessionEndReason, SessionScenarioIdentity};
+pub use session_contract::{ControllerExecution, SessionEndReason, SessionScenarioIdentity};
 pub use steady_glide::{SteadyGlideConditions, SteadyGlideError, SteadyGlideTrim};
 pub use tail_control::{
     ControllerReference, PidConfig, PidMemory, PitchController, TailActuatorLimits,
-    TailAngleOfAttackGuard, TailControlCommands, TailControlError, TailControlObservation,
-    TailControlProfile, TailControlUpdate, TailControllerState, TailPilotIntent,
-    TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
-    YawController, advance_tail_control,
+    TailActuatorUpdate, TailAngleOfAttackGuard, TailControlCommands, TailControlError,
+    TailControlObservation, TailControlProfile, TailControlUpdate, TailControllerState,
+    TailIncidenceRequest, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
+    TailPilotPositionMapping, TailRateTarget, YawController, advance_tail_actuators,
+    advance_tail_control,
 };
 pub use tail_scenario::{
     TailFlightRunError, TailFlightRunOutcome, TailFlightScenario, TailFlightScenarioError,
     TailFlightScenarioParameters,
 };
 pub use tail_simulation::{
-    TailAppliedControls, TailFlightTickConfig, TailFlightTickError, TailFlightTickInput,
-    TailFlightTickOutcome, TailFlightTickReport, TailFlightTickState, TailPilotMotionAdmission,
-    TailWaterContactMoment, TailWaterContactSample, advance_tail_flight_tick,
-    advance_tail_flight_tick_with_contact, advance_tail_flight_tick_with_contact_report,
-    advance_tail_flight_tick_with_shape_provider,
+    TailAppliedControls, TailControlReport, TailControllerSensors, TailFlightTickConfig,
+    TailFlightTickError, TailFlightTickInput, TailFlightTickOutcome, TailFlightTickReport,
+    TailFlightTickState, TailPilotMotionAdmission, TailWaterContactMoment, TailWaterContactSample,
+    advance_tail_flight_tick, advance_tail_flight_tick_with_contact,
+    advance_tail_flight_tick_with_contact_report, advance_tail_flight_tick_with_shape_provider,
+    observe_tail_controller,
 };
 pub use wind_field::{WindError, WindField};
 

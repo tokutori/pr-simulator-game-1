@@ -34,7 +34,7 @@ mod terminal;
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct GameSessionConfiguration {
     scenario: TailFlightScenario,
-    control_mode: ControlMode,
+    execution: crate::ControllerExecution,
     maximum_flight_ticks: u64,
     identity: SessionScenarioIdentity,
 }
@@ -48,10 +48,12 @@ impl GameSessionConfiguration {
         identity: SessionScenarioIdentity,
     ) -> Result<Self, GameSessionError> {
         validate_configuration_identity(maximum_flight_ticks, identity)?;
-        let control_mode = scenario.resolve_control_mode(control_mode);
+        let control_mode = scenario
+            .resolve_control_mode(control_mode)
+            .ok_or(GameSessionError::InvalidControllerExecution)?;
         Ok(Self {
             scenario,
-            control_mode,
+            execution: crate::ControllerExecution::BuiltIn { mode: control_mode },
             maximum_flight_ticks,
             identity,
         })
@@ -79,8 +81,42 @@ impl GameSessionConfiguration {
     }
 
     /// Effective mode resolved from the selected controller at configuration sealing.
-    pub const fn control_mode(&self) -> ControlMode {
-        self.control_mode
+    pub const fn control_mode(&self) -> Option<ControlMode> {
+        self.execution.builtin_mode()
+    }
+
+    /// Returns the sealed software execution and its provenance.
+    pub const fn execution(&self) -> crate::ControllerExecution {
+        self.execution
+    }
+    /// Returns the operator request, distinct from external software authority.
+    pub const fn requested_mode(&self) -> ControlMode {
+        self.execution.requested_mode()
+    }
+
+    /// Seals an external-only physical scenario and the admitted execution identity.
+    pub fn try_new_external(
+        scenario: TailFlightScenario,
+        requested_mode: ControlMode,
+        maximum_flight_ticks: u64,
+        identity: SessionScenarioIdentity,
+    ) -> Result<Self, GameSessionError> {
+        validate_configuration_identity(maximum_flight_ticks, identity)?;
+        if !scenario.is_external() {
+            return Err(GameSessionError::InvalidControllerExecution);
+        }
+        let execution_identity = identity
+            .controller_identity
+            .ok_or(GameSessionError::InvalidControllerExecution)?;
+        Ok(Self {
+            scenario,
+            maximum_flight_ticks,
+            identity,
+            execution: crate::ControllerExecution::External {
+                identity: execution_identity,
+                requested_mode,
+            },
+        })
     }
 
     fn initial_state(&self) -> TailFlightTickState {
@@ -337,6 +373,8 @@ pub enum GameSessionError {
     InvalidFlightTickLimit,
     /// Every resolved scenario, aircraft, environment, and controller version must be positive.
     InvalidModelVersion,
+    /// The sealed execution kind and physical controller profile disagree.
+    InvalidControllerExecution,
     /// A pause reason can only be cleared while the flight is paused.
     NotPaused,
     /// External pause causes remain active.
@@ -370,6 +408,9 @@ impl core::fmt::Display for GameSessionError {
             Self::CountdownTokenExhausted => f.write_str("countdown attempt tokens are exhausted"),
             Self::InvalidFlightTickLimit => f.write_str("flight tick limit must be positive"),
             Self::InvalidModelVersion => f.write_str("session model versions must be positive"),
+            Self::InvalidControllerExecution => {
+                f.write_str("controller execution and software profile disagree")
+            }
             Self::NotPaused => f.write_str("flight is not paused"),
             Self::PauseConditionsRemain => f.write_str("external pause conditions remain active"),
             Self::TailTick(_) => f.write_str("flight tick"),
@@ -397,6 +438,7 @@ impl core::error::Error for GameSessionError {
             | Self::CountdownTokenExhausted
             | Self::InvalidFlightTickLimit
             | Self::InvalidModelVersion
+            | Self::InvalidControllerExecution
             | Self::NotPaused
             | Self::PauseConditionsRemain => None,
         }
@@ -650,7 +692,7 @@ verus! {
                     && match self.lifecycle {
                         SessionLifecycle::Configured(next) => next.configuration == configuration
                             && next.phase == ConfiguredPhase::Preparing
-                            && match FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks, Some(configuration.control_mode)) {
+                            && match FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks, Some(configuration.execution)) {
                                 Ok(header) => next.record.empty_for(header),
                                 Err(_) => false,
                             },
@@ -676,7 +718,7 @@ verus! {
                             else { previous.phase.is_result() })
                         && next.phase == (if briefing { ConfiguredPhase::Preparing } else { ConfiguredPhase::Ready })
                         && next.configuration == previous.configuration
-                        && match FlightRecordHeader::try_new(previous.configuration.identity, previous.configuration.maximum_flight_ticks, Some(previous.configuration.control_mode)) {
+                        && match FlightRecordHeader::try_new(previous.configuration.identity, previous.configuration.maximum_flight_ticks, Some(previous.configuration.execution)) {
                             Ok(header) => next.record.empty_for(header),
                             Err(_) => false,
                         },
@@ -1327,7 +1369,7 @@ impl GameSession {
         #[cfg(verus_only)]
         proof! {
             reveal(GameSession::prepared_fresh);
-            FlightRecordHeader::construction_error_is_invalid_header(configuration.identity, configuration.maximum_flight_ticks, Some(configuration.control_mode));
+            FlightRecordHeader::construction_error_is_invalid_header(configuration.identity, configuration.maximum_flight_ticks, Some(configuration.execution));
         }
         self.prepare_flight_with_record_factory(configuration, FlightRecord::try_new)
     }
@@ -1388,7 +1430,7 @@ impl GameSession {
             reveal(GameSession::retried_fresh);
             let ghost before = *self;
             if let SessionLifecycle::Configured(previous) = before.lifecycle {
-                FlightRecordHeader::construction_error_is_invalid_header(previous.configuration.identity, previous.configuration.maximum_flight_ticks, Some(previous.configuration.control_mode));
+                FlightRecordHeader::construction_error_is_invalid_header(previous.configuration.identity, previous.configuration.maximum_flight_ticks, Some(previous.configuration.execution));
             }
         }
         self.retry_briefing_with_record_factory(FlightRecord::try_new)
@@ -1553,7 +1595,7 @@ impl GameSession {
             |configuration, previous, input| {
                 configuration.scenario.advance_tick_with_contact_report(
                     previous,
-                    configuration.control_mode,
+                    configuration.execution.requested_mode(),
                     input,
                     loads,
                     contact_geometry,
@@ -1585,7 +1627,7 @@ impl GameSession {
             |configuration, previous, input| {
                 configuration.scenario.advance_tick_with_shape_provider(
                     previous,
-                    configuration.control_mode,
+                    configuration.execution.requested_mode(),
                     input,
                     provider,
                     loads,
@@ -1603,6 +1645,38 @@ impl GameSession {
                 )
             },
         )
+    }
+
+    /// Finalizes a failed physical observation at the current accepted boundary.
+    /// The original typed cause is returned after retaining the same tick and samples.
+    pub fn fail_tail_flight_observation(
+        &mut self,
+        cause: TailFlightTickError,
+    ) -> Result<SessionSnapshot, GameSessionError> {
+        let configured = self.configured_mut()?;
+        let previous = configured
+            .phase
+            .running_state()
+            .ok_or(GameSessionError::InvalidTransition)?;
+        let terminal = SessionTerminalState::TailTick(previous);
+        let configuration = &configured.configuration;
+        let score = course_distance_score(
+            configuration
+                .initial_state()
+                .flight_state()
+                .datum_position_ned(),
+            previous.flight_state().datum_position_ned(),
+            configuration.course_axis(),
+        );
+        configured.finalize_terminal(
+            cause.end_reason(),
+            terminal,
+            configuration.identity,
+            Some(cause),
+            None,
+            score,
+        )?;
+        Err(GameSessionError::TailTick(cause))
     }
 
     /// Aborts at the current input boundary and retains the last valid tick.
@@ -1632,7 +1706,7 @@ impl GameSession {
             reveal(GameSession::retried_fresh);
             let ghost before = *self;
             if let SessionLifecycle::Configured(previous) = before.lifecycle {
-                FlightRecordHeader::construction_error_is_invalid_header(previous.configuration.identity, previous.configuration.maximum_flight_ticks, Some(previous.configuration.control_mode));
+                FlightRecordHeader::construction_error_is_invalid_header(previous.configuration.identity, previous.configuration.maximum_flight_ticks, Some(previous.configuration.execution));
             }
         }
         self.retry_with_record_factory(FlightRecord::try_new)

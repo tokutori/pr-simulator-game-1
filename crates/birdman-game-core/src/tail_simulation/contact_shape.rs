@@ -45,6 +45,7 @@ pub fn advance_tail_flight_tick_with_shape_provider(
     loads: &HybridAerodynamicLoad<'_>,
     provider: &mut dyn TailContactShapeProvider,
 ) -> Result<TailFlightTickReport, TailFlightTickError> {
+    config.admit_input(input)?;
     let previous_factor = previous
         .wing_bending_factor
         .ok_or(TailFlightTickError::Contact(

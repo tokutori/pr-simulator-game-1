@@ -107,13 +107,29 @@ fn finalized(samples: Vec<FlightRecordSample>) -> Result<FlightRecord, FlightRec
 fn record_headers_enforce_bounded_capacity_and_current_tick_frequency() {
     let identity = header(4).scenario;
     let mode = crate::ControlMode::Shared(crate::FbwAuthority::try_new(0.35).unwrap());
-    let identified = FlightRecordHeader::try_new(identity, 4, Some(mode)).unwrap();
+    let identified = FlightRecordHeader::try_new(
+        identity,
+        4,
+        Some(crate::ControllerExecution::BuiltIn { mode }),
+    )
+    .unwrap();
     assert_eq!(
         identified.scenario.controller_identity,
         identity.controller_identity
     );
-    assert_eq!(identified.control_mode, Some(mode));
-    assert_eq!(header(4).control_mode, None);
+    assert_eq!(
+        identified.execution,
+        Some(crate::ControllerExecution::BuiltIn { mode })
+    );
+    assert_eq!(header(4).execution, None);
+    let external = crate::ControllerExecution::External {
+        identity: [0; 32],
+        requested_mode: mode,
+    };
+    let identified = FlightRecordHeader::try_new(identity, 4, Some(external)).unwrap();
+    assert_eq!(identified.execution, Some(external));
+    assert_eq!(external.builtin_mode(), None);
+    assert_eq!(external.requested_mode(), mode);
     for maximum in [0, MAX_FLIGHT_RECORD_TICKS as u64 + 1, u64::MAX] {
         assert_eq!(
             FlightRecordHeader::try_new(identity, maximum, None),

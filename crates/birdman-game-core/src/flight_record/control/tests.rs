@@ -747,16 +747,25 @@ fn capture_preserves_manual_feedback_mixed_and_held_incidence_in_all_modes() {
             recorded.pilot_position_command(),
             TailPilotPositionCommand::Hold
         );
-        close(recorded.manual_incidence_target().elevator_rad(), -0.1);
-        close(recorded.manual_incidence_target().rudder_rad(), 0.05);
-        close(recorded.fbw_incidence_target().elevator_rad(), -0.02);
-        close(recorded.fbw_incidence_target().rudder_rad(), 0.015);
         close(
-            recorded.mixed_incidence_target().elevator_rad(),
+            recorded.manual_incidence_target().unwrap().elevator_rad(),
+            -0.1,
+        );
+        close(
+            recorded.manual_incidence_target().unwrap().rudder_rad(),
+            0.05,
+        );
+        close(
+            recorded.fbw_incidence_target().unwrap().elevator_rad(),
+            -0.02,
+        );
+        close(recorded.fbw_incidence_target().unwrap().rudder_rad(), 0.015);
+        close(
+            recorded.mixed_incidence_target().unwrap().elevator_rad(),
             expected_mixed[0],
         );
         close(
-            recorded.mixed_incidence_target().rudder_rad(),
+            recorded.mixed_incidence_target().unwrap().rudder_rad(),
             expected_mixed[1],
         );
         close(incidence.elevator_rad(), -0.01);
@@ -813,9 +822,9 @@ fn archive_restoration_preserves_saved_commands_without_feedback_reevaluation() 
     let restored =
         FlightRecordTailInput::try_from_recorded(input(command), -0.015, manual, feedback, mixed)
             .unwrap();
-    assert_eq!(restored.manual_incidence_target(), manual);
-    assert_eq!(restored.fbw_incidence_target(), feedback);
-    assert_eq!(restored.mixed_incidence_target(), mixed);
+    assert_eq!(restored.manual_incidence_target(), Some(manual));
+    assert_eq!(restored.fbw_incidence_target(), Some(feedback));
+    assert_eq!(restored.mixed_incidence_target(), Some(mixed));
     assert_eq!(restored.pilot_position_command(), command);
     assert_eq!(restored.resolved_pilot_position_target_m(), -0.015);
     for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {

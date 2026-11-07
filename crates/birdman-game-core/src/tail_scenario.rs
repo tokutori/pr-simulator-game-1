@@ -113,7 +113,7 @@ impl TailFlightScenarioParameters {
 pub struct TailFlightScenario {
     parameters: TailFlightScenarioParameters,
     initial_telemetry: FlightTelemetry,
-    profile: TailControlProfile,
+    profile: Option<TailControlProfile>,
     initial_tail_wrenches: [Option<Wrench>; 2],
 }
 
@@ -123,6 +123,22 @@ impl TailFlightScenario {
         parameters: TailFlightScenarioParameters,
         loads: HybridAerodynamicLoad<'_>,
         profile: TailControlProfile,
+    ) -> Result<Self, TailFlightScenarioError> {
+        Self::prepare(parameters, loads, Some(profile))
+    }
+
+    /// Prepares physical parameters without a builtin PID or protection profile.
+    pub fn try_new_external(
+        parameters: TailFlightScenarioParameters,
+        loads: HybridAerodynamicLoad<'_>,
+    ) -> Result<Self, TailFlightScenarioError> {
+        Self::prepare(parameters, loads, None)
+    }
+
+    fn prepare(
+        parameters: TailFlightScenarioParameters,
+        loads: HybridAerodynamicLoad<'_>,
+        profile: Option<TailControlProfile>,
     ) -> Result<Self, TailFlightScenarioError> {
         let initial_loads = loads
             .evaluate_hybrid(
@@ -211,18 +227,30 @@ impl TailFlightScenario {
     }
 
     /// Selects surface authority without changing the aircraft, polar or environment.
-    pub(crate) const fn resolve_control_mode(&self, mode: ControlMode) -> ControlMode {
-        self.profile.resolve_mode(mode)
+    pub(crate) fn resolve_control_mode(&self, mode: ControlMode) -> Option<ControlMode> {
+        self.profile.map(|profile| profile.resolve_mode(mode))
+    }
+
+    /// Identifies a final-angle scenario with no builtin software profile.
+    pub const fn is_external(&self) -> bool {
+        self.profile.is_none()
     }
 
     /// Selects surface authority without changing the aircraft, polar or environment.
     pub const fn tick_config(&self, mode: ControlMode) -> TailFlightTickConfig {
-        TailFlightTickConfig::new(
-            mode,
-            self.profile,
-            self.parameters.pilot_mapping,
-            self.parameters.gravity,
-        )
+        match self.profile {
+            Some(profile) => TailFlightTickConfig::new(
+                mode,
+                profile,
+                self.parameters.pilot_mapping,
+                self.parameters.gravity,
+            ),
+            None => TailFlightTickConfig::external(
+                mode,
+                self.parameters.pilot_mapping,
+                self.parameters.gravity,
+            ),
+        }
     }
 
     /// Returns one atomic physical outcome with its once-evaluated applied controls.

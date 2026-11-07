@@ -14,7 +14,7 @@ use super::{ApplicationRequest, ApplicationRuntimeError};
 
 #[derive(Default)]
 pub(super) struct StorageOwner {
-    documents: [ConfigurationSlot; 2],
+    documents: [ConfigurationSlot; 3],
     keyboard_read: Option<u32>,
     keyboard_loaded: bool,
     keyboard_save: Option<(u32, birdman_game_app::flight_input::KeyboardControlSettings)>,
@@ -78,11 +78,15 @@ enum ConfigurationJob {
 pub(super) enum SelectedConfiguration {
     Aircraft(Box<birdman_game_app::SelectedAircraft>),
     Controller(Box<birdman_game_app::SelectedController>),
+    ControllerExecution(Box<birdman_game_app::SelectedControllerExecution>),
 }
 
 impl SelectedConfiguration {
     fn bundled(document: ConfigurationDocumentKind) -> Result<Self, String> {
         match document {
+            ConfigurationDocumentKind::ControllerExecution => {
+                Ok(Self::ControllerExecution(Box::default()))
+            }
             ConfigurationDocumentKind::Aircraft => birdman_game_app::SelectedAircraft::bundled()
                 .map(|selected| Self::Aircraft(Box::new(selected)))
                 .map_err(|cause| cause.to_string()),
@@ -96,6 +100,10 @@ impl SelectedConfiguration {
 
     fn decode(document: ConfigurationDocumentKind, bytes: Vec<u8>) -> Result<Self, String> {
         match document {
+            ConfigurationDocumentKind::ControllerExecution => {
+                birdman_game_app::SelectedControllerExecution::decode(bytes)
+                    .map(|selected| Self::ControllerExecution(Box::new(selected)))
+            }
             ConfigurationDocumentKind::Aircraft => {
                 let selected = birdman_game_app::SelectedAircraft::decode(bytes)
                     .map_err(|cause| cause.to_string())?;
@@ -116,6 +124,7 @@ impl SelectedConfiguration {
         match self {
             Self::Aircraft(selected) => selected.original(),
             Self::Controller(selected) => selected.original(),
+            Self::ControllerExecution(selected) => selected.original(),
         }
     }
 
@@ -126,6 +135,9 @@ impl SelectedConfiguration {
         match self {
             Self::Aircraft(selected) => application.select_aircraft(*selected),
             Self::Controller(selected) => application.select_controller(*selected),
+            Self::ControllerExecution(selected) => {
+                application.select_controller_execution(*selected)
+            }
         }
     }
 }
@@ -238,6 +250,7 @@ fn configuration_label(document: ConfigurationDocumentKind) -> &'static str {
     match document {
         ConfigurationDocumentKind::Aircraft => "機体",
         ConfigurationDocumentKind::Controller => "制御設定",
+        ConfigurationDocumentKind::ControllerExecution => "制御プログラム",
     }
 }
 fn configuration_identity(
@@ -249,6 +262,9 @@ fn configuration_identity(
             .aircraft()
             .ok()
             .map(|selected| selected.identity()),
+        ConfigurationDocumentKind::ControllerExecution => {
+            Some(application.controller_execution().source_identity())
+        }
         ConfigurationDocumentKind::Controller => application
             .controller()
             .ok()
@@ -269,12 +285,14 @@ impl StorageOwner {
         &self.documents[match document {
             ConfigurationDocumentKind::Aircraft => 0,
             ConfigurationDocumentKind::Controller => 1,
+            ConfigurationDocumentKind::ControllerExecution => 2,
         }]
     }
     fn document_slot_mut(&mut self, document: ConfigurationDocumentKind) -> &mut ConfigurationSlot {
         &mut self.documents[match document {
             ConfigurationDocumentKind::Aircraft => 0,
             ConfigurationDocumentKind::Controller => 1,
+            ConfigurationDocumentKind::ControllerExecution => 2,
         }]
     }
     pub(super) fn configuration_needs_read(&self, document: ConfigurationDocumentKind) -> bool {
@@ -303,7 +321,7 @@ impl StorageOwner {
         ApplicationRequest::ReadConfiguration {
             document,
             request_id,
-            maximum_bytes: document.maximum_json_bytes() as u32,
+            maximum_bytes: document.maximum_source_bytes() as u32,
         }
     }
 
@@ -325,7 +343,7 @@ impl StorageOwner {
         Some(ApplicationRequest::PickConfiguration {
             document,
             request_id,
-            maximum_bytes: document.maximum_json_bytes() as u32,
+            maximum_bytes: document.maximum_source_bytes() as u32,
         })
     }
 
@@ -1090,6 +1108,7 @@ mod configuration_tests {
         match document {
             ConfigurationDocumentKind::Aircraft => application.aircraft().unwrap().original(),
             ConfigurationDocumentKind::Controller => application.controller().unwrap().original(),
+            ConfigurationDocumentKind::ControllerExecution => unreachable!("JSON fixture helper"),
         }
     }
 
@@ -1102,6 +1121,9 @@ mod configuration_tests {
             let other = match document {
                 ConfigurationDocumentKind::Aircraft => ConfigurationDocumentKind::Controller,
                 ConfigurationDocumentKind::Controller => ConfigurationDocumentKind::Aircraft,
+                ConfigurationDocumentKind::ControllerExecution => {
+                    unreachable!("JSON fixture helper")
+                }
             };
             let mut application = ApplicationSession::default();
             application
@@ -1126,6 +1148,9 @@ mod configuration_tests {
                     birdman_game_content::DEFAULT_CONTROLLER_JSON,
                     "controller_id",
                 ),
+                ConfigurationDocumentKind::ControllerExecution => {
+                    unreachable!("JSON fixture helper")
+                }
             };
             let mut source: serde_json::Value = serde_json::from_slice(raw).unwrap();
             source[key] = serde_json::json!("custom-definition-a");
@@ -1135,7 +1160,7 @@ mod configuration_tests {
             let bytes =
                 format!(" \n{}\n\t", serde_json::to_string_pretty(&source).unwrap()).into_bytes();
             assert!(
-                matches!(owner.pick_configuration(document, 3, &application), Some(ApplicationRequest::PickConfiguration { document: selected, maximum_bytes, .. }) if selected == document && maximum_bytes as usize == document.maximum_json_bytes())
+                matches!(owner.pick_configuration(document, 3, &application), Some(ApplicationRequest::PickConfiguration { document: selected, maximum_bytes, .. }) if selected == document && maximum_bytes as usize == document.maximum_source_bytes())
             );
             let (_, wrong) = owner.configuration_read_completed(
                 other,

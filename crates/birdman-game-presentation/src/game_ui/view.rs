@@ -42,7 +42,7 @@ pub fn game_ui_view(
     }
     match phase {
         SessionPhase::Title | SessionPhase::FlightPaused { .. } if credits_open => {
-            credits(&mut menu)
+            credits(&mut menu, context)
         }
         SessionPhase::Title => {
             notification(&mut menu, context);
@@ -790,8 +790,39 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_>) {
         },
         context.controller_can_delete,
     );
+    menu.status(
+        "game-setup-controller-execution",
+        "実行方式",
+        context.controller_execution_name,
+    );
+    if !context.controller_execution_notification.is_empty() {
+        menu.status(
+            "game-setup-controller-execution-notification",
+            "",
+            context.controller_execution_notification,
+        );
+    }
+    menu.platform(
+        "game-setup-load-controller-execution",
+        "制御プログラム・接続設定を読み込む",
+        GameUiPlatformCommand::LoadConfiguration {
+            document: birdman_game_format::ConfigurationDocumentKind::ControllerExecution,
+        },
+        true,
+    );
+    menu.platform(
+        "game-setup-delete-controller-execution",
+        "組み込み制御に戻す",
+        GameUiPlatformCommand::DeleteConfiguration {
+            document: birdman_game_format::ConfigurationDocumentKind::ControllerExecution,
+        },
+        context.controller_execution_can_delete,
+    );
     if let Some(diagnostic) = &context.controller_pair_diagnostic {
         menu.status("game-setup-controller-pair", "開始条件", diagnostic);
+    }
+    if let Some(status) = &context.controller_execution_status {
+        menu.status("game-controller-execution-status", "制御器", status);
     }
     menu.automatic_sections();
     let difficulty = context.difficulty;
@@ -1099,7 +1130,7 @@ fn feedback(menu: &mut Menu, context: &GameUiContext<'_>) {
     }
 }
 
-fn credits(menu: &mut Menu) {
+fn credits(menu: &mut Menu, context: &GameUiContext<'_>) {
     menu.section("credits-navigation", "", GameUiSectionLayout::Row);
     menu.action(
         "game-credits-close",
@@ -1144,34 +1175,20 @@ fn credits(menu: &mut Menu) {
             include_str!("../../../../assets/fonts/MPLUS1p-OFL.txt"),
         ),
         (
-            "earcut",
-            "ポリゴンの三角形分割",
-            include_str!("../../../../assets/earcut.LICENSE.txt"),
-        ),
-        (
-            "ryu",
-            "数値の文字列変換",
-            include_str!("../../../../assets/ryu-js.LICENSE.txt"),
-        ),
-        (
-            "time",
-            "保存日時の表示",
-            include_str!("../../../../assets/time.LICENSE.txt"),
-        ),
-        (
-            "unicode-width",
-            "表示幅の見積り",
-            include_str!("../../../../assets/unicode-width.LICENSE.txt"),
-        ),
-        (
             "dependencies",
             "その他のソフトウェア",
-            "Web: Three.js・Snabbdom（MIT）\nNative: Bevy（MIT / Apache-2.0）と各依存ライブラリ\n配布物には第三者ソフトウェアのライセンス一覧と、対応する著作権・利用条件を同梱する。\nデータ・画像・フォントの一覧と出典:\nhttps://github.com/tokutori/pr-simulator-game-1/blob/main/THIRD_PARTY_DATA.md",
+            "共有Rustライブラリの利用条件はHTMLとして保存できる。\nWeb: Three.js・Snabbdom（MIT）\nNative: BevyとNative専用依存の完全な利用条件は配布物のTHIRD-PARTY-LICENSES.htmlを参照する。\nデータ・画像・フォントの一覧と出典:\nhttps://github.com/tokutori/pr-simulator-game-1/blob/main/THIRD_PARTY_DATA.md",
         ),
     ] {
         menu.section(&format!("credits-{id}"), label, GameUiSectionLayout::Column);
         menu.status(&format!("game-credits-{id}"), "", value);
     }
+    menu.platform(
+        "game-credits-save-rust-licenses",
+        "共有Rustライブラリの利用条件を保存",
+        GameUiPlatformCommand::DownloadSoftwareLicenses {},
+        context.platform.flight_log_available,
+    );
 }
 
 fn display_settings(menu: &mut Menu, context: &GameUiContext<'_>) {

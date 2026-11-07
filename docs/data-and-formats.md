@@ -162,9 +162,28 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - 文書: `ControllerDocument`のschema 1と64 KiB上限を使い、全階層の未知fieldを拒否する。合法テンプレート、PID、使用上限、Shared authority、迎角保護の型と単位は[飛行制御](flight-control.md)に定める。
 - 検証: 構文・型・schema違反と、独立した意味違反を分ける。意味違反はcode・JSON path・値・期待条件を集約し、pair違反には機体側のpath・値も付ける。共通UI・CLI・viewerは同じformatterを使う。
 - 準備: appが選択機体の実trimとcontrollerを組み合わせる。文書単独で有効な候補の保存・選択と、pairによる開始認可を分け、読込順にかかわらず最新pairを評価する。
-- 保存: 既存StorageOwnerがAircraft／Controllerの閉じた2種のslotを所有する。各slotのbyte上限・decoder・保存先を区別し、文書種・request ID・選択元identityが一致する保存完了だけをcommitする。
+- 保存: 既存StorageOwnerがAircraft／Controller／ControllerExecutionの閉じた3種のslotを所有する。各slotのbyte上限・decoder・保存先を区別し、文書種・request ID・選択元identityが一致する保存完了だけをcommitする。
 - 原文: 両adapterはfile・保存領域から取得したbytesをRustへ通知する。検証済み原文をそのまま保存し、IDと原文SHA-256を記録identityへ接続する。
 - CLI: `validate-controller <path>`は文書単独、`validate-controller <path> <aircraft-path>`は実trimを含むpairを検査する。
+
+## 外部controller実行契約
+
+- 選択元: ControllerExecution slotは組込み設定JSONと独立し、Wasm原文（最大1 MiB）またはNative接続JSON（schema 1、最大64 KiB）を保持する。descriptorは原文SHA-256、設定原文、要求mode、ABI版、resource policyを封印し、記録のcore execution identityと照合する。
+- Wasm: imports 0、startなし、ABI 1と4 export（`memory`、`controller_abi_version() -> i32`、`controller_buffer() -> i32`、`controller_exchange(i32) -> i32`）を要求する。bufferはrequest 2048 Bとresponse 2048 Bの連続領域である。
+- 実行上限: memory 2 MiB、table 4096要素、stack 256 KiB、呼出深度128。Init後のmemory/table拡張を拒否する。fuelはInit 2,000,000、Evaluate 200,000、Accepted 100,000、Finish 50,000とする。reference-typesはRust/LLVMの標準call_indirect encodingに対応し、host importを追加しない。
+- Native接続: SITLは実行program・arguments・識別名・version・期待binary SHA-256、HITLはserial port・正のbaud・hardware/firmware識別を保持する。serialの各frameにはCRC32C 4 Bを付け、stdioはABI frameだけを交換する。相関・期限・候補採用は共有ownerが認可する。
+
+| 交換 | request全長 | 成功response全長 | 内容 |
+| --- | ---: | ---: | --- |
+| Init | 648 B | 64 B | controller設定と実機体のtrim・hardware上限 |
+| Evaluate | 408 B | 80 B | 40個の観測値とvalid mask、最終水平・垂直尾翼要求角 |
+| Accepted | 144 B | 64 B | 実採用時間、要求・構造制限・実角、阻害mask |
+| Finish | 160 B | 64 B | 終端時刻・実角・最初のfaultと採用sequence |
+
+- header: 各全長には64 Bの共通headerを含む。magic・ABI・enum・全長、generation・sequence・descriptor identity、方向別response長を先に認可し、statusと有限payloadを検査する。別sequenceの非有限応答もUnauthorizedとして拒否する。
+- 採用種別: Full=0、PartialTerminal=1、ExistingBoundary=2、AppliedBoundary=3、CancelledCandidate=4。ExistingBoundaryと取消は未採用候補をcanonical 0とし、実actuator角と確定時刻を保持する。AppliedBoundaryは0秒の採用済みcontrolを保持する。
+- HITL期限: Init準備は5秒以内とする。実初期状態でEvaluate→取消Accepted/ACKを1回実測し、物理tick・actuator・記録を進めず、同じgeneration/sequence履歴のまま10 ms以内の定常交換を確認する。飛行中はEvaluateとAccepted ACKを同じ100 Hz区間の絶対期限で監視する。
+- 通信量: 1区間は696 BのABIと4本のCRC、合計712 Bである。8N1の物理UARTは115200 baudで61.81 ms、921600 baudで7.73 msを要する。USB CDCのnominal baudと実転送速度は区別し、準備実測と飛行中の期限監視で適合を判定する。
 
 ## 環境JSON
 
@@ -266,12 +285,13 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 
 ### codecとJSON
 
-- 現行codecはschema 6・7・8・9・10を受理する。
+- 現行codecはschema 6・7・8・9・10・11を受理する。
 - schema 7は全sampleの有限な`wing_bending_factor`を要求し、同時刻の採用値は任意の終端`boundary_event`に保持する。
 - schema 6は曲げ係数の未記録状態を保持する。旧schema 6・7は尾翼荷重を未収録として読み込み、保存原文を保持する。
 - schema 8は各sampleの水平・垂直尾翼の荷重を保持する。各面の値は機体FRD軸の力とdatumまわりのモーメントであり、面が存在しない場合はnullとする。同時刻の採用値は終端`boundary_event`に保持する。
 - schema 9は機体の`configuration_id`と原文JSONのSHA-256を保持する。
-- schema 10はcontrollerのIDと原文SHA-256、coreの固定長controller identity、封印した実効ControlModeを保持する。通常飛行とAttractはschema 10を生成し、PB比較は機体・controller原文と実効modeで分離する。
+- schema 10はcontrollerのIDと原文SHA-256、coreの固定長controller identity、封印した実効ControlModeを保持する。schema 10の実効modeは組込みcontrollerの実行条件として復元する。
+- schema 11はBuiltIn/External execution、要求modeと最終hardware採用を区分する。外部実角はsample/boundaryのphysical incidence一箇所に保存し、要求・構造制限・阻害情報と最初のfaultを別に保持する。通常飛行とAttractはschema 11を生成する。
 - 旧記録は原文と既存keyを保持して閲覧する。SHA未収録の記録は既存の登録機体ID・model versionに対応し、選択中の原文SHAが実際の同梱機体と一致する場合に映像を再生できる。
 - 未対応データを通知して元の保存内容を保持する。
 - 破損、未知field、非有限値、非単位quaternion、時刻・header不整合と、schemaに対応しない係数・eventの組合せを拒否する。
@@ -282,7 +302,7 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - JSON exportは解決済み条件と来歴を含む完全な記録である。
 - 保存されていない情報を現行buildから補完しない。
 
-### CSV version 3/4/5/6/7
+### CSV version 3/4/5/6/7/8
 
 - CSVは初期・全成功tick・fractional terminalを省略せず、位置、速度、姿勢、角速度、pilot状態、入力、actuator、風、telemetry、終了情報等を出力する。
 - 列名に単位を明示し、f64のround-trip表現を使う。
@@ -291,6 +311,7 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - version 5は水平・垂直尾翼それぞれの機体FRD力3成分（N）とdatumまわりのモーメント3成分（N·m）を追加する。各列は記録した同時刻の荷重を出力する。
 - version 6は`aircraft_source_sha256`を追加し、同じ申告機体IDの原文を区別する。
 - version 7は`controller_source_sha256`・`control_mode`・`effective_feedback_authority`を追加し、封印した実効値を出力する。
+- version 8はexecution kind・要求mode・最初のcontroller fault、外部要求角・構造制限角・阻害maskを追加する。実角は既存physical incidence列を正本とし、架空のManual/FBW値を外部reportへ補わない。
 
 - 加速度は保存済みNED速度、FRD角速度、pilot相対速度の有限差分による派生値である。
 - 内点は不等間隔3点、端点は2点の割線を用い、methodとstencil時刻を出力する。
@@ -319,7 +340,7 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 
 ## Personal Bestと保存
 
-### 比較方式v5
+### 比較方式v6
 
 Personal BestはcompleteなWaterContact、score、現行physics/score version、既知の解決済み条件、有効canonical keyを要求する。共有`TailPersonalBestSelection`が比較を所有し、同点は最初の既存recordを保持する。
 
@@ -337,9 +358,9 @@ keyは次の条件をSHA-256へ入力する。
 
 - HUD表示条件は主要telemetry、姿勢・方位、風、flight-path、迎角、基本数値群、角速度、尾翼・pilot補助数値群の有効性で比較する。Fullと同じ内容のCustomは同じ比較群となり、表示効果のないWarnings設定は中立値へ正規化する。
 - 必須異常表示はWarnings設定と独立して表示する。保存したInformationと各cue設定はそのまま保持する。
-- 任意`identity_metadata`は、未指定・既知v5・その他方式のrawを排他的に保持する。
-- 現方式の記録だけを順位付けする。block欠落、旧v2〜v4を含むその他方式、構造情報不足の記録は未順位で一覧・Replayへ読み戻し、元key・原文を保持する。
-- 既知v5は数値と保存keyの整合を検証して受理する。
+- 任意`identity_metadata`は、未指定・既知v6・その他方式のrawを排他的に保持する。
+- 現方式の記録だけを順位付けする。block欠落、旧v2〜v5を含むその他方式、構造情報不足の記録は未順位で一覧・Replayへ読み戻し、元key・原文を保持する。
+- 既知v6は数値と保存keyの整合を検証して受理する。
 
 - build来歴は4種のsource fingerprint、Cargo.lock SHA-256、観測したrustc・target・profileを保持する。
 - 機体・環境・scenarioのsource fingerprintは共有実装と登録データから導出し、各adapterはその来歴を記録へ付与する。

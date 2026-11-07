@@ -1,3 +1,4 @@
+use super::super::native_runtime::{NativeBuffer, NativeRuntime};
 use bevy::{
     asset::RenderAssetUsages,
     image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
@@ -8,13 +9,12 @@ use bevy::{
     },
 };
 use birdman_game_runtime::{
-    ApplicationBufferDescriptor, ApplicationBufferSlice, ApplicationGeometryTexture,
-    ApplicationImageAsset, ApplicationImageEncoding, ApplicationMeshAsset, ApplicationRuntime,
-    ApplicationWaterChunkAsset,
+    ApplicationBufferDescriptor, ApplicationGeometryTexture, ApplicationImageAsset,
+    ApplicationImageEncoding, ApplicationMeshAsset, ApplicationWaterChunkAsset,
 };
 
 pub(super) fn floats<const COMPONENTS: usize>(
-    runtime: &ApplicationRuntime,
+    runtime: &NativeRuntime,
     descriptor: ApplicationBufferDescriptor,
 ) -> Result<Vec<[f32; COMPONENTS]>, String> {
     Ok(float_values(runtime, descriptor, COMPONENTS)?
@@ -24,12 +24,11 @@ pub(super) fn floats<const COMPONENTS: usize>(
 }
 
 fn float_values(
-    runtime: &ApplicationRuntime,
+    runtime: &NativeRuntime,
     descriptor: ApplicationBufferDescriptor,
     components: usize,
-) -> Result<&[f32], String> {
-    let Some(ApplicationBufferSlice::F32(values)) = runtime.asset_buffer(descriptor.buffer_id)
-    else {
+) -> Result<Vec<f32>, String> {
+    let Some(NativeBuffer::F32(values)) = runtime.asset_buffer(descriptor.buffer_id) else {
         return Err(format!(
             "Float32 upload {} is unavailable",
             descriptor.buffer_id
@@ -48,7 +47,7 @@ fn float_values(
 }
 
 pub(super) fn update_mesh(
-    runtime: &ApplicationRuntime,
+    runtime: &NativeRuntime,
     mesh: &mut Mesh,
     position: ApplicationBufferDescriptor,
     normal: ApplicationBufferDescriptor,
@@ -59,8 +58,8 @@ pub(super) fn update_mesh(
         (Mesh::ATTRIBUTE_POSITION, positions),
         (Mesh::ATTRIBUTE_NORMAL, normals),
     ];
-    for (attribute, values) in attributes {
-        if !matches!(mesh.attribute(attribute), Some(VertexAttributeValues::Float32x3(vertices)) if vertices.len() * 3 == values.len())
+    for (attribute, values) in &attributes {
+        if !matches!(mesh.attribute(*attribute), Some(VertexAttributeValues::Float32x3(vertices)) if vertices.len() * 3 == values.len())
         {
             return Err("Dynamic GPU attribute layout differs from its prepared topology".into());
         }
@@ -77,11 +76,10 @@ pub(super) fn update_mesh(
 }
 
 fn indices(
-    runtime: &ApplicationRuntime,
+    runtime: &NativeRuntime,
     descriptor: ApplicationBufferDescriptor,
 ) -> Result<Vec<u32>, String> {
-    let Some(ApplicationBufferSlice::U32(values)) = runtime.asset_buffer(descriptor.buffer_id)
-    else {
+    let Some(NativeBuffer::U32(values)) = runtime.asset_buffer(descriptor.buffer_id) else {
         return Err(format!(
             "UInt32 upload {} is unavailable",
             descriptor.buffer_id
@@ -96,11 +94,11 @@ fn indices(
             descriptor.buffer_id
         ));
     }
-    Ok(values.to_vec())
+    Ok(values)
 }
 
 pub(super) fn mesh(
-    runtime: &ApplicationRuntime,
+    runtime: &NativeRuntime,
     asset: &ApplicationMeshAsset,
     start: u32,
     count: u32,
@@ -134,7 +132,7 @@ pub(super) fn mesh(
 }
 
 pub(super) fn water_mesh(
-    runtime: &ApplicationRuntime,
+    runtime: &NativeRuntime,
     asset: &ApplicationWaterChunkAsset,
 ) -> Result<Mesh, String> {
     Ok(Mesh::new(
@@ -158,11 +156,11 @@ pub(super) fn water_mesh(
 }
 
 pub(super) fn image(
-    runtime: &ApplicationRuntime,
+    runtime: &NativeRuntime,
     asset: ApplicationImageAsset,
     anisotropy_clamp: u16,
 ) -> Result<Image, String> {
-    let Some(ApplicationBufferSlice::U8(bytes)) = runtime.asset_buffer(asset.buffer_id) else {
+    let Some(NativeBuffer::U8(bytes)) = runtime.asset_buffer(asset.buffer_id) else {
         return Err("Image upload is unavailable".into());
     };
     let [width, height] = asset.size;
@@ -228,11 +226,10 @@ pub(super) fn image(
 }
 
 pub(super) fn wing_image(
-    runtime: &ApplicationRuntime,
+    runtime: &NativeRuntime,
     asset: &ApplicationGeometryTexture,
 ) -> Result<Image, String> {
-    let Some(ApplicationBufferSlice::U8(bytes)) = runtime.asset_buffer(asset.buffer.buffer_id)
-    else {
+    let Some(NativeBuffer::U8(bytes)) = runtime.asset_buffer(asset.buffer.buffer_id) else {
         return Err("Wing image upload is unavailable".into());
     };
     let [width, height] = asset.size;
@@ -253,7 +250,7 @@ pub(super) fn wing_image(
         RenderAssetUsages::default(),
     );
     image.texture_descriptor.mip_level_count = asset.mip_level_count;
-    image.data = Some(bytes.to_vec());
+    image.data = Some(bytes);
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
         anisotropy_clamp: 8,
         ..ImageSamplerDescriptor::linear()

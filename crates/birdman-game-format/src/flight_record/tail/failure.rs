@@ -1,8 +1,8 @@
 use super::FlightRecordFormatError;
 use birdman_game_core::{
     ActuatorError, AeroError, AerodynamicEvaluationError, AerodynamicStage, ContactError,
-    DynamicsError, HybridError, HybridFlowKind, HybridLimit, HybridSite, HybridSurfaceRole,
-    LoadError, MathError, TailControlError, TailFlightTickError, WindError,
+    DynamicsError, FlightTelemetryError, HybridError, HybridFlowKind, HybridLimit, HybridSite,
+    HybridSurfaceRole, LoadError, MathError, TailControlError, TailFlightTickError, WindError,
 };
 use serde::{Deserialize, Serialize};
 
@@ -17,8 +17,21 @@ pub enum TailTickFailureDocument {
     Control(TailControlFailureDocument),
     /// Dynamics or load evaluation failure.
     Dynamics(DynamicsFailureDocument),
+    /// Sensor truth derivation failure.
+    Telemetry(TelemetryFailureDocument),
     /// Contact interpolation failure.
     Contact(ContactFailureDocument),
+}
+
+/// Original sensor truth derivation failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum TelemetryFailureDocument {
+    /// Rigid-body kinematic failure.
+    Dynamics(DynamicsFailureDocument),
+    /// Wind observation failure.
+    Wind(WindFailureDocument),
 }
 
 /// Original two-tail control failure.
@@ -391,6 +404,12 @@ impl TailTickFailureDocument {
             TailFlightTickError::Dynamics(cause) => {
                 Self::Dynamics(DynamicsFailureDocument::from_core(cause)?)
             }
+            TailFlightTickError::Telemetry(cause) => Self::Telemetry(match cause {
+                FlightTelemetryError::Dynamics(cause) => {
+                    TelemetryFailureDocument::Dynamics(DynamicsFailureDocument::from_core(cause)?)
+                }
+                FlightTelemetryError::Wind(cause) => TelemetryFailureDocument::Wind(cause.into()),
+            }),
             TailFlightTickError::Contact(cause) => {
                 Self::Contact(ContactFailureDocument::from_core(cause)?)
             }
@@ -402,6 +421,12 @@ impl TailTickFailureDocument {
             Self::TickOverflow => TailFlightTickError::TickOverflow,
             Self::Control(cause) => TailFlightTickError::Control(cause.to_core()?),
             Self::Dynamics(cause) => TailFlightTickError::Dynamics(cause.to_core()?),
+            Self::Telemetry(cause) => TailFlightTickError::Telemetry(match cause {
+                TelemetryFailureDocument::Dynamics(cause) => {
+                    FlightTelemetryError::Dynamics(cause.to_core()?)
+                }
+                TelemetryFailureDocument::Wind(cause) => FlightTelemetryError::Wind(cause.into()),
+            }),
             Self::Contact(cause) => TailFlightTickError::Contact(cause.to_core()?),
         })
     }
