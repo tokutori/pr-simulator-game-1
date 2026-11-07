@@ -79,7 +79,7 @@ impl Session {
         }
         let mode = match init.requested_mode {
             0 => ControlMode::Manual,
-            1 => ControlMode::Shared(FbwAuthority::try_new(v[58]).map_err(|_| ())?),
+            1 => ControlMode::Shared(FbwAuthority::try_new(v[59]).map_err(|_| ())?),
             2 => ControlMode::Automatic,
             _ => return Err(()),
         };
@@ -347,7 +347,7 @@ mod tests {
                 .copy_from_slice(&[0.2, 0.3, 0.1, -0.1, 0.1, -0.5, 0.5, 0.02]);
         }
         init.values[46..54].copy_from_slice(&[-0.4, 0.4, -0.4, 0.4, -0.2, 0.2, -0.2, 0.2]);
-        init.values[54..61].copy_from_slice(&[0.0, 10.0, 0.1, 0.0, 0.5, 0.5, 100.0]);
+        init.values[54..61].copy_from_slice(&[0.0, 10.0, 0.1, 0.0, 0.2, 0.5, 100.0]);
         init.values[61..71]
             .copy_from_slice(&[-0.1, 0.3, 0.04, 1.6, -0.3, 0.3, -0.3, 0.3, 0.8, 0.8]);
         let mut guest = Guest::new();
@@ -362,6 +362,16 @@ mod tests {
             .unwrap()
         };
         call(&mut guest, ControllerFrame::init(header, init).unwrap());
+        assert_eq!(
+            (
+                guest.session.as_ref().unwrap().profile.shared_authority(),
+                guest.session.as_ref().unwrap().mode,
+            ),
+            (
+                0.2,
+                ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
+            )
+        );
         assert_eq!(
             guest.session.as_ref().unwrap().memory.stages(),
             TailControllerState::try_new(Some(0.0)).unwrap().stages()
