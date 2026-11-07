@@ -202,7 +202,7 @@ enum VerificationStage {
     Finished,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum Check {
     Action(GameUiAction),
     Capture(String),
@@ -747,10 +747,19 @@ fn advance(world: &mut World) {
 
 fn advance_step(world: &mut World, verification: &mut Verification) -> Result<(), String> {
     if verification.started.elapsed() > Duration::from_secs(240) {
+        let drawing = world
+            .get_resource::<NativeIo>()
+            .and_then(|io| io.drawing.as_ref());
         return Err(format!(
-            "Native verification timed out at {:?}",
-            verification.stage
-        ));
+            "Native verification timed out: stage={:?} index={} check={:?} readiness={:?} probes={:?} capture_pending={} scene_visible={:?} graphics={:?} {}",
+            verification.stage, verification.index, verification.checks.get(verification.index),
+            verification.readiness,
+            world.get_resource::<super::water::verification::WaterShaderVerification>(),
+            verification.capture.pending(),
+            drawing.map(|drawing| drawing.presentation.scene_visible),
+            drawing.map(|drawing| &drawing.graphics.resource),
+            super::world::verification_status(world)
+        ).chars().take(8192).collect());
     }
     if let Some(cause) = &verification.readiness.error {
         return Err(cause.clone());

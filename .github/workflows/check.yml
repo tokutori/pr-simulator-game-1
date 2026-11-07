@@ -162,6 +162,18 @@ jobs:
           }
           trap record_result EXIT
           npm run test:cross-target -- "$output"
+      - name: Preserve cross-target failure evidence
+        if: failure() && runner.os == 'Linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cross-target-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            target/cross-target-check-${{ github.run_id }}-${{ github.run_attempt }}/result.json
+            target/cross-target-check-${{ github.run_id }}-${{ github.run_attempt }}/native.log
+            target/cross-target-check-${{ github.run_id }}-${{ github.run_attempt }}/native/application-trace.jsonl
+            target/cross-target-check-${{ github.run_id }}-${{ github.run_attempt }}/native/source-evidence.json
+          if-no-files-found: warn
+          retention-days: 3
       - name: Configure GitHub Pages
         if: matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.deploy_pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0

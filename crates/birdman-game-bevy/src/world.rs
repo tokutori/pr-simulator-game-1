@@ -61,7 +61,7 @@ pub(crate) enum WorldProjection {
     LakeSurface,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum ResourceStage {
     Preparing,
     Prepared,
@@ -1315,6 +1315,9 @@ pub(crate) fn submit(
             super::display_adjustment::submit(world, camera, &drawing.display);
         }
         for candidate in gpu.candidates.values() {
+            if matches!(candidate.stage, ResourceStage::Cancelling { .. }) {
+                continue;
+            }
             super::display_adjustment::submit(world, candidate.preview, &drawing.display);
         }
         screen_render::visible(
@@ -1334,6 +1337,26 @@ pub(crate) fn submit(
     screen_render::timing::observe_query(world, gpu.query);
     world.insert_resource(gpu);
     result
+}
+
+#[cfg(feature = "verify-harness")]
+pub(crate) fn verification_status(world: &World) -> String {
+    let Some(gpu) = world.get_resource::<NativeGpu>() else {
+        return "GPU owner unavailable".into();
+    };
+    let candidates: Vec<_> = gpu
+        .candidates
+        .iter()
+        .take(16)
+        .map(|(id, candidate)| (*id, candidate.stage))
+        .collect();
+    format!(
+        "renderer={} active={:?} revision={} candidates={} first16={candidates:?}",
+        gpu.renderer_id,
+        gpu.active,
+        gpu.revision,
+        gpu.candidates.len()
+    )
 }
 
 fn bind_shadow(
@@ -2317,6 +2340,14 @@ mod tests {
             .is_empty()
         );
         assert!(poll(&mut world).is_empty());
+        // Dispose may submit its final drawing while cancellation waits for render retirement.
+        // The cancelled preview has already gone; no color-grading component may recreate it.
+        assert!(world.get_entity(preview).is_err());
+        let camera_active = world.get::<Camera>(main).unwrap().is_active;
+        submit(&mut world, &runtime, &drawing).unwrap();
+        assert!(world.get_entity(preview).is_err());
+        // The following independent shadow checks reuse this fixture's active camera.
+        world.get_mut::<Camera>(main).unwrap().is_active = camera_active;
         let retired = world.resource::<NativeGpu>().revision;
         world.resource_mut::<readiness::GpuReadback>().revision = retired;
         assert!(matches!(
