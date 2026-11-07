@@ -192,7 +192,11 @@ fn hybrid_stage_site_limit_and_cause_round_trip_without_reclassification() {
             )));
         }
     }
-    for (elevator, rudder) in [(f64::NAN, 0.0), (0.21, 0.0), (0.0, -0.21)] {
+    for (elevator, rudder) in [
+        (f64::NAN, 0.0),
+        (core::f64::consts::PI.next_up(), 0.0),
+        (0.0, -core::f64::consts::PI.next_up()),
+    ] {
         let cause = birdman_game_core::TailIncidence::try_new(elevator, rudder).unwrap_err();
         round_trip(TailFlightTickError::Control(TailControlError::Incidence(
             cause,

@@ -16,6 +16,7 @@ verify = true
 [dependencies]
 vstd = { version = "=0.0.0-2026-10-04-0306", default-features = false, features = ["alloc"], optional = true }
 birdman-game-app.workspace = true
+birdman-game-content.workspace = true
 birdman-game-core.workspace = true
 birdman-game-format.workspace = true
 birdman-game-presentation.workspace = true

@@ -20,6 +20,22 @@ fn three_authorities_preserve_two_axis_intent_and_independent_pilot_target() {
         assert_eq!(first.finalization.terminal_tick, TICK_LIMIT);
         assert_eq!(first.finalization.failure, None);
         assert_eq!(first.header.maximum_flight_ticks, TICK_LIMIT);
+        assert_eq!(
+            first.schema_version,
+            birdman_game_format::TAIL_FLIGHT_RECORD_SCHEMA_VERSION
+        );
+        assert_eq!(first.header.control_mode, Some(mode.into()));
+        assert_eq!(first.header.controller_profile_version, None);
+        let raw_sha = first.control_identity.controller_sha256.as_deref().unwrap();
+        let core = first.to_finalized_core_record().unwrap();
+        assert_eq!(
+            core.header().scenario.controller_identity,
+            Some(birdman_game_format::controller_identity(
+                &first.control_identity.controller_profile_id,
+                raw_sha,
+            ))
+        );
+        assert_eq!(core.header().control_mode, Some(mode));
         assert_eq!(first.samples.len(), TICK_LIMIT as usize + 1);
         for sample in first.samples.iter().skip(1) {
             let TailFlightRecordControlsDocument::TailIncidence {
@@ -64,11 +80,13 @@ fn named_terminal_and_saved_query_share_exact_controls_and_terminal_metadata() {
     let named: Value =
         serde_json::from_str(&named_terminal_json("manual", &document).unwrap()).unwrap();
     assert_eq!(named["kind"], "native_hybrid_smoke");
-    assert_eq!(named["record_schema_version"], 8);
+    assert_eq!(named["record_schema_version"], document.schema_version);
     assert_eq!(named["sample_count"], TICK_LIMIT + 1);
     assert_eq!(named["controls"]["layout"], "tail_incidence");
     assert!(named["controls"].get("roll_rad").is_none());
     let expected_identity = HybridSessionPreparation::try_new_for_weather(
+        &birdman_game_app::SelectedAircraft::bundled().unwrap(),
+        &birdman_game_app::SelectedController::bundled().unwrap(),
         ControlMode::Manual,
         TICK_LIMIT,
         0,
@@ -117,43 +135,17 @@ fn named_terminal_and_saved_query_share_exact_controls_and_terminal_metadata() {
         TailPilotPositionCommand::Hold
     );
     assert_eq!(named["finalization"]["failure"], json!(null));
+    let terminal = record
+        .sample_at_seconds(record.duration_seconds().unwrap())
+        .unwrap();
+    assert_eq!(terminal.tick_index, document.finalization.terminal_tick);
+    assert_eq!(
+        terminal.flight_state.datum_position_ned().components(),
+        document.samples.last().unwrap().state.datum_position_ned_m
+    );
 }
 
 #[test]
 fn invalid_command_mode_is_rejected() {
     assert!(run_verification("legacy").is_err());
-}
-
-#[test]
-fn low_speed_envelope_exit_retains_the_original_failure_and_last_valid_record() {
-    let document = verify_mode_at_speed(ControlMode::Manual, 1.0).unwrap();
-    assert_eq!(
-        document.finalization.reason,
-        FlightRecordEndReasonDocument::OutOfValidEnvelope
-    );
-    assert!(document.finalization.failure.is_some());
-    assert!(document.finalization.terminal_tick < TICK_LIMIT);
-    assert_eq!(
-        document.samples.len(),
-        document.finalization.terminal_tick as usize + 1
-    );
-    let named: Value =
-        serde_json::from_str(&named_terminal_json("manual", &document).unwrap()).unwrap();
-    assert_eq!(
-        named["finalization"],
-        serde_json::to_value(document.finalization).unwrap()
-    );
-    assert_eq!(
-        named["state"],
-        serde_json::to_value(&document.samples.last().unwrap().state).unwrap()
-    );
-    let restored = document.to_finalized_core_record().unwrap();
-    let last = restored
-        .sample_at_seconds(restored.duration_seconds().unwrap())
-        .unwrap();
-    assert_eq!(last.tick_index, document.finalization.terminal_tick);
-    assert_eq!(
-        last.flight_state.datum_position_ned().components(),
-        document.samples.last().unwrap().state.datum_position_ned_m
-    );
 }

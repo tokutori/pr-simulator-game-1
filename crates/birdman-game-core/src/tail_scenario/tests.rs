@@ -1,8 +1,9 @@
 use super::*;
 use crate::{
     AerodynamicEvaluationError, AerodynamicStage, BodyVector, ContactError, DynamicsError,
-    FbwAuthority, HybridModel, HybridSite, LoadError, SteadyGlideTrim, TailPilotIntent,
-    TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget, TestAircraft, WindField,
+    FbwAuthority, HybridModel, HybridSite, LoadError, NedPoint, NedVector, SteadyGlideTrim,
+    TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget,
+    TestAircraft, WindError, WindField,
 };
 
 fn near(actual: f64, expected: f64, tolerance: f64) {
@@ -33,12 +34,12 @@ fn launch(trim: SteadyGlideTrim, height: f64, heading: f64) -> CompositeCgLaunch
     .unwrap()
 }
 
-fn parameters<'a>(
+fn parameters(
     definition: &TestAircraft,
-    contacts: &'a [BodyPoint],
+    contacts: &[BodyPoint],
     height: f64,
     heading: f64,
-) -> TailFlightScenarioParameters<'a> {
+) -> TailFlightScenarioParameters {
     TailFlightScenarioParameters::try_new(
         definition.aircraft(),
         launch(definition.trim().unwrap(), height, heading),
@@ -59,7 +60,7 @@ fn neutral_input() -> TailFlightTickInput {
 }
 
 fn profile() -> TailControlProfile {
-    TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap()
+    crate::tail_control::test_profile(0.2, 0.2)
 }
 
 #[test]
@@ -93,7 +94,7 @@ fn tail_scenario_seals_composite_cg_launch_trim_and_shared_telemetry() {
     );
     assert_eq!(scenario.pilot_mapping(), trim.pilot_mapping().unwrap());
     let telemetry = scenario
-        .telemetry(scenario.initial_state().flight_state())
+        .telemetry(scenario.initial_state().flight_state(), &load)
         .unwrap();
     near(telemetry.altitude_m, 10.5, 1.0e-14);
     near(
@@ -113,13 +114,19 @@ fn tail_scenario_seals_composite_cg_launch_trim_and_shared_telemetry() {
         TailPilotPositionCommand::Set(TailPilotPositionIntent::try_new(0.5).unwrap()),
     );
     let report = scenario
-        .advance_tick_with_contact_report(scenario.initial_state(), ControlMode::Manual, command)
+        .advance_tick_with_contact_report(
+            scenario.initial_state(),
+            ControlMode::Manual,
+            command,
+            &load,
+            WaterContactGeometry::try_new(&contacts).unwrap(),
+        )
         .unwrap();
     let TailFlightTickOutcome::Advanced(next) = report.outcome() else {
         panic!("expected airborne tick");
     };
     assert_eq!(
-        scenario.telemetry(next.flight_state()).unwrap(),
+        scenario.telemetry(next.flight_state(), &load).unwrap(),
         derive_flight_telemetry(&scenario.aircraft(), next.flight_state(), |point| wind
             .velocity_at(point))
         .unwrap()
@@ -132,14 +139,14 @@ fn tail_scenario_seals_composite_cg_launch_trim_and_shared_telemetry() {
     let alternative = TailFlightScenario::try_new(
         parameters,
         load,
-        TailControlProfile::try_new(0.1, 0.3, 0.5).unwrap(),
+        crate::tail_control::test_profile(0.1, 0.3),
     )
     .unwrap();
     assert_eq!(alternative.aircraft(), scenario.aircraft());
     assert_eq!(alternative.initial_state(), scenario.initial_state());
     assert_eq!(
-        alternative.telemetry(next.flight_state()).unwrap(),
-        scenario.telemetry(next.flight_state()).unwrap()
+        alternative.telemetry(next.flight_state(), &load).unwrap(),
+        scenario.telemetry(next.flight_state(), &load).unwrap()
     );
 }
 
@@ -166,7 +173,14 @@ fn tail_scenario_runner_is_deterministic_in_all_modes_and_scores_exact_terminal_
         ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
         ControlMode::Automatic,
     ] {
-        let short = scenario.run(mode, &inputs[..3]).unwrap();
+        let short = scenario
+            .run(
+                mode,
+                &inputs[..3],
+                &load,
+                WaterContactGeometry::try_new(&contacts).unwrap(),
+            )
+            .unwrap();
         let TailFlightRunOutcome::TimeLimit { state, score } = short else {
             panic!("expected time limit");
         };
@@ -184,8 +198,25 @@ fn tail_scenario_runner_is_deterministic_in_all_modes_and_scores_exact_terminal_
             )
             .unwrap()
         );
-        let terminal = scenario.run(mode, &inputs).unwrap();
-        assert_eq!(terminal, scenario.run(mode, &inputs).unwrap());
+        let terminal = scenario
+            .run(
+                mode,
+                &inputs,
+                &load,
+                WaterContactGeometry::try_new(&contacts).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            terminal,
+            scenario
+                .run(
+                    mode,
+                    &inputs,
+                    &load,
+                    WaterContactGeometry::try_new(&contacts).unwrap()
+                )
+                .unwrap()
+        );
         let TailFlightRunOutcome::WaterContact { sample, score } = terminal else {
             panic!("expected water contact");
         };
@@ -213,7 +244,12 @@ fn tail_scenario_runner_is_deterministic_in_all_modes_and_scores_exact_terminal_
         );
     }
     assert_eq!(
-        scenario.run(ControlMode::Manual, &[]),
+        scenario.run(
+            ControlMode::Manual,
+            &[],
+            &load,
+            WaterContactGeometry::try_new(&contacts).unwrap()
+        ),
         Err(TailFlightRunError::EmptyInput)
     );
 }
@@ -248,13 +284,20 @@ fn tail_scenario_runner_returns_previous_success_state_and_original_failed_stage
             scenario.initial_state(),
             ControlMode::Automatic,
             neutral_input(),
+            &load,
+            WaterContactGeometry::try_new(&contacts).unwrap(),
         )
         .unwrap();
     let TailFlightTickOutcome::Advanced(expected) = report.outcome() else {
         panic!("expected successful first tick");
     };
     let error = scenario
-        .run(ControlMode::Automatic, &[neutral_input(); 2])
+        .run(
+            ControlMode::Automatic,
+            &[neutral_input(); 2],
+            &load,
+            WaterContactGeometry::try_new(&contacts).unwrap(),
+        )
         .unwrap_err();
     let TailFlightRunError::Tick {
         last_valid_state,
@@ -281,7 +324,7 @@ fn tail_scenario_runner_returns_previous_success_state_and_original_failed_stage
 }
 
 #[test]
-fn tail_scenario_rejects_invalid_contact_and_initial_load_without_creating_a_ready_model() {
+fn tail_scenario_checks_contact_geometry_and_accepts_reverse_initial_flow() {
     let definition = TestAircraft::try_new().unwrap();
     let trim = definition.trim().unwrap();
     let parameters = TailFlightScenarioParameters::try_new(
@@ -324,12 +367,5 @@ fn tail_scenario_rejects_invalid_contact_and_initial_load_without_creating_a_rea
         CourseAxis::try_new(1.0, 0.0).unwrap(),
     )
     .unwrap();
-    let TailFlightScenarioError::Aerodynamics(error) =
-        TailFlightScenario::try_new(parameters, load, profile()).unwrap_err()
-    else {
-        panic!("expected invalid initial Hybrid load");
-    };
-    assert_eq!(error.site(), HybridSite::StaticPolar);
-    assert_eq!(error.limit(), Some(crate::HybridLimit::StaticAlpha));
-    assert_eq!(error.stage(), None);
+    assert!(TailFlightScenario::try_new(parameters, load, profile()).is_ok());
 }

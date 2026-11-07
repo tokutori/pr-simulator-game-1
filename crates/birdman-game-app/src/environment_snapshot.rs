@@ -11,11 +11,11 @@ use serde::Serialize;
 use crate::record_archive::{ENVIRONMENT_SOURCE_FINGERPRINT, ENVIRONMENT_V6_SHA256};
 use crate::{
     HybridSessionPreparation, PresetEnvironment, application::ApplicationSession,
-    bundled_environment, identity_for_selection, preset_environment_for_version,
+    bundled_environment, preset_environment_for_version,
 };
 
 /// Typed failures from registered identity resolution and resource metadata projection.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EnvironmentSnapshotError {
     /// An identity version or registered preset is invalid.
     InvalidIdentity,
@@ -64,15 +64,9 @@ pub struct EnvironmentIdentity {
     /// Scenario content version.
     #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     pub scenario_version: u32,
-    /// Aircraft model version.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    pub aircraft_model_version: u32,
     /// Environment content version.
     #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     pub environment_version: u32,
-    /// Controller profile version.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    pub controller_profile_version: u32,
     /// Low 32 bits of the exact seed.
     pub seed_low: u32,
     /// High 32 bits of the exact seed.
@@ -85,25 +79,9 @@ impl From<birdman_game_core::SessionScenarioIdentity> for EnvironmentIdentity {
             catalog_version: identity.catalog_version,
             scenario_id: identity.scenario_id,
             scenario_version: identity.scenario_version,
-            aircraft_model_version: identity.aircraft_model_version,
             environment_version: identity.environment_version,
-            controller_profile_version: identity.controller_profile_version,
             seed_low: identity.seed as u32,
             seed_high: (identity.seed >> 32) as u32,
-        }
-    }
-}
-
-impl From<EnvironmentIdentity> for birdman_game_core::SessionScenarioIdentity {
-    fn from(identity: EnvironmentIdentity) -> Self {
-        Self {
-            catalog_version: identity.catalog_version,
-            scenario_id: identity.scenario_id,
-            scenario_version: identity.scenario_version,
-            aircraft_model_version: identity.aircraft_model_version,
-            environment_version: identity.environment_version,
-            controller_profile_version: identity.controller_profile_version,
-            seed: u64::from(identity.seed_low) | (u64::from(identity.seed_high) << 32),
         }
     }
 }
@@ -127,12 +105,14 @@ pub enum EnvironmentSource {
 }
 
 /// Lightweight identity key for display-resource synchronization.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EnvironmentSelection {
     /// Owner of the displayed environment.
     pub source: EnvironmentSource,
     /// Complete registered scenario identity.
     pub identity: EnvironmentIdentity,
+    /// Selected flight launch point, separate from the environment resource identity.
+    pub representative_position_ned_m: Option<[f64; 3]>,
 }
 
 impl EnvironmentSelection {
@@ -150,11 +130,12 @@ impl EnvironmentSelection {
         weather: birdman_game_format::WeatherClass,
         seed: u64,
     ) -> Result<Self, EnvironmentSnapshotError> {
-        let selection = HybridSessionPreparation::select_scenario(weather, seed)
+        let identity = HybridSessionPreparation::environment_identity(weather, seed)
             .map_err(EnvironmentSnapshotError::Preparation)?;
         Ok(Self {
             source,
-            identity: identity_for_selection(selection).into(),
+            identity,
+            representative_position_ned_m: None,
         })
     }
 
@@ -162,7 +143,7 @@ impl EnvironmentSelection {
     pub fn for_session(session: &ApplicationSession) -> Result<Self, EnvironmentSnapshotError> {
         use birdman_game_core::SessionPhase;
         let phase = session.core_session().snapshot().phase();
-        match phase {
+        let mut selection = match phase {
             SessionPhase::Title => Self::exhibition(),
             SessionPhase::FlightSetup => Self::selected(
                 EnvironmentSource::Selected,
@@ -170,6 +151,7 @@ impl EnvironmentSelection {
                 session.seed(),
             ),
             _ => Ok(Self {
+                representative_position_ned_m: None,
                 source: match phase {
                     SessionPhase::Replay if session.archive().is_some() => {
                         EnvironmentSource::Archive
@@ -184,12 +166,33 @@ impl EnvironmentSelection {
                     .ok_or(EnvironmentSnapshotError::MissingSessionIdentity)?
                     .into(),
             }),
-        }
+        }?;
+        let launch = session
+            .aircraft()
+            .map_err(|cause| {
+                EnvironmentSnapshotError::Preparation(
+                    crate::HybridSessionPreparationError::Aircraft(cause),
+                )
+            })?
+            .launch_position()
+            .map_err(EnvironmentSnapshotError::Preparation)?;
+        selection.representative_position_ned_m = Some(launch.components());
+        Ok(selection)
     }
 
     /// Resolves descriptive metadata when display resources require an update.
     pub fn resolve(self) -> Result<EnvironmentProjection, EnvironmentSnapshotError> {
-        for_identity(self.source, self.identity)
+        let mut projection = for_identity(self.source, self.identity)?;
+        if let Some(position) = self.representative_position_ned_m
+            && let EnvironmentProjection::Available { metadata, .. } = &mut projection
+        {
+            let field = crate::hybrid_session::wind_for_version(self.identity.environment_version)
+                .map_err(EnvironmentSnapshotError::Preparation)?;
+            metadata.representative_position_ned_m = position;
+            metadata.representative_altitude_m = -position[2];
+            metadata.representative_velocity_ned_mps = sample(field, position)?;
+        }
+        Ok(projection)
     }
 }
 
@@ -383,9 +386,7 @@ fn preset_metadata(
     let velocity = NedVector::try_new(north, east, down).map_err(|_| {
         EnvironmentSnapshotError::Environment(EnvironmentFormatError::InvalidWindSample(0))
     })?;
-    let representative = crate::hybrid_session::registered_launch_cg_position()
-        .map_err(EnvironmentSnapshotError::Preparation)?
-        .components();
+    let representative = [0.0, 0.0, 0.0];
     Ok(EnvironmentMetadata {
         name: environment.name.to_owned(),
         content_hash: ContentHash::SourceFingerprint {
@@ -436,15 +437,14 @@ mod tests {
     use serde_json::{Value, json};
 
     fn identity(version: u32) -> EnvironmentIdentity {
-        let selection = crate::HybridSessionPreparation::select_scenario(
+        let mut identity = crate::HybridSessionPreparation::environment_identity(
             birdman_game_format::WeatherClass::Typical,
             u64::MAX,
         )
         .unwrap();
-        let mut identity = crate::identity_for_selection(selection);
         identity.scenario_id = version;
         identity.environment_version = version;
-        identity.into()
+        identity
     }
 
     fn query(identity: EnvironmentIdentity) -> Value {
@@ -452,15 +452,13 @@ mod tests {
     }
 
     #[test]
-    fn only_current_model_and_controller_identities_resolve_registered_metadata() {
+    fn only_current_environment_catalog_identities_resolve_registered_metadata() {
         for version in [1, 2, 4, 5, 6] {
             let current = identity(version);
             let projection = query(current);
             assert_eq!(projection["kind"], "available");
             if version != 6 {
-                let launch = crate::hybrid_session::registered_launch_cg_position()
-                    .unwrap()
-                    .components();
+                let launch = [0.0, 0.0, 0.0];
                 assert_eq!(
                     projection["metadata"]["representative_position_ned_m"],
                     json!(launch)
@@ -470,13 +468,11 @@ mod tests {
                     -launch[2]
                 );
             }
-            for component in 0..4 {
+            for component in 0..2 {
                 let mut retired = current;
                 match component {
                     0 => retired.catalog_version = 2,
                     1 => retired.scenario_version = 2,
-                    2 => retired.aircraft_model_version = 1,
-                    3 => retired.controller_profile_version = 2,
                     _ => unreachable!(),
                 }
                 assert_eq!(query(retired)["kind"], "unavailable");
@@ -567,15 +563,13 @@ mod tests {
     #[test]
     fn registry_rejects_unknown_identity_without_aliasing_a_known_environment() {
         let original = identity(6);
-        for component in 0..6 {
+        for component in 0..4 {
             let mut changed = original;
             match component {
                 0 => changed.catalog_version = 1,
                 1 => changed.scenario_id = 3,
                 2 => changed.scenario_version = 2,
-                3 => changed.aircraft_model_version = 2,
-                4 => changed.environment_version = 3,
-                5 => changed.controller_profile_version = 5,
+                3 => changed.environment_version = 3,
                 _ => unreachable!(),
             }
             let snapshot = query(changed);
@@ -600,11 +594,21 @@ mod tests {
         use crate::application::{BackendReadiness, SessionCommand};
         use birdman_game_format::WeatherClass;
         let mut session = crate::application::ApplicationSession::new(
-            crate::default_control_mode(),
+            birdman_game_core::ControlMode::Manual,
             4000,
             u64::MAX,
         );
-        let exhibition = super::EnvironmentSelection::exhibition().unwrap();
+        let exhibition = super::EnvironmentSelection {
+            representative_position_ned_m: Some(
+                session
+                    .aircraft()
+                    .unwrap()
+                    .launch_position()
+                    .unwrap()
+                    .components(),
+            ),
+            ..super::EnvironmentSelection::exhibition().unwrap()
+        };
         assert_eq!(
             super::EnvironmentSelection::for_session(&session).unwrap(),
             exhibition

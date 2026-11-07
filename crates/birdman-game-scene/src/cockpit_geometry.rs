@@ -58,40 +58,24 @@ pub struct CockpitGeometry {
     pub surfaces: [CockpitSurface; 2],
 }
 
-impl Default for CockpitGeometry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl CockpitGeometry {
     #[doc = "Constructs the canopy and fairing from the registered shell stations and opening split."]
-    pub fn new() -> Self {
-        let stations = cockpit_stations();
-        let split = definition()
-            .document()
-            .structure
-            .members
-            .cockpit
-            .rim_station as usize;
+    pub fn new(definition: &AircraftDefinition) -> Self {
+        let stations = cockpit_stations(definition);
+        let split = definition.document().structure.members.cockpit.rim_station as usize;
         let canopy = &stations[..=split];
         let fairing = &stations[split..];
         Self {
             surfaces: [
-                surface(canopy, CockpitMaterial::Canopy),
-                surface(fairing, CockpitMaterial::Fairing),
+                surface(definition, canopy, CockpitMaterial::Canopy),
+                surface(definition, fairing, CockpitMaterial::Fairing),
             ],
         }
     }
 }
 
-fn definition() -> &'static AircraftDefinition {
-    birdman_game_app::registered_aircraft()
-        .expect("registered cockpit source must pass aircraft admission")
-}
-
-fn cockpit_stations() -> Vec<[f64; 4]> {
-    definition()
+fn cockpit_stations(definition: &AircraftDefinition) -> Vec<[f64; 4]> {
+    definition
         .document()
         .structure
         .cockpit_stations
@@ -107,10 +91,10 @@ fn cockpit_stations() -> Vec<[f64; 4]> {
         .collect()
 }
 
-fn canopy_point(aft: f64, step: u32, steps: u32) -> [f64; 3] {
+fn canopy_point(definition: &AircraftDefinition, aft: f64, step: u32, steps: u32) -> [f64; 3] {
     let step = (steps - step % steps) % steps;
     let angle = core::f64::consts::TAU * f64::from(step) / f64::from(steps);
-    let [forward, right, down] = definition()
+    let [forward, right, down] = definition
         .shape()
         .cockpit_point(-aft, angle)
         .expect("cockpit samples use admitted structural stations")
@@ -118,12 +102,18 @@ fn canopy_point(aft: f64, step: u32, steps: u32) -> [f64; 3] {
     [right, -down, -forward]
 }
 
-fn surface(stations: &[[f64; 4]], material: CockpitMaterial) -> CockpitSurface {
+fn surface(
+    definition: &AircraftDefinition,
+    stations: &[[f64; 4]],
+    material: CockpitMaterial,
+) -> CockpitSurface {
     let mut positions = Vec::with_capacity(stations.len() * 25);
     let mut indices = Vec::with_capacity((stations.len() - 1) * 24 * 6);
     for station in stations {
         for step in 0..=24 {
-            positions.push(canopy_point(station[0], step, 24).map(|coordinate| coordinate as f32));
+            positions.push(
+                canopy_point(definition, station[0], step, 24).map(|coordinate| coordinate as f32),
+            );
         }
     }
     for section in 0..stations.len() as u32 - 1 {
@@ -141,8 +131,9 @@ fn surface(stations: &[[f64; 4]], material: CockpitMaterial) -> CockpitSurface {
 }
 
 #[cfg(test)]
-pub(crate) fn cockpit_shell_vertices() -> impl Iterator<Item = [f64; 3]> {
-    let definition = definition();
+pub(crate) fn cockpit_shell_vertices(
+    definition: &AircraftDefinition,
+) -> impl Iterator<Item = [f64; 3]> + '_ {
     let steps = ContactSampling::DEFAULT.circumference_steps();
     definition
         .document()
@@ -168,11 +159,12 @@ mod tests {
 
     #[test]
     fn pilot_mount_stays_inside_the_actual_shell_over_registered_body_displacements() {
+        let source_definition = birdman_game_content::playable_aircraft().unwrap();
         use birdman_game_core::{
             PilotPositionTarget, TailPilotPositionCommand, TailPilotPositionIntent,
             TailPilotPositionMapping,
         };
-        let definition = birdman_game_app::registered_aircraft().unwrap();
+        let definition = &source_definition;
         let aircraft = definition.aircraft();
         let initial = definition.trim().unwrap().pilot_position_m();
         let trim = PilotPositionTarget::try_new(&aircraft, initial).unwrap();
@@ -193,7 +185,7 @@ mod tests {
         assert_eq!([forward, right, down], [0.06, 0.0, 1.04]);
         let minimum_aft = -forward - (endpoints[1] - initial);
         let maximum_aft = -forward - (endpoints[0] - initial);
-        let geometry = CockpitGeometry::new();
+        let geometry = CockpitGeometry::new(&source_definition);
         let rings: Vec<_> = geometry
             .surfaces
             .iter()
@@ -271,7 +263,8 @@ mod tests {
 
     #[test]
     fn frozen_web_cockpit_stations_topology_and_structure_are_preserved() {
-        let geometry = CockpitGeometry::new();
+        let source_definition = birdman_game_content::playable_aircraft().unwrap();
+        let geometry = CockpitGeometry::new(&source_definition);
         assert_eq!(geometry.surfaces[0].positions.len(), 150);
         assert_eq!(geometry.surfaces[0].indices.len(), 720);
         assert_eq!(geometry.surfaces[1].positions.len(), 125);
@@ -318,7 +311,8 @@ mod tests {
 
     #[test]
     fn rounded_sections_and_rim_are_symmetric_finite_and_closed() {
-        let geometry = CockpitGeometry::new();
+        let source_definition = birdman_game_content::playable_aircraft().unwrap();
+        let geometry = CockpitGeometry::new(&source_definition);
         for surface in &geometry.surfaces {
             for ring in surface.positions.chunks_exact(25) {
                 assert!((ring[0][0] - ring[24][0]).abs() < 1.0e-7);
@@ -333,8 +327,10 @@ mod tests {
 
     #[test]
     fn structural_frame_and_rim_vertices_stay_inside_the_shared_shell() {
-        let geometry = CockpitGeometry::new();
-        let structure = crate::airframe_structure::AirframeStructure::new(definition()).unwrap();
+        let source_definition = birdman_game_content::playable_aircraft().unwrap();
+        let geometry = CockpitGeometry::new(&source_definition);
+        let structure =
+            crate::airframe_structure::AirframeStructure::new(&source_definition).unwrap();
         for mesh in structure.meshes().iter().filter(|mesh| {
             matches!(
                 mesh.kind(),
@@ -354,12 +350,14 @@ mod tests {
 
     #[test]
     fn contact_vertices_use_the_same_unmodified_shell_sections() {
-        let vertices: Vec<_> = cockpit_shell_vertices().collect();
+        let source_definition = birdman_game_content::playable_aircraft().unwrap();
+        let vertices: Vec<_> = cockpit_shell_vertices(&source_definition).collect();
         assert_eq!(
             vertices.len(),
-            cockpit_stations().len() * ContactSampling::default().circumference_steps() as usize
+            cockpit_stations(&source_definition).len()
+                * ContactSampling::default().circumference_steps() as usize
         );
-        let geometry = CockpitGeometry::new();
+        let geometry = CockpitGeometry::new(&source_definition);
         for surface in &geometry.surfaces {
             for vertex in &surface.positions {
                 assert!(vertices.iter().any(|candidate| {

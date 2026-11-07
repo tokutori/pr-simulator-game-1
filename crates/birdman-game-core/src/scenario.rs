@@ -46,12 +46,7 @@ pub fn flight_state_from_composite_cg_launch(
 ) -> Result<FlightState, DynamicsError> {
     let total_mass = aircraft.airframe_mass_kg() + aircraft.pilot_mass_kg();
     let pilot_mass_fraction = aircraft.pilot_mass_kg() / total_mass;
-    let composite_cg_offset_body = BodyVector::try_new(
-        pilot_mass_fraction * launch.pilot_position_m,
-        0.0,
-        pilot_mass_fraction * aircraft.pilot_vertical_offset_m(),
-    )
-    .map_err(map_math_error)?;
+    let composite_cg_offset_body = aircraft.composite_center_of_mass(launch.pilot_position_m)?;
     let composite_cg_position_offset_ned = launch
         .attitude_body_to_ned
         .body_to_ned(composite_cg_offset_body)
@@ -281,12 +276,9 @@ pub(crate) fn derive_flight_telemetry(
 ) -> Result<FlightTelemetry, FlightTelemetryError> {
     let mass_fraction =
         aircraft.pilot_mass_kg() / (aircraft.airframe_mass_kg() + aircraft.pilot_mass_kg());
-    let offset_body = BodyVector::try_new(
-        mass_fraction * state.pilot_position_m(),
-        0.0,
-        mass_fraction * aircraft.pilot_vertical_offset_m(),
-    )
-    .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+    let offset_body = aircraft
+        .composite_center_of_mass(state.pilot_position_m())
+        .map_err(FlightTelemetryError::Dynamics)?;
     let position_ned = state
         .datum_position_ned()
         .translated(
@@ -328,7 +320,7 @@ pub(crate) fn derive_flight_telemetry(
     let airspeed = air_velocity_body
         .norm()
         .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
-    let [qw, qx, qy, qz] = state.attitude_body_to_ned().components();
+    let (angles, _) = flight_euler_angles(state.attitude_body_to_ned());
     Ok(FlightTelemetry {
         composite_cg_position_ned_m: position_ned,
         altitude_m: -position_ned.components()[2],
@@ -339,10 +331,30 @@ pub(crate) fn derive_flight_telemetry(
         wind_velocity_ned_mps: wind,
         angle_of_attack_rad: (airspeed > 0.0).then(|| libm::atan2(w, u)),
         sideslip_angle_rad: (airspeed > 0.0).then(|| libm::asin((v / airspeed).clamp(-1.0, 1.0))),
-        roll_rad: libm::atan2(2.0 * (qw * qx + qy * qz), 1.0 - 2.0 * (qx * qx + qy * qy)),
-        pitch_rad: libm::asin((2.0 * (qw * qy - qz * qx)).clamp(-1.0, 1.0)),
-        heading_rad: libm::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz)),
+        roll_rad: angles[0],
+        pitch_rad: angles[1],
+        heading_rad: angles[2],
     })
+}
+
+/// Canonical 321 Euler decomposition shared by telemetry and scalar attitude control.
+pub(crate) fn flight_euler_angles(attitude: UnitQuaternion) -> ([f64; 3], bool) {
+    let [qw, qx, qy, qz] = attitude.components();
+    let sine_pitch = (2.0 * (qw * qy - qz * qx)).clamp(-1.0, 1.0);
+    let roll_y = 2.0 * (qw * qx + qy * qz);
+    let roll_x = 1.0 - 2.0 * (qx * qx + qy * qy);
+    let heading_y = 2.0 * (qw * qz + qx * qy);
+    let heading_x = 1.0 - 2.0 * (qy * qy + qz * qz);
+    (
+        [
+            libm::atan2(roll_y, roll_x),
+            libm::asin(sine_pitch),
+            libm::atan2(heading_y, heading_x),
+        ],
+        sine_pitch.abs() != 1.0
+            && (roll_y != 0.0 || roll_x != 0.0)
+            && (heading_y != 0.0 || heading_x != 0.0),
+    )
 }
 
 fn negate_ned_vector(vector: NedVector) -> Result<NedVector, DynamicsError> {
@@ -376,6 +388,8 @@ mod tests {
             0.5,
             1.0,
             2.0,
+            [0.0; 3],
+            [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
         )
         .unwrap()
     }
@@ -537,6 +551,8 @@ mod tests {
             f64::MAX,
             f64::MAX,
             f64::MAX,
+            [0.0; 3],
+            [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
         )
         .unwrap();
         let extreme_launch = CompositeCgLaunchConditions::try_new(

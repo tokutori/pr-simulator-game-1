@@ -222,6 +222,16 @@ pub enum GameUiWaterQualityOperation {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GameUiPlatformCommand {
+    /// Reads an externally selected configuration through the shared owner.
+    LoadConfiguration {
+        /// Independently selected original document.
+        document: birdman_game_format::ConfigurationDocumentKind,
+    },
+    /// Deletes the requested stored source and restores its bundled definition.
+    DeleteConfiguration {
+        /// Independently selected original document.
+        document: birdman_game_format::ConfigurationDocumentKind,
+    },
     /// Reloads the application after its current resources have been released.
     ReloadApplication {},
     /// Changes only the Screen 3D drawing resolution.
@@ -558,11 +568,11 @@ pub struct GameUiViewport {
 }
 
 /// Borrowed domain and query inputs. This value owns no game state.
-pub struct GameUiContext<'view, 'session> {
+pub struct GameUiContext<'view> {
     /// Save completion feedback belonging to the displayed record.
     pub record_notification: Option<&'view str>,
     /// Existing game session owner.
-    pub session: &'view GameSession<'session>,
+    pub session: &'view GameSession,
     /// Resume admission from the application-owned live driver and domain session.
     pub resume_available: bool,
     /// Original live-driver failure retained until the flight is replaced.
@@ -575,6 +585,28 @@ pub struct GameUiContext<'view, 'session> {
     pub keyboard_controls: birdman_game_app::flight_input::KeyboardControlSettings,
     /// Shared persistent-settings feedback, independent of a flight record.
     pub keyboard_controls_notification: &'view str,
+    /// Selected aircraft label supplied by its shared owner.
+    pub aircraft_name: &'view str,
+    /// Shared file validation and persistence feedback.
+    pub aircraft_notification: &'view str,
+    /// Whether the stored aircraft document can be explicitly removed.
+    pub aircraft_can_delete: bool,
+    /// Selected independently validated controller identifier.
+    pub controller_name: &'view str,
+    /// Controller document validation and persistence feedback.
+    pub controller_notification: &'view str,
+    /// Whether persisted controller source is available for deletion.
+    pub controller_can_delete: bool,
+    /// Latest aircraft/controller compatibility diagnostics from their shared owner.
+    pub controller_pair_diagnostic: Option<String>,
+    /// Shared-mode authority supplied by the selected controller document.
+    pub controller_shared_authority: Option<f64>,
+    /// Recorded or prepared effective authority, absent for unknown legacy modes.
+    pub controller_effective_authority: Option<f64>,
+    /// Whether the selected aircraft matches the displayed recorded geometry.
+    pub aircraft_replay_available: bool,
+    /// Selected launch reference for weather readouts, independent of resource keys.
+    pub representative_position_ned_m: [f64; 3],
     /// Selected display adjustment, editable on Title, Setup and while paused.
     pub display_settings: birdman_game_app::display_settings::DisplaySettings,
     /// Shared display-settings persistence feedback, independent of a flight record.
@@ -1769,6 +1801,17 @@ pub struct GameUiTheme {
 }
 
 impl GameUiTheme {
+    /// Bottom edge of the frame-rate badge in logical pixels measured from
+    /// the viewport top, before platform safe-area adjustment. Both Screen
+    /// adapters place the badge at the top-right corner from the inset, the
+    /// text line height and the vertical padding, so layout that starts at
+    /// the top edge reserves this full extent.
+    pub fn frame_rate_badge_bottom_px(&self) -> f64 {
+        self.frame_rate_inset_px
+            + self.frame_rate_text.line_height_px
+            + 2.0 * self.frame_rate_padding_px[1]
+    }
+
     /// Completes typography for the published semantic control role.
     pub fn control_text(&self, content: &GameUiControlContent) -> GameUiTextStyle {
         match content {

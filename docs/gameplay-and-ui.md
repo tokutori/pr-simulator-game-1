@@ -31,20 +31,23 @@
 
 ## Flight Setupと難易度
 
+- 機体: 「機体JSONを読み込む」で選んだ機体を保存し、Web・NativeのScreen・VRへ共通に反映する。「読み込んだ機体を削除する」で既定機体へ戻す。
+- ファイル選択: 画面のタップ・クリック、またはVRの決定操作で行う。Screenで機体を選択してからVRへ切り替える方法も使える。
+- 保存記録: 選択機体が記録と異なる場合も分析を閲覧できる。同じ機体JSONを読み込むと映像・計器の再生を利用できる。
+
 難易度は三軸で構成する。
 
 ```math
 D=(D_{information},D_{assistance},D_{weather})
 ```
 
-- 公開アプリの既定はFull・Light Assisted FBW・Typicalである。
-- Lightは共有の0.2 FBW authorityへ解決する。
+- 公開アプリの既定はFull・混合・Typicalである。同梱controllerの混合比は0.5とする。
 - 3D描画品質の既定はAutoであり、難易度の三軸から独立する。
 
 | 軸 | 選択と責務 |
 |---|---|
 | Information | Full・Standard・Minimal・Realistic・Custom。HUDと情報補助だけを変更する |
-| Assistance | Strong・Assisted・Light・Manual・Custom。検証済みcontroller設定へ解決する |
+| Assistance | 手動・混合・自動。実効authorityは0・選択controller JSONのA・1 |
 | Weather | Calm・Mild・Typical・Challenging・NearLimit。登録scenarioと環境を選択する |
 
 - 各設定で6DoF方程式、係数、風の作用、actuator、積分刻み、質量特性の算出規則を共用する。
@@ -241,7 +244,7 @@ Retryはsealed configuration、初期状態、scenario seed、波の位相基準
 - Statusと数値項目は型付きsourceから動的値へ接続する。数値項目は桁位置が安定する書体で描画する。
 
 - HUDは画面下端を基準とする透明な領域へ配置する。主要数値と計器を横並びの行へまとめ、右下の操作領域と前方中央を空ける。
-- 縦向きのタッチ操作時はHUDを画面上端を基準へ配置し、計器を先頭の行へ置く（タッチ領域の上端が縦中央帯へ入るため、下端基準の配置は計器を前方中央へ重ねる）。
+- 縦向きのタッチ操作時はHUDを画面上端を基準へ配置し、計器を先頭の行へ置く（タッチ領域の上端が縦中央帯へ入るため、下端基準の配置は計器を前方中央へ重ねる）。上端基準の配置は、右上角のフレームレート表示（themeのinset・行高・上下paddingで決まる下端）の下から開始する。
 - 共有RustがReadouts・Instrumentsの行、領域全体の寸法、各nodeの正規化boundsと文字高に対する計器の高さを決定する。
 - nodeはID、label、Text・Attitude・HeadingTape・Direction・LinearGaugeの内容を持つ。パイロットの実位置と目標位置は一つの値として表示する。
 - 姿勢計は透明な線画、ピッチ目盛、飛行経路マーカーを使用する。地図の出典表示は地図とクレジットへ配置する。

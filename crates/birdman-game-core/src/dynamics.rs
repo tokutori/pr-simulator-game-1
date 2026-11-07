@@ -43,6 +43,8 @@ impl Gravity {
 pub struct AircraftModel {
     airframe_mass_kg: f64,
     airframe_inertia_about_datum: InertiaTensor,
+    airframe_center_of_mass_frd_m: [f64; 3],
+    tail_actuators: [crate::TailActuatorLimits; 2],
     pilot_mass_kg: f64,
     pilot_vertical_offset_m: f64,
     pilot_minimum_position_m: f64,
@@ -66,6 +68,8 @@ impl AircraftModel {
         pilot_maximum_position_m: f64,
         pilot_maximum_speed_mps: f64,
         pilot_maximum_acceleration_mps2: f64,
+        airframe_center_of_mass_frd_m: [f64; 3],
+        tail_actuators: [crate::TailActuatorLimits; 2],
     ) -> Result<Self, DynamicsError> {
         let values = [
             airframe_mass_kg,
@@ -77,6 +81,12 @@ impl AircraftModel {
             pilot_maximum_acceleration_mps2,
         ];
         if values.iter().any(|value| !value.is_finite()) {
+            return Err(DynamicsError::NonFinite);
+        }
+        if airframe_center_of_mass_frd_m
+            .iter()
+            .any(|value| !value.is_finite())
+        {
             return Err(DynamicsError::NonFinite);
         }
         if airframe_mass_kg <= 0.0
@@ -91,9 +101,16 @@ impl AircraftModel {
         {
             return Err(DynamicsError::InvalidPilotLimits);
         }
+        Self::airframe_inertia_at_center_of_mass(
+            airframe_mass_kg,
+            airframe_inertia_about_datum,
+            airframe_center_of_mass_frd_m,
+        )?;
         Ok(Self {
             airframe_mass_kg,
             airframe_inertia_about_datum,
+            airframe_center_of_mass_frd_m,
+            tail_actuators,
             pilot_mass_kg,
             pilot_vertical_offset_m,
             pilot_minimum_position_m,
@@ -101,6 +118,37 @@ impl AircraftModel {
             pilot_maximum_speed_mps,
             pilot_maximum_acceleration_mps2,
         })
+    }
+
+    /// Shifts datum inertia to the airframe CG and validates its physical realizability.
+    pub fn airframe_inertia_at_center_of_mass(
+        airframe_mass_kg: f64,
+        airframe_inertia_about_datum: InertiaTensor,
+        airframe_center_of_mass_frd_m: [f64; 3],
+    ) -> Result<InertiaTensor, DynamicsError> {
+        if !airframe_mass_kg.is_finite()
+            || airframe_center_of_mass_frd_m.iter().any(|v| !v.is_finite())
+        {
+            return Err(DynamicsError::NonFinite);
+        }
+        if airframe_mass_kg <= 0.0 {
+            return Err(DynamicsError::InvalidMass);
+        }
+        let radius_squared = airframe_center_of_mass_frd_m
+            .iter()
+            .map(|x| x * x)
+            .sum::<f64>();
+        let datum_inertia = airframe_inertia_about_datum.matrix();
+        let cg_inertia = core::array::from_fn(|row| {
+            core::array::from_fn(|column| {
+                datum_inertia[row][column]
+                    - airframe_mass_kg
+                        * (if row == column { radius_squared } else { 0.0 }
+                            - airframe_center_of_mass_frd_m[row]
+                                * airframe_center_of_mass_frd_m[column])
+            })
+        });
+        InertiaTensor::try_new(cg_inertia).map_err(map_math_error)
     }
 
     /// Returns the airframe mass excluding the pilot in kg.
@@ -116,6 +164,39 @@ impl AircraftModel {
     /// Returns the airframe inertia tensor about datum O.
     pub const fn airframe_inertia_about_datum(self) -> InertiaTensor {
         self.airframe_inertia_about_datum
+    }
+
+    /// Returns elevator and rudder structural actuator limits, in that order.
+    pub const fn tail_actuators(self) -> [crate::TailActuatorLimits; 2] {
+        self.tail_actuators
+    }
+
+    /// Returns the fixed airframe centre of mass relative to structural datum O.
+    pub const fn airframe_center_of_mass_frd_m(self) -> [f64; 3] {
+        self.airframe_center_of_mass_frd_m
+    }
+
+    /// Returns the composite centre of mass relative to O for a pilot position.
+    pub fn composite_center_of_mass(
+        self,
+        pilot_position_m: f64,
+    ) -> Result<BodyVector, DynamicsError> {
+        let total = self.airframe_mass_kg + self.pilot_mass_kg;
+        let airframe_fraction = self.airframe_mass_kg / total;
+        let pilot_fraction = self.pilot_mass_kg / total;
+        BodyVector::try_new(
+            airframe_fraction * self.airframe_center_of_mass_frd_m[0]
+                + pilot_fraction * pilot_position_m,
+            airframe_fraction * self.airframe_center_of_mass_frd_m[1],
+            airframe_fraction * self.airframe_center_of_mass_frd_m[2]
+                + pilot_fraction * self.pilot_vertical_offset_m,
+        )
+        .map_err(map_math_error)
+    }
+
+    /// Returns the inclusive physical travel bounds along the body longitudinal axis.
+    pub const fn pilot_position_bounds_m(self) -> [f64; 2] {
+        [self.pilot_minimum_position_m, self.pilot_maximum_position_m]
     }
 
     /// Returns the pilot's fixed vertical offset in body coordinates in m.
@@ -1165,7 +1246,15 @@ fn derivative<P: ExternalLoadProvider>(
         model.pilot_mass_kg * gravity_force_body_newtons[1] / total_mass,
         model.pilot_mass_kg * gravity_force_body_newtons[2] / total_mass,
     ];
-    let gravity_moment = cross3(pilot_position, pilot_gravity_force_body_newtons);
+    let pilot_gravity_moment = cross3(pilot_position, pilot_gravity_force_body_newtons);
+    let airframe_gravity_moment = cross3(
+        model.airframe_center_of_mass_frd_m,
+        core::array::from_fn(|axis| {
+            model.airframe_mass_kg / total_mass * gravity_force_body_newtons[axis]
+        }),
+    );
+    let gravity_moment: [f64; 3] =
+        core::array::from_fn(|axis| pilot_gravity_moment[axis] + airframe_gravity_moment[axis]);
     let applied_moment = wrench.moment_about_datum_newton_meters.components();
     let total_moment = [
         applied_moment[0] + gravity_moment[0],
@@ -1293,7 +1382,7 @@ fn body_momenta(
         omega_cross_position[1] + pilot_velocity[1],
         omega_cross_position[2] + pilot_velocity[2],
     ];
-    let linear_momentum = [
+    let mut linear_momentum = [
         total_mass * velocity_body[0] + model.pilot_mass_kg * relative_pilot_velocity[0],
         total_mass * velocity_body[1] + model.pilot_mass_kg * relative_pilot_velocity[1],
         total_mass * velocity_body[2] + model.pilot_mass_kg * relative_pilot_velocity[2],
@@ -1307,11 +1396,18 @@ fn body_momenta(
             velocity_body[2] + relative_pilot_velocity[2],
         ],
     );
-    let angular_momentum = [
+    let mut angular_momentum = [
         angular_velocity_momentum[0] + model.pilot_mass_kg * angular_momentum_offset[0],
         angular_velocity_momentum[1] + model.pilot_mass_kg * angular_momentum_offset[1],
         angular_velocity_momentum[2] + model.pilot_mass_kg * angular_momentum_offset[2],
     ];
+    let airframe_relative_velocity = cross3(angular_rate, model.airframe_center_of_mass_frd_m);
+    let airframe_translation_momentum = cross3(model.airframe_center_of_mass_frd_m, velocity_body);
+    for axis in 0..3 {
+        linear_momentum[axis] += model.airframe_mass_kg * airframe_relative_velocity[axis];
+        // Datum inertia already contains the airframe rotational parallel-axis term.
+        angular_momentum[axis] += model.airframe_mass_kg * airframe_translation_momentum[axis];
+    }
     if linear_momentum
         .into_iter()
         .chain(angular_momentum)
@@ -1330,10 +1426,14 @@ fn solve_coupled_acceleration(
     angular_rhs: [f64; 3],
 ) -> Result<[f64; 6], DynamicsError> {
     let [forward_position, right_position, down_position] = pilot_position;
+    let first_moment: [f64; 3] = core::array::from_fn(|axis| {
+        model.airframe_mass_kg * model.airframe_center_of_mass_frd_m[axis]
+            + model.pilot_mass_kg * pilot_position[axis]
+    });
     let skew = [
-        [0.0, -down_position, right_position],
-        [down_position, 0.0, -forward_position],
-        [-right_position, forward_position, 0.0],
+        [0.0, -first_moment[2], first_moment[1]],
+        [first_moment[2], 0.0, -first_moment[0]],
+        [-first_moment[1], first_moment[0], 0.0],
     ];
     let radius_squared = forward_position * forward_position
         + right_position * right_position
@@ -1360,8 +1460,8 @@ fn solve_coupled_acceleration(
     for row in 0..3 {
         augmented[row][row] = total_mass;
         for column in 0..3 {
-            augmented[row][column + 3] = -model.pilot_mass_kg * skew[row][column];
-            augmented[row + 3][column] = model.pilot_mass_kg * skew[row][column];
+            augmented[row][column + 3] = -skew[row][column];
+            augmented[row + 3][column] = skew[row][column];
             augmented[row + 3][column + 3] = inertia[row][column]
                 + model.pilot_mass_kg
                     * (if row == column { radius_squared } else { 0.0 }

@@ -8,7 +8,7 @@ use birdman_game_format::{
 };
 
 use crate::{HybridSessionPreparation, HybridSessionPreparationError};
-use birdman_game_content::AircraftContactShape;
+use birdman_game_content::AircraftContactBuffer;
 use birdman_game_core::{BodyPoint, SessionSnapshot, TailFlightTickInput};
 use serde::{Deserialize, Serialize};
 
@@ -111,7 +111,7 @@ pub enum RecordCommand {
 }
 
 /// Shared selection and execution failure with its original classified cause.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ApplicationError {
     /// The live frame driver retained its original input, clock or execution failure.
     Flight(super::FlightFrameError),
@@ -174,38 +174,63 @@ pub struct PreparedFlight {
     pub course_axis: CourseAxis,
     /// Resolved authority mode.
     pub control_mode: ControlMode,
-    contact_shape: AircraftContactShape<'static, 'static>,
+    contact_shape: AircraftContactBuffer,
+    wind: birdman_game_core::WindField<'static>,
 }
 
 impl PreparedFlight {
+    pub(super) fn loads<'a>(
+        &self,
+        definition: &'a birdman_game_content::AircraftDefinition,
+        surfaces: &'a [birdman_game_core::HybridSurface<'a>],
+    ) -> Result<birdman_game_core::HybridAerodynamicLoad<'a>, GameSessionError> {
+        let model = birdman_game_core::HybridModel::try_new(
+            definition
+                .polar()
+                .map_err(|_| GameSessionError::InvalidTransition)?,
+            surfaces,
+        )
+        .map_err(|_| GameSessionError::InvalidTransition)?;
+        birdman_game_core::HybridAerodynamicLoad::try_new(
+            model,
+            definition.document().trim.air_density_kg_m3,
+            self.wind,
+        )
+        .map_err(|_| GameSessionError::InvalidTransition)
+    }
+
     pub(super) fn advance(
         &mut self,
-        session: &mut GameSession<'static>,
+        session: &mut GameSession,
+        definition: &birdman_game_content::AircraftDefinition,
         input: TailFlightTickInput,
+        loads: &birdman_game_core::HybridAerodynamicLoad<'_>,
     ) -> Result<SessionSnapshot, GameSessionError> {
-        session.advance_tail_flight_tick_with_shape_provider(input, &mut self.contact_shape)
+        session.advance_tail_flight_tick_with_shape_provider(
+            input,
+            &mut self.contact_shape.bind(definition),
+            loads,
+        )
     }
 }
 
-/// Resolves the existing four Assistance choices identically for every adapter.
-pub(crate) fn control_mode(assistance: AssistanceLevel) -> Result<ControlMode, ActuatorError> {
+/// Resolves three live modes with the selected controller's Shared authority.
+pub(crate) fn control_mode(
+    assistance: AssistanceLevel,
+    shared_authority: f64,
+) -> Result<ControlMode, ActuatorError> {
     match assistance {
         AssistanceLevel::Strong => Ok(ControlMode::Automatic),
         AssistanceLevel::Manual => Ok(ControlMode::Manual),
         AssistanceLevel::Assisted | AssistanceLevel::Light => {
-            FbwAuthority::try_new(if assistance == AssistanceLevel::Assisted {
-                0.5
-            } else {
-                0.2
-            })
-            .map(ControlMode::Shared)
+            FbwAuthority::try_new(shared_authority).map(ControlMode::Shared)
         }
     }
 }
 
 /// Resolves a typed difficulty selection without changing the session or physical state.
 pub(crate) fn resolve_difficulty(
-    session: &GameSession<'_>,
+    session: &GameSession,
     current: DifficultySettings,
     command: &SessionCommand,
     seed: u64,
@@ -225,21 +250,32 @@ pub(crate) fn resolve_difficulty(
         SessionCommand::SetCue { cue, visible } => current.with_hud_cue(cue, visible),
         _ => return Err(ApplicationError::NotSelection),
     };
-    HybridSessionPreparation::select_scenario(selected.weather(), seed)
+    HybridSessionPreparation::environment_identity(selected.weather(), seed)
         .map_err(ApplicationError::Preparation)?;
-    control_mode(selected.assistance()).map_err(ApplicationError::Control)?;
-    Ok(selected)
+    Ok(if selected.assistance() == AssistanceLevel::Light {
+        selected.with_assistance(AssistanceLevel::Assisted)
+    } else {
+        selected
+    })
 }
 
 /// Seals the same model, weather, controller and metadata into the existing session owner.
 pub(crate) fn prepare_flight(
-    session: &mut GameSession<'static>,
+    session: &mut GameSession,
+    selected: &crate::SelectedAircraft,
+    controller: &crate::SelectedController,
     difficulty: DifficultySettings,
     maximum_ticks: u64,
     seed: u64,
 ) -> Result<PreparedFlight, ApplicationError> {
-    let control_mode = control_mode(difficulty.assistance()).map_err(ApplicationError::Control)?;
+    let control_mode = control_mode(
+        difficulty.assistance(),
+        controller.document().shared_authority,
+    )
+    .map_err(ApplicationError::Control)?;
     let preparation = HybridSessionPreparation::try_new_for_weather(
+        selected,
+        controller,
         control_mode,
         maximum_ticks,
         seed,
@@ -247,11 +283,10 @@ pub(crate) fn prepare_flight(
     )
     .map_err(ApplicationError::Preparation)?;
     let controller_profile = preparation.controller_profile();
+    let wind = preparation.wind();
     let course_axis = preparation.course_axis();
     let (configuration, record_identity) = preparation.into_parts();
-    let aircraft_definition = crate::registered_aircraft()
-        .map_err(HybridSessionPreparationError::Aircraft)
-        .map_err(ApplicationError::Preparation)?;
+    let aircraft_definition = selected.definition();
     let mut contact_points = Vec::new();
     contact_points
         .try_reserve_exact(aircraft_definition.contact_points().len())
@@ -262,19 +297,18 @@ pub(crate) fn prepare_flight(
         aircraft_definition.contact_points().len(),
         BodyPoint::origin(),
     );
-    let mut contact_shape =
-        AircraftContactShape::try_from_owned(aircraft_definition, contact_points).map_err(
-            |error| {
-                ApplicationError::Preparation(HybridSessionPreparationError::Aircraft(
-                    birdman_game_content::AircraftDefinitionError::Shape(error),
-                ))
-            },
-        )?;
+    let mut contact_shape = AircraftContactBuffer::try_new(aircraft_definition, contact_points)
+        .map_err(|error| {
+            ApplicationError::Preparation(HybridSessionPreparationError::Aircraft(
+                birdman_game_content::AircraftDefinitionError::Shape(error),
+            ))
+        })?;
     let configuration = configuration
-        .with_contact_shape(&mut contact_shape)
+        .with_contact_shape(&mut contact_shape.bind(aircraft_definition))
         .map_err(HybridSessionPreparationError::Scenario)
         .map_err(ApplicationError::Preparation)?;
     let aircraft = configuration.aircraft();
+    let control_mode = configuration.control_mode();
     session
         .prepare_flight(configuration)
         .map_err(ApplicationError::Session)?;
@@ -286,5 +320,6 @@ pub(crate) fn prepare_flight(
         course_axis,
         control_mode,
         contact_shape,
+        wind,
     })
 }

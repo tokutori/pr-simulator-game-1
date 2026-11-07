@@ -33,6 +33,8 @@ enum Operation {
     ReleaseDisplay(u32),
     Record(u32),
     Download(u32),
+    ConfigurationRead(birdman_game_format::ConfigurationDocumentKind, u32),
+    ConfigurationWrite(birdman_game_format::ConfigurationDocumentKind, u32),
     KeyboardRead(u32),
     KeyboardWrite(u32),
 }
@@ -89,6 +91,16 @@ impl ShutdownOwner {
     pub(super) fn observe(&mut self, input: &ApplicationInput) -> bool {
         let previous = self.pending.len();
         let operation = match input {
+            ApplicationInput::ConfigurationLoaded {
+                document,
+                request_id,
+                ..
+            } => Some(Operation::ConfigurationRead(*document, *request_id)),
+            ApplicationInput::ConfigurationSaved {
+                document,
+                request_id,
+                ..
+            } => Some(Operation::ConfigurationWrite(*document, *request_id)),
             ApplicationInput::KeyboardControlsLoaded { request_id, .. } => {
                 Some(Operation::KeyboardRead(*request_id))
             }
@@ -180,6 +192,25 @@ impl ShutdownOwner {
     pub(super) fn requests(&mut self, requests: &[ApplicationRequest]) {
         for request in requests {
             let operation = match request {
+                ApplicationRequest::ReadConfiguration {
+                    document,
+                    request_id,
+                    ..
+                }
+                | ApplicationRequest::PickConfiguration {
+                    document,
+                    request_id,
+                    ..
+                } => Some(Operation::ConfigurationRead(*document, *request_id)),
+                ApplicationRequest::WriteConfiguration {
+                    document,
+                    request_id,
+                    ..
+                }
+                | ApplicationRequest::DeleteConfiguration {
+                    document,
+                    request_id,
+                } => Some(Operation::ConfigurationWrite(*document, *request_id)),
                 ApplicationRequest::ReadKeyboardControls { request_id, .. } => {
                     Some(Operation::KeyboardRead(*request_id))
                 }

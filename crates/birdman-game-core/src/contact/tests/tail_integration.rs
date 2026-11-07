@@ -11,6 +11,8 @@ fn off_grid_tail_contact_seals_record_and_score_at_the_first_fractional_time() {
         0.5,
         1.0,
         2.0,
+        [0.0; 3],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap();
     let coefficients = StaticPolarCoefficients::try_new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0).unwrap();
@@ -52,7 +54,7 @@ fn off_grid_tail_contact_seals_record_and_score_at_the_first_fractional_time() {
         WindField::uniform(NedVector::zero()),
     )
     .unwrap();
-    let profile = TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();
+    let profile = crate::tail_control::test_profile(0.2, 0.2);
     let config = TailFlightTickConfig::new(
         ControlMode::Manual,
         profile,
@@ -106,12 +108,13 @@ fn off_grid_tail_contact_seals_record_and_score_at_the_first_fractional_time() {
                 numerator / (numerator + libm::sin((end_angle - boundary_angle) * 0.5))
             };
             let identity = SessionScenarioIdentity {
+                aircraft_identity: [0; 32],
                 catalog_version: 1,
                 scenario_id: 207,
                 scenario_version: 1,
                 aircraft_model_version: 1,
                 environment_version: 1,
-                controller_profile_version: 1,
+                controller_identity: Some([1; 32]),
                 seed: 207,
             };
             let mut session = GameSession::new();
@@ -133,7 +136,11 @@ fn off_grid_tail_contact_seals_record_and_score_at_the_first_fractional_time() {
                 .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
                 .unwrap();
             let result = session
-                .advance_tail_flight_tick(input)
+                .advance_tail_flight_tick(
+                    input,
+                    &loads,
+                    WaterContactGeometry::try_new(&points).unwrap(),
+                )
                 .unwrap()
                 .result()
                 .unwrap();
@@ -163,7 +170,11 @@ fn off_grid_tail_contact_seals_record_and_score_at_the_first_fractional_time() {
             assert_eq!(terminal.flight_state, contact.flight_state());
             assert_eq!(terminal.fraction, contact.fraction());
             assert_eq!(
-                session.advance_tail_flight_tick(input),
+                session.advance_tail_flight_tick(
+                    input,
+                    &loads,
+                    WaterContactGeometry::try_new(&points).unwrap()
+                ),
                 Err(GameSessionError::InvalidTransition)
             );
             assert_eq!(

@@ -1,13 +1,11 @@
 use alloc::{boxed::Box, string::String};
-use birdman_game_core::{
-    ControlMode, CourseAxis, FbwAuthority, TailAngleOfAttackGuard, TailControlProfile,
-};
+use birdman_game_core::{ControlMode, CourseAxis, FbwAuthority};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::FlightRecordFormatError;
 
 /// Version of the resolved-condition Personal Best comparison contract.
-pub const PERSONAL_BEST_COMPARISON_VERSION: u32 = 3;
+pub const PERSONAL_BEST_COMPARISON_VERSION: u32 = 5;
 
 /// Exact source identities retained independently of comparison compatibility.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,107 +96,23 @@ impl FlightRecordControlMode {
     }
 }
 
-/// Saved optional datum-alpha policy, without resolving current defaults.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FlightRecordAlphaGuard {
-    /// Operating alpha interval in radians.
-    pub alpha_interval_rad: [f64; 2],
-    /// Trim datum alpha in radians.
-    pub trim_alpha_rad: f64,
-    /// Preview interval in seconds.
-    pub preview_seconds: f64,
-    /// Recovery gain in seconds.
-    pub pitch_gain_seconds: f64,
-}
-
-/// Exact software profile saved alongside the record's explicit identity/version.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FlightRecordControllerProfile {
-    /// Pitch and yaw feedback gains in seconds.
-    pub gains_seconds: [f64; 2],
-    /// Tail software slew in radians per second.
-    pub maximum_slew_rad_per_second: f64,
-    /// Saved guard policy, explicitly absent for an unguarded flight.
-    #[serde(deserialize_with = "deserialize_alpha_guard")]
-    pub angle_of_attack_guard: Option<FlightRecordAlphaGuard>,
-}
-
-fn deserialize_alpha_guard<'de, Decoder: Deserializer<'de>>(
-    decoder: Decoder,
-) -> Result<Option<FlightRecordAlphaGuard>, Decoder::Error> {
-    Option::<FlightRecordAlphaGuard>::deserialize(decoder)
-}
-
-impl From<TailControlProfile> for FlightRecordControllerProfile {
-    fn from(profile: TailControlProfile) -> Self {
-        Self {
-            gains_seconds: profile.gains_seconds(),
-            maximum_slew_rad_per_second: profile.maximum_slew_rad_per_second(),
-            angle_of_attack_guard: profile.angle_of_attack_guard().map(|guard| {
-                FlightRecordAlphaGuard {
-                    alpha_interval_rad: guard.alpha_interval_rad(),
-                    trim_alpha_rad: guard.trim_alpha_rad(),
-                    preview_seconds: guard.preview_seconds(),
-                    pitch_gain_seconds: guard.pitch_gain_seconds(),
-                }
-            }),
-        }
-    }
-}
-
-impl FlightRecordControllerProfile {
-    pub(super) fn to_core(self) -> Result<TailControlProfile, FlightRecordFormatError> {
-        let profile = TailControlProfile::try_new(
-            self.gains_seconds[0],
-            self.gains_seconds[1],
-            self.maximum_slew_rad_per_second,
-        )
-        .map_err(|_| FlightRecordFormatError::InvalidRecord)?;
-        match self.angle_of_attack_guard {
-            Some(guard) => TailAngleOfAttackGuard::try_new(
-                guard.alpha_interval_rad,
-                guard.trim_alpha_rad,
-                guard.preview_seconds,
-                guard.pitch_gain_seconds,
-            )
-            .map(|guard| profile.with_angle_of_attack_guard(guard))
-            .map_err(|_| FlightRecordFormatError::InvalidRecord),
-            None => Ok(profile),
-        }
-    }
-}
-
 /// Resolved comparison inputs absent from the physical samples and header.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TailPersonalBestConditions {
-    /// Actual controller authority; Assistance is not re-resolved.
-    pub control_mode: FlightRecordControlMode,
-    /// Actual once-resolved controller profile.
-    pub controller_profile: FlightRecordControllerProfile,
     /// Saved horizontal score direction in N,E order.
     pub course_axis_ne: [f64; 2],
 }
 
 impl TailPersonalBestConditions {
     /// Captures the existing sealed values without re-running configuration selection.
-    pub fn from_resolved(
-        mode: ControlMode,
-        profile: TailControlProfile,
-        course: CourseAxis,
-    ) -> Self {
+    pub fn from_resolved(course: CourseAxis) -> Self {
         Self {
-            control_mode: mode.into(),
-            controller_profile: profile.into(),
             course_axis_ne: course.components(),
         }
     }
 
     pub(super) fn validate(self) -> Result<(), FlightRecordFormatError> {
-        self.control_mode.to_core()?;
-        self.controller_profile.to_core()?;
         let course = CourseAxis::try_new(self.course_axis_ne[0], self.course_axis_ne[1])
             .map_err(|_| FlightRecordFormatError::InvalidRecord)?;
         let norm_squared = self.course_axis_ne[0] * self.course_axis_ne[0]

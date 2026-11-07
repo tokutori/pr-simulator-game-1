@@ -44,7 +44,8 @@ fn neutral() -> TailFlightTickInput {
 #[test]
 fn registered_live_records_interval_initial_coefficients_and_restores_them_on_retry_and_replay() {
     use birdman_game_format::TailFlightRecordDocument;
-    let definition = crate::registered_aircraft().unwrap();
+    let selected = crate::SelectedAircraft::bundled().unwrap();
+    let definition = selected.definition();
     for mode in [
         ControlMode::Manual,
         ControlMode::Automatic,
@@ -55,12 +56,7 @@ fn registered_live_records_interval_initial_coefficients_and_restores_them_on_re
         execute(&mut application, SessionCommand::Prepare {});
         let initial = application.core_session().prepared_launch_state().unwrap();
         launch(&mut application);
-        let mut airspeed = application
-            .core_session()
-            .telemetry()
-            .unwrap()
-            .unwrap()
-            .airspeed_mps;
+        let mut airspeed = application.core_session().telemetry().unwrap().airspeed_mps;
         assert_eq!(
             initial.wing_bending_factor(),
             Some(definition.shape().wing_bending_factor(airspeed).unwrap())
@@ -85,7 +81,14 @@ fn registered_live_records_interval_initial_coefficients_and_restores_them_on_re
             application.prepared().unwrap().record_identity.clone(),
         )
         .unwrap();
-        assert_eq!(document.schema_version, 8);
+        assert_eq!(
+            document.schema_version,
+            birdman_game_format::TAIL_FLIGHT_RECORD_SCHEMA_VERSION
+        );
+        assert_eq!(
+            document.control_identity.aircraft_sha256.as_deref(),
+            Some(application.aircraft().unwrap().raw_sha256())
+        );
         let restored = TailFlightRecordDocument::decode_json(&document.encode_json().unwrap())
             .unwrap()
             .to_finalized_core_record()
@@ -131,8 +134,20 @@ fn registered_live_records_interval_initial_coefficients_and_restores_them_on_re
 fn deforming_sealed_configuration_rejects_a_fixed_shape_tick() {
     let mut application = prepared();
     launch(&mut application);
+    let definition = application.aircraft.as_ref().unwrap().definition();
+    let surfaces = definition.surfaces().unwrap();
+    let loads = application
+        .prepared
+        .as_ref()
+        .unwrap()
+        .loads(definition, &surfaces)
+        .unwrap();
     assert!(matches!(
-        application.session.advance_tail_flight_tick(neutral()),
+        application.session.advance_tail_flight_tick(
+            neutral(),
+            &loads,
+            birdman_game_core::WaterContactGeometry::try_new(definition.contact_points()).unwrap()
+        ),
         Err(GameSessionError::TailTick(
             birdman_game_core::TailFlightTickError::Contact(
                 birdman_game_core::ContactError::ShapeProjection
@@ -151,19 +166,26 @@ fn deforming_sealed_configuration_rejects_a_fixed_shape_tick() {
 }
 
 #[test]
-fn public_defaults_select_light_without_reinterpreting_explicit_control_modes() {
+fn public_defaults_and_live_selection_use_the_selected_controller_authority() {
     let mut application = ApplicationSession::default();
     assert_eq!(
         application.difficulty().assistance(),
-        AssistanceLevel::Light
+        AssistanceLevel::Assisted
     );
     assert_eq!(application.seed(), crate::DEFAULT_SESSION_SEED);
     execute(&mut application, SessionCommand::OpenSetup {});
     execute(&mut application, SessionCommand::Prepare {});
     let ControlMode::Shared(authority) = application.prepared().unwrap().control_mode else {
-        panic!("Light assistance must use shared authority");
+        panic!("Mixed assistance must use shared authority");
     };
-    assert_eq!(authority.value(), 0.2);
+    assert_eq!(
+        authority.value(),
+        application
+            .controller()
+            .unwrap()
+            .document()
+            .shared_authority
+    );
     for (mode, assistance) in [
         (ControlMode::Manual, AssistanceLevel::Manual),
         (
@@ -173,10 +195,68 @@ fn public_defaults_select_light_without_reinterpreting_explicit_control_modes() 
         (ControlMode::Automatic, AssistanceLevel::Strong),
     ] {
         let mut explicit = ApplicationSession::new(mode, 3, 42);
+        let mut document = crate::SelectedController::bundled()
+            .unwrap()
+            .document()
+            .clone();
+        document.shared_authority = 0.8;
+        explicit
+            .select_controller(
+                crate::SelectedController::decode(serde_json::to_vec(&document).unwrap()).unwrap(),
+            )
+            .unwrap();
         assert_eq!(explicit.difficulty().assistance(), assistance);
         execute(&mut explicit, SessionCommand::OpenSetup {});
         execute(&mut explicit, SessionCommand::Prepare {});
-        assert_eq!(explicit.prepared().unwrap().control_mode, mode);
+        let expected = if matches!(mode, ControlMode::Shared(_)) {
+            ControlMode::Shared(birdman_game_core::FbwAuthority::try_new(0.8).unwrap())
+        } else {
+            mode
+        };
+        assert_eq!(explicit.prepared().unwrap().control_mode, expected);
+        assert_eq!(explicit.display_control_mode(), Some(expected));
+    }
+
+    let mut controller = crate::SelectedController::bundled()
+        .unwrap()
+        .document()
+        .clone();
+    controller.incidence_bounds_rad[0] = [-0.3, 0.3];
+    let controller = serde_json::to_vec(&controller).unwrap();
+    let mut aircraft: serde_json::Value =
+        serde_json::from_slice(crate::SelectedAircraft::bundled().unwrap().original()).unwrap();
+    let tail = aircraft["surfaces"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|surface| surface["role"] == "horizontal_tail")
+        .unwrap();
+    tail["actuator"]["incidence_bounds_rad"] = serde_json::json!([-0.4, 0.4]);
+    let aircraft = serde_json::to_vec(&aircraft).unwrap();
+    for controller_first in [true, false] {
+        let mut application = ApplicationSession::default();
+        execute(&mut application, SessionCommand::OpenSetup {});
+        if controller_first {
+            application
+                .select_controller(crate::SelectedController::decode(controller.clone()).unwrap())
+                .unwrap();
+            assert!(application.controller_pair().is_err());
+            assert!(
+                application
+                    .execute(SessionCommand::Prepare {}, BackendReadiness::Ready)
+                    .is_err()
+            );
+        }
+        application
+            .select_aircraft(crate::SelectedAircraft::decode(aircraft.clone()).unwrap())
+            .unwrap();
+        if !controller_first {
+            application
+                .select_controller(crate::SelectedController::decode(controller.clone()).unwrap())
+                .unwrap();
+        }
+        assert!(application.controller_pair().is_ok());
+        execute(&mut application, SessionCommand::Prepare {});
     }
 }
 
@@ -251,6 +331,12 @@ fn archive_owner_preserves_saved_settings_text_and_player_selection_without_rein
             source.difficulty().weather()
         );
         assert_eq!(viewer.difficulty(), selection);
+        assert!(!viewer.replay_available());
+        assert_eq!(
+            viewer.set_playback_playing(true),
+            Err(GameSessionError::InvalidTransition)
+        );
+        viewer.set_playback_playing(false).unwrap();
         let before = viewer.core_session().snapshot();
         viewer.seek_playback(0.005).unwrap();
         let clock = viewer.core_session().playback_clock();
@@ -840,6 +926,11 @@ fn shared_attract_keeps_player_selection_and_reuses_the_installed_record() {
     assert_ne!(source, empty_source);
     let record = application.core_session().playback_record().unwrap();
     let address = record.samples().as_ptr();
+    assert!(record.header().control_mode.is_some());
+    assert_eq!(
+        application.display_control_mode(),
+        record.header().control_mode
+    );
     assert!(record.duration_seconds().unwrap() > 0.0);
     assert!(
         record

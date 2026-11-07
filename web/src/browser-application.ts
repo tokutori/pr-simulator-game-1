@@ -162,6 +162,51 @@ export class BrowserApplication {
 
   private execute(request: ApplicationRequest, drawing: ApplicationDrawingOutput | null | undefined): void {
     switch (request.kind) {
+      case "read_configuration": {
+        let completion: Extract<ApplicationInput, { kind: "configuration_loaded" }>["completion"];
+        try {
+          const source = window.localStorage.getItem(configurationStorageKey(request));
+          completion = source === null ? { kind: "missing" } : { kind: "found", bytes: Array.from(new TextEncoder().encode(source).slice(0, request.maximum_bytes + 1)) };
+        } catch (cause) { completion = { kind: "failed", cause: errorMessage(cause) }; }
+        this.observe({ kind: "configuration_loaded", document: request.document, request_id: request.request_id, completion });
+        break;
+      }
+      case "pick_configuration": {
+        const picker = this.mount.ownerDocument.createElement("input");
+        picker.type = "file";
+        picker.accept = ".json,application/json";
+        picker.addEventListener("cancel", () => { picker.remove(); this.observe({ kind: "configuration_loaded", document: request.document, request_id: request.request_id, completion: { kind: "cancelled" } }); }, { once: true });
+        picker.addEventListener("change", () => {
+          const file = picker.files?.[0];
+          picker.remove();
+          if (file === undefined) { this.observe({ kind: "configuration_loaded", document: request.document, request_id: request.request_id, completion: { kind: "cancelled" } }); return; }
+          void file.slice(0, request.maximum_bytes + 1).arrayBuffer().then(buffer => {
+            this.observe({ kind: "configuration_loaded", document: request.document, request_id: request.request_id, completion: { kind: "found", bytes: Array.from(new Uint8Array(buffer)) } });
+          }, (cause: unknown) => { this.observe({ kind: "configuration_loaded", document: request.document, request_id: request.request_id, completion: { kind: "failed", cause: errorMessage(cause) } }); });
+        }, { once: true });
+        try { picker.showPicker(); }
+        catch (cause) {
+          picker.remove();
+          this.observe({ kind: "configuration_loaded", document: request.document, request_id: request.request_id, completion: { kind: "failed", cause: errorMessage(cause) } });
+        }
+        break;
+      }
+      case "write_configuration": {
+        let failure: string | null = null;
+        try {
+          const source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(new Uint8Array(request.bytes));
+          window.localStorage.setItem(configurationStorageKey(request), source);
+        } catch (cause) { failure = errorMessage(cause); }
+        this.observe({ kind: "configuration_saved", document: request.document, request_id: request.request_id, failure });
+        break;
+      }
+      case "delete_configuration": {
+        let failure: string | null = null;
+        try { window.localStorage.removeItem(configurationStorageKey(request)); }
+        catch (cause) { failure = errorMessage(cause); }
+        this.observe({ kind: "configuration_saved", document: request.document, request_id: request.request_id, failure });
+        break;
+      }
       case "read_keyboard_controls": {
         let completion: Extract<ApplicationInput, { kind: "keyboard_controls_loaded" }>["completion"];
         try {
@@ -435,4 +480,8 @@ export class BrowserApplication {
 function errorMessage(cause: unknown): string {
   if (cause instanceof AggregateError) return `${cause.name}: ${cause.message} (${cause.errors.map(errorMessage).join("; ")})`;
   return cause instanceof Error ? `${cause.name}: ${cause.message}${cause.cause === undefined ? "" : `: ${errorMessage(cause.cause)}`}` : String(cause);
+}
+
+function configurationStorageKey(request: Extract<ApplicationRequest, { kind: "read_configuration" | "write_configuration" | "delete_configuration" }>): string {
+  return `tokutori.pr-simulator-game-1.${request.document}`;
 }

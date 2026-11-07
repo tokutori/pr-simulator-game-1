@@ -58,17 +58,16 @@ impl StructuralMesh {
     }
 }
 
-/// Borrowed physical source and prepared per-attachment/material mesh batches.
-pub struct AirframeStructure<'definition> {
-    definition: &'definition AircraftDefinition,
+/// Owned per-attachment/material mesh batches and deformation scratch.
+pub struct AirframeStructure {
     meshes: Vec<StructuralMesh>,
     physical: Vec<BodyPoint>,
     factor: Option<WingBendingFactor>,
 }
 
-impl<'definition> AirframeStructure<'definition> {
+impl AirframeStructure {
     /// Projects topology once; all dimensions and ring phases come from content.
-    pub fn new(definition: &'definition AircraftDefinition) -> Result<Self, ShapeError> {
+    pub fn new(definition: &AircraftDefinition) -> Result<Self, ShapeError> {
         let geometry = definition.structural_geometry();
         let mut meshes: Vec<StructuralMesh> = Vec::new();
         for part in geometry.parts() {
@@ -116,12 +115,14 @@ impl<'definition> AirframeStructure<'definition> {
                 .extend(part.indices().iter().map(|index| base + index));
         }
         let mut structure = Self {
-            definition,
             meshes,
             physical: geometry.neutral_vertices().to_vec(),
             factor: None,
         };
-        structure.update_with_factor(WingBendingFactor::try_new(1.0).map_err(ShapeError::Math)?)?;
+        structure.update_with_factor(
+            definition,
+            WingBendingFactor::try_new(1.0).map_err(ShapeError::Math)?,
+        )?;
         Ok(structure)
     }
 
@@ -132,12 +133,16 @@ impl<'definition> AirframeStructure<'definition> {
 
     /// Prepares deformed wing buffers; callers publish them after the complete update succeeds.
     /// Tail batches use their immutable local vertices and the shared physical incidence pivot.
-    pub fn update_with_factor(&mut self, factor: WingBendingFactor) -> Result<bool, ShapeError> {
+    pub fn update_with_factor(
+        &mut self,
+        definition: &AircraftDefinition,
+        factor: WingBendingFactor,
+    ) -> Result<bool, ShapeError> {
         if self.factor == Some(factor) {
             return Ok(false);
         }
         self.factor = None;
-        self.definition.write_structural_vertices(
+        definition.write_structural_vertices(
             factor,
             TailIncidence::neutral(),
             &mut self.physical,
@@ -158,36 +163,31 @@ impl<'definition> AirframeStructure<'definition> {
         self.factor
     }
 
-    pub(crate) fn into_prepared(self) -> PreparedStructure<'definition> {
+    pub(crate) fn into_prepared(self) -> PreparedStructure {
         PreparedStructure {
-            definition: self.definition,
             meshes: self.meshes,
+            physical: self.physical,
             factor: self.factor,
         }
     }
 }
 
-/// Immutable structural topology without construction or deformation scratch buffers.
-pub struct PreparedStructure<'definition> {
-    definition: &'definition AircraftDefinition,
+/// Owned structural topology and physical positions used to initialize deformation scratch.
+pub struct PreparedStructure {
+    physical: Vec<BodyPoint>,
     meshes: Vec<StructuralMesh>,
     factor: Option<WingBendingFactor>,
 }
 
-impl<'definition> PreparedStructure<'definition> {
+impl PreparedStructure {
     /// Borrows the prepared physical attachment and material batches.
     pub fn meshes(&self) -> &[StructuralMesh] {
         &self.meshes
     }
 
-    pub(crate) fn frame(&self) -> StructuralFrame<'_, 'definition> {
+    pub(crate) fn frame(&self) -> StructuralFrame {
         StructuralFrame {
-            geometry: self,
-            physical: self
-                .definition
-                .structural_geometry()
-                .neutral_vertices()
-                .to_vec(),
+            physical: self.physical.clone(),
             positions: self
                 .meshes
                 .iter()
@@ -201,25 +201,29 @@ impl<'definition> PreparedStructure<'definition> {
     }
 }
 
-pub(crate) struct StructuralFrame<'geometry, 'definition> {
-    geometry: &'geometry PreparedStructure<'definition>,
+pub(crate) struct StructuralFrame {
     physical: Vec<BodyPoint>,
     positions: Vec<Option<Vec<[f32; 3]>>>,
     factor: Option<WingBendingFactor>,
 }
 
-impl StructuralFrame<'_, '_> {
-    pub(crate) fn update(&mut self, factor: WingBendingFactor) -> Result<bool, ShapeError> {
+impl StructuralFrame {
+    pub(crate) fn update(
+        &mut self,
+        geometry: &PreparedStructure,
+        definition: &AircraftDefinition,
+        factor: WingBendingFactor,
+    ) -> Result<bool, ShapeError> {
         if self.factor == Some(factor) {
             return Ok(false);
         }
         self.factor = None;
-        self.geometry.definition.write_structural_vertices(
+        definition.write_structural_vertices(
             factor,
             TailIncidence::neutral(),
             &mut self.physical,
         )?;
-        for (mesh, positions) in self.geometry.meshes.iter().zip(&mut self.positions) {
+        for (mesh, positions) in geometry.meshes.iter().zip(&mut self.positions) {
             if let Some(positions) = positions {
                 for (source, position) in mesh.sources.iter().zip(positions) {
                     *position = local_position(self.physical[*source], mesh.origin)?;
@@ -230,14 +234,16 @@ impl StructuralFrame<'_, '_> {
         Ok(true)
     }
 
-    pub(crate) fn positions(&self, index: usize) -> Option<&[[f32; 3]]> {
+    pub(crate) fn positions<'a>(
+        &'a self,
+        geometry: &'a PreparedStructure,
+        index: usize,
+    ) -> Option<&'a [[f32; 3]]> {
         self.factor?;
-        self.positions.get(index)?.as_deref().or_else(|| {
-            self.geometry
-                .meshes
-                .get(index)
-                .map(StructuralMesh::positions)
-        })
+        self.positions
+            .get(index)?
+            .as_deref()
+            .or_else(|| geometry.meshes.get(index).map(StructuralMesh::positions))
     }
 }
 
@@ -281,7 +287,7 @@ mod tests {
         );
         for value in [0.0, 0.3, 0.7, 1.0, 1.6] {
             let factor = WingBendingFactor::try_new(value).unwrap();
-            geometry.update_with_factor(factor).unwrap();
+            geometry.update_with_factor(&definition, factor).unwrap();
             let mut physical = definition.structural_geometry().neutral_vertices().to_vec();
             definition
                 .write_structural_vertices(factor, TailIncidence::neutral(), &mut physical)
@@ -309,17 +315,17 @@ mod tests {
                     .collect::<Vec<_>>(),
                 pointers
             );
-            assert!(!geometry.update_with_factor(factor).unwrap());
+            assert!(!geometry.update_with_factor(&definition, factor).unwrap());
         }
         assert!(
             geometry
-                .update_with_factor(WingBendingFactor::try_new(f64::MAX).unwrap())
+                .update_with_factor(&definition, WingBendingFactor::try_new(f64::MAX).unwrap())
                 .is_err()
         );
         assert_eq!(geometry.bending_factor(), None);
         assert!(
             geometry
-                .update_with_factor(WingBendingFactor::try_new(1.6).unwrap())
+                .update_with_factor(&definition, WingBendingFactor::try_new(1.6).unwrap())
                 .unwrap()
         );
     }

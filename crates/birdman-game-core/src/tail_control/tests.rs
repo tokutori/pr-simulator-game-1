@@ -1,356 +1,352 @@
+use super::pid::PidObstruction;
 use super::*;
 use crate::FbwAuthority;
 
-fn profile() -> TailControlProfile {
-    TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap()
+fn pid(kp: f64, ki: f64, kd: f64) -> PidConfig {
+    PidConfig::try_new(kp, ki, kd, [-1.0, 1.0], [-2.0, 2.0], 0.0).unwrap()
 }
 
-fn guarded_profile() -> TailControlProfile {
-    profile().with_angle_of_attack_guard(
-        TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.04, 1.0, 1.6).unwrap(),
+fn observation(q: f64, r: f64, euler_rad: Option<[f64; 3]>) -> TailControlObservation {
+    TailControlObservation {
+        body_rate: BodyVector::try_new(0.0, q, r).unwrap(),
+        euler_rad,
+        airspeed_mps: 10.0,
+        datum_alpha_rad: None,
+    }
+}
+
+fn profile(pitch: PitchController, yaw: YawController, authority: f64) -> TailControlProfile {
+    TailControlProfile::try_new(
+        pitch,
+        yaw,
+        [[-0.2, 0.2]; 2],
+        [[-1.0, 1.0]; 2],
+        authority,
+        ControllerReference::try_new(0.0, 10.0).unwrap(),
     )
+    .unwrap()
+}
+
+fn evaluated(
+    memory: TailControllerState,
+    profile: TailControlProfile,
+    mode: ControlMode,
+    pilot: TailPilotIntent,
+    target: TailRateTarget,
+    observation: TailControlObservation,
+) -> TailControlUpdate {
+    advance_tail_control(
+        TailIncidence::neutral(),
+        memory,
+        profile,
+        mode,
+        pilot,
+        target,
+        observation,
+        0.1,
+        [TailActuatorLimits::try_new([-0.2, 0.2], 100.0).unwrap(); 2],
+    )
+    .unwrap()
 }
 
 #[test]
-fn alpha_guard_validates_finite_inner_band_trim_preview_and_gain() {
-    assert_eq!(profile().angle_of_attack_guard(), None);
-    let guard = guarded_profile().angle_of_attack_guard().unwrap();
-    assert_eq!(guard.alpha_interval_rad(), [-0.09, 0.09]);
-    assert_eq!(guard.trim_alpha_rad(), 0.04);
-    assert_eq!(guard.preview_seconds(), 1.0);
-    assert_eq!(guard.pitch_gain_seconds(), 1.6);
-    for (interval, trim, preview, gain) in [
-        ([0.09, -0.09], 0.04, 1.0, 1.6),
-        ([-0.09, -0.09], 0.04, 1.0, 1.6),
-        ([-0.2, 0.09], 0.04, 1.0, 1.6),
-        ([-0.09, 0.2], 0.04, 1.0, 1.6),
-        ([-0.09, 0.09], -0.09, 1.0, 1.6),
-        ([-0.09, 0.09], 0.09, 1.0, 1.6),
-        ([-0.09, 0.09], 0.04, 0.0, 1.6),
-        ([-0.09, 0.09], 0.04, 1.0, 0.0),
-    ] {
-        assert_eq!(
-            TailAngleOfAttackGuard::try_new(interval, trim, preview, gain),
-            Err(ActuatorError::InvalidLimit)
-        );
-    }
-    for nonfinite in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        for (interval, trim, preview, gain) in [
-            ([nonfinite, 0.09], 0.04, 1.0, 1.6),
-            ([-0.09, nonfinite], 0.04, 1.0, 1.6),
-            ([-0.09, 0.09], nonfinite, 1.0, 1.6),
-            ([-0.09, 0.09], 0.04, nonfinite, 1.6),
-            ([-0.09, 0.09], 0.04, 1.0, nonfinite),
-        ] {
-            assert_eq!(
-                TailAngleOfAttackGuard::try_new(interval, trim, preview, gain),
-                Err(ActuatorError::NonFinite)
-            );
-        }
-    }
-}
-
-#[test]
-fn alpha_guard_projects_both_pitch_signs_in_every_mode_without_changing_requests_yaw_or_slew() {
-    for mode in [
-        ControlMode::Manual,
-        ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
-        ControlMode::Automatic,
-    ] {
-        for sign in [-1.0, 1.0] {
-            let previous = TailIncidence::try_new(0.0, 0.03).unwrap();
-            let pilot = TailPilotIntent::try_new(sign, 0.6).unwrap();
-            let desired = target(sign * 0.2, 0.12);
-            let rate = observed(0.0, sign * 0.15, 0.0);
-            let nominal =
-                advance_tail_control(previous, profile(), mode, pilot, desired, rate, 0.01)
-                    .unwrap();
-            let guarded = advance_tail_control_at_alpha(
-                previous,
-                guarded_profile(),
-                mode,
-                pilot,
-                desired,
-                rate,
-                0.01,
-                Some(sign * 0.08),
-            )
-            .unwrap();
-            assert_eq!(guarded.commands(), nominal.commands());
-            assert_eq!(guarded.mixed_target(), nominal.mixed_target());
-            assert_eq!(guarded.incidence().elevator_rad(), sign * 0.01);
-            assert_eq!(
-                guarded.incidence().rudder_rad(),
-                nominal.incidence().rudder_rad()
-            );
-            assert!((guarded.incidence().elevator_rad() - previous.elevator_rad()).abs() <= 0.01);
-        }
-    }
-}
-
-#[test]
-fn alpha_guard_keeps_disabled_undefined_and_unrestricted_controls_identical() {
-    for mode in [
-        ControlMode::Manual,
-        ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
-        ControlMode::Automatic,
-    ] {
-        let pilot = TailPilotIntent::try_new(0.05, -0.6).unwrap();
-        let desired = target(0.01, -0.12);
-        let nominal = advance_tail_control(
-            TailIncidence::neutral(),
-            profile(),
-            mode,
-            pilot,
-            desired,
-            BodyVector::zero(),
-            0.01,
-        )
-        .unwrap();
-        for (selected, alpha) in [
-            (profile(), Some(0.19)),
-            (guarded_profile(), None),
-            (guarded_profile(), Some(0.04)),
-        ] {
-            assert_eq!(
-                advance_tail_control_at_alpha(
-                    TailIncidence::neutral(),
-                    selected,
-                    mode,
-                    pilot,
-                    desired,
-                    BodyVector::zero(),
-                    0.01,
-                    alpha
-                )
-                .unwrap(),
-                nominal
-            );
-        }
-    }
-    for sign in [-1.0, 1.0] {
-        let update = advance_tail_control_at_alpha(
-            TailIncidence::neutral(),
-            guarded_profile(),
-            ControlMode::Manual,
-            TailPilotIntent::try_new(sign, 0.0).unwrap(),
-            target(sign * 0.2, 0.0),
-            BodyVector::zero(),
-            0.01,
-            Some(sign * 0.09),
-        )
-        .unwrap();
-        assert_eq!(update.incidence().elevator_rad(), 0.0);
-    }
-}
-
-#[test]
-fn pilot_guard_continuously_reduces_only_the_trim_relative_dangerous_bias() {
-    let guard = guarded_profile().angle_of_attack_guard().unwrap();
-    let trim_position = 0.02;
+fn pid_uses_current_integral_and_only_admitted_time_for_next_integral() {
+    let config = pid(1.0, 2.0, 3.0);
+    let first =
+        pid::PidEvaluation::evaluate(config, PidMemory::ZERO, 0.1, 1.0, 0.0, false, -1.0).unwrap();
+    assert_eq!(first.output, 0.1);
+    let admitted = first.admitted(0.025, 1.0, PidObstruction::NONE).unwrap();
+    assert!((admitted.integral() - 0.005).abs() < 1e-15);
+    let next =
+        pid::PidEvaluation::evaluate(config, admitted, 0.1, 1.0025, 0.025, false, -1.0).unwrap();
+    assert!((next.output - (0.1 + 0.005 - 0.3)).abs() < 1e-12);
     assert_eq!(
-        guard.project_pilot_position(-0.4, trim_position, 0.04, 0.0),
-        -0.4
+        first
+            .admitted(0.1, 0.0, PidObstruction::NONE)
+            .unwrap()
+            .integral(),
+        0.0
     );
     assert_eq!(
-        guard.project_pilot_position(0.4, trim_position, 0.04, 0.0),
-        0.4
+        first
+            .admitted(0.1, 1.0, PidObstruction::difference(1.0, 0.0))
+            .unwrap()
+            .integral(),
+        0.0
     );
-    for risk in [0.0775, 0.04] {
-        let pitch_rate = if risk == 0.04 { 0.0375 } else { 0.0 };
-        assert!(
-            (guard.project_pilot_position(-0.4, trim_position, risk, pitch_rate) + 0.19).abs()
-                < 1.0e-14
-        );
-        assert_eq!(
-            guard.project_pilot_position(0.4, trim_position, risk, pitch_rate),
-            0.4
-        );
-    }
+    let unwind =
+        pid::PidEvaluation::evaluate(config, admitted, -0.01, 1.0, 0.025, false, -1.0).unwrap();
     assert!(
-        (guard.project_pilot_position(0.4, trim_position, -0.0575, 0.0) - 0.21).abs() < 1.0e-14
+        unwind
+            .admitted(0.1, 1.0, PidObstruction::difference(1.0, 0.0))
+            .unwrap()
+            .integral()
+            < admitted.integral()
     );
     assert_eq!(
-        guard.project_pilot_position(-0.4, trim_position, -0.0575, 0.0),
-        -0.4
+        pid::angle_difference(core::f64::consts::PI, 0.0),
+        -core::f64::consts::PI
     );
-    assert_eq!(
-        guard.project_pilot_position(-0.4, trim_position, 0.09, -0.1),
-        trim_position
-    );
-    assert_eq!(
-        guard.project_pilot_position(0.4, trim_position, -0.09, 0.1),
-        trim_position
-    );
-    assert_eq!(
-        guard.project_pilot_position(trim_position, trim_position, 0.18, 0.2),
-        trim_position
-    );
-}
-
-fn target(pitch: f64, yaw: f64) -> TailRateTarget {
-    TailRateTarget::try_new(pitch, yaw).unwrap()
-}
-
-fn observed(roll: f64, pitch: f64, yaw: f64) -> BodyVector {
-    BodyVector::try_new(roll, pitch, yaw).unwrap()
-}
-
-#[test]
-fn manual_tail_mapping_and_rate_targets_have_distinct_signs_and_bounds() {
-    for sign in [-1.0, 0.0, 1.0] {
-        let pilot = TailPilotIntent::try_new(sign, -sign).unwrap();
-        let incidence = pilot.incidence().unwrap();
-        assert_eq!(incidence.elevator_rad(), -0.2 * sign);
-        assert_eq!(incidence.rudder_rad(), 0.2 * sign);
-        assert_eq!(pilot.nose_up(), sign);
-        assert_eq!(pilot.turn_right(), -sign);
-        let desired = target(0.2 * sign, -0.2 * sign);
-        assert_eq!(desired.pitch_rad_per_second(), 0.2 * sign);
-        assert_eq!(desired.yaw_rad_per_second(), -0.2 * sign);
-    }
-    for invalid in [1.0000000000000002, -1.0000000000000002] {
-        assert_eq!(
-            TailPilotIntent::try_new(invalid, 0.0),
-            Err(TailControlError::InvalidPilotIntent)
-        );
-        assert_eq!(
-            TailPilotIntent::try_new(0.0, invalid),
-            Err(TailControlError::InvalidPilotIntent)
-        );
-    }
-    for invalid in [0.20000000000000004, -0.20000000000000004] {
-        assert_eq!(
-            TailRateTarget::try_new(invalid, 0.0),
-            Err(TailControlError::InvalidRateTarget)
-        );
-        assert_eq!(
-            TailRateTarget::try_new(0.0, invalid),
-            Err(TailControlError::InvalidRateTarget)
-        );
-    }
-    for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        assert_eq!(
-            TailPilotIntent::try_new(invalid, 0.0),
-            Err(TailControlError::NonFinite)
-        );
-        assert_eq!(
-            TailRateTarget::try_new(0.0, invalid),
-            Err(TailControlError::NonFinite)
-        );
-    }
-}
-
-#[test]
-fn feedback_uses_observed_minus_target_and_ignores_roll_rate() {
-    let commanded =
-        tail_rate_feedback_incidence(profile(), target(0.2, -0.2), observed(f64::MAX, 0.0, 0.0))
+    let previous = pid::PidEvaluation::evaluate(
+        pid(0.0, 0.0, 1.0),
+        PidMemory::ZERO,
+        0.0,
+        core::f64::consts::PI - 0.01,
+        0.0,
+        true,
+        -1.0,
+    )
+    .unwrap()
+    .admitted(0.1, 1.0, PidObstruction::NONE)
+    .unwrap();
+    let heading = pid::PidEvaluation::evaluate(
+        pid(0.0, 0.0, 1.0),
+        previous,
+        0.0,
+        -core::f64::consts::PI + 0.01,
+        0.1,
+        true,
+        -1.0,
+    )
+    .unwrap();
+    assert!((heading.output + 0.2).abs() < 1e-12);
+    let filtered = PidConfig::try_new(0.0, 0.0, 1.0, [0.0; 2], [-2.0, 2.0], 0.5).unwrap();
+    let previous =
+        pid::PidEvaluation::evaluate(filtered, PidMemory::ZERO, 0.0, 1.0, 0.0, false, -1.0)
+            .unwrap()
+            .admitted(0.1, 1.0, PidObstruction::NONE)
             .unwrap();
-    assert!((commanded.elevator_rad() + 0.04).abs() < 1.0e-16);
-    assert!((commanded.rudder_rad() - 0.04).abs() < 1.0e-16);
-    assert_eq!(
-        tail_rate_feedback_incidence(
-            profile(),
-            target(0.0, 0.0),
-            observed(0.0, f64::MAX, -f64::MAX)
-        )
-        .unwrap(),
-        TailIncidence::try_new(0.2, -0.2).unwrap()
-    );
-    assert_eq!(
-        tail_rate_feedback_incidence(profile(), target(0.1, -0.1), observed(30.0, 0.1, -0.1))
-            .unwrap(),
-        TailIncidence::neutral()
-    );
-    let zero_gain = TailControlProfile::try_new(0.0, 0.0, 1.0).unwrap();
-    assert_eq!(
-        tail_rate_feedback_incidence(
-            zero_gain,
-            target(0.2, -0.2),
-            observed(0.0, f64::MAX, -f64::MAX)
-        )
-        .unwrap(),
-        TailIncidence::neutral()
-    );
+    let next =
+        pid::PidEvaluation::evaluate(filtered, previous, 0.0, 1.1, 0.1, false, -1.0).unwrap();
+    assert!((next.output + 1.0 / 6.0).abs() < 1e-14);
 }
 
 #[test]
-fn authority_endpoints_shared_blend_and_slew_are_two_axis_only() {
-    for (mode, expected) in [
-        (ControlMode::Manual, [-0.2, 0.2]),
-        (ControlMode::Automatic, [0.04, -0.04]),
-        (
-            ControlMode::Shared(FbwAuthority::try_new(0.25).unwrap()),
-            [-0.14, 0.14],
-        ),
-    ] {
-        let update = advance_tail_control(
-            TailIncidence::neutral(),
-            profile(),
-            mode,
-            TailPilotIntent::try_new(1.0, -1.0).unwrap(),
-            target(0.0, 0.0),
-            observed(50.0, 0.2, -0.2),
-            1.0,
-        )
-        .unwrap();
-        assert!((update.mixed_target().elevator_rad() - expected[0]).abs() < 1.0e-16);
-        assert!((update.mixed_target().rudder_rad() - expected[1]).abs() < 1.0e-16);
-        assert_eq!(update.incidence(), update.mixed_target());
-    }
-    let mut incidence = TailIncidence::neutral();
-    for _ in 0..25 {
-        let update = advance_tail_control(
-            incidence,
-            profile(),
-            ControlMode::Manual,
-            TailPilotIntent::try_new(1.0, -1.0).unwrap(),
-            target(0.0, 0.0),
-            BodyVector::zero(),
-            0.01,
-        )
-        .unwrap();
-        assert!(
-            (update.incidence().elevator_rad() - incidence.elevator_rad()).abs()
-                <= 0.010000000000000009
+fn selected_authority_and_asymmetric_usage_ranges_control_manual_and_rate_p() {
+    let selected = profile(
+        PitchController::Rate {
+            rate: pid(0.2, 0.0, 0.0),
+        },
+        YawController::Rate {
+            rate: pid(0.3, 0.0, 0.0),
+        },
+        0.5,
+    );
+    let state = TailControllerState::initial(None);
+    let pilot = TailPilotIntent::try_new(0.5, -0.25).unwrap();
+    let target = TailRateTarget::try_new(0.1, -0.1).unwrap();
+    let observe = observation(0.2, -0.2, None);
+    let manual = evaluated(state, selected, ControlMode::Manual, pilot, target, observe);
+    let automatic = evaluated(
+        state,
+        selected,
+        ControlMode::Automatic,
+        pilot,
+        target,
+        observe,
+    );
+    let shared = evaluated(
+        state,
+        selected,
+        ControlMode::Shared(FbwAuthority::try_new(0.9).unwrap()),
+        pilot,
+        target,
+        observe,
+    );
+    assert!((automatic.incidence().elevator_rad() - 0.02).abs() < 1e-15);
+    assert!((automatic.incidence().rudder_rad() + 0.03).abs() < 1e-15);
+    assert!(
+        (shared.incidence().elevator_rad()
+            - (manual.incidence().elevator_rad()
+                + 0.5
+                    * (automatic.incidence().elevator_rad() - manual.incidence().elevator_rad())))
+        .abs()
+            < 1e-15
+    );
+    for (authority, expected) in [(0.0, manual), (1.0, automatic)] {
+        let selected = profile(selected.pitch(), selected.yaw(), authority);
+        let result = evaluated(
+            state,
+            selected,
+            ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
+            pilot,
+            target,
+            observe,
         );
-        incidence = update.incidence();
-    }
-    assert_eq!(incidence, TailIncidence::try_new(-0.2, 0.2).unwrap());
-    assert_eq!(profile().gains_seconds(), [0.2, 0.2]);
-    assert_eq!(profile().maximum_slew_rad_per_second(), 1.0);
-}
-
-#[test]
-fn invalid_profile_and_timestep_preserve_previous_incidence() {
-    assert_eq!(
-        TailControlProfile::try_new(-0.1, 0.2, 1.0),
-        Err(ActuatorError::InvalidFeedbackGain)
-    );
-    assert_eq!(
-        TailControlProfile::try_new(0.2, f64::NAN, 1.0),
-        Err(ActuatorError::NonFinite)
-    );
-    assert_eq!(
-        TailControlProfile::try_new(0.2, 0.2, 0.0),
-        Err(ActuatorError::InvalidLimit)
-    );
-    let previous = TailIncidence::try_new(0.12, -0.08).unwrap();
-    for timestep in [0.0, -0.01, f64::NAN, f64::INFINITY] {
+        assert_eq!(result.incidence(), expected.incidence());
         assert_eq!(
-            advance_tail_control(
-                previous,
-                profile(),
-                ControlMode::Automatic,
-                TailPilotIntent::try_new(0.0, 0.0).unwrap(),
-                target(0.2, 0.2),
-                BodyVector::zero(),
-                timestep
-            ),
-            Err(TailControlError::Actuator(ActuatorError::InvalidTimeStep))
+            result.admitted_state(0.1).unwrap(),
+            expected.admitted_state(0.1).unwrap()
         );
-        assert_eq!(previous, TailIncidence::try_new(0.12, -0.08).unwrap());
     }
+    let asymmetric = TailControlProfile::try_new(
+        selected.pitch(),
+        selected.yaw(),
+        [[-0.03, 0.08], [-0.12, 0.02]],
+        [[-1.0, 1.0]; 2],
+        0.5,
+        selected.reference(),
+    )
+    .unwrap();
+    let result = evaluated(
+        state,
+        asymmetric,
+        ControlMode::Manual,
+        TailPilotIntent::try_new(1.0, -1.0).unwrap(),
+        target,
+        observe,
+    );
+    assert_eq!(
+        result.incidence(),
+        TailIncidence::try_new(-0.03, 0.02).unwrap()
+    );
+}
+
+#[test]
+fn euler_cascade_contributions_recover_requested_pitch_and_heading_rates() {
+    let selected = profile(
+        PitchController::AttitudeRate {
+            attitude: pid(1.0, 0.0, 0.0),
+            rate: pid(1.0, 0.0, 0.0),
+            pitch_offset_bounds_rad: [-0.5, 0.5],
+        },
+        YawController::HeadingRate {
+            heading: pid(1.0, 0.0, 0.0),
+            rate: pid(1.0, 0.0, 0.0),
+            heading_rate_bounds_rad_per_second: [-0.2, 0.2],
+        },
+        1.0,
+    );
+    let result = evaluated(
+        TailControllerState::initial(Some(0.1)),
+        selected,
+        ControlMode::Automatic,
+        TailPilotIntent::try_new(0.2, 0.0).unwrap(),
+        TailRateTarget::try_new(0.0, 0.0).unwrap(),
+        observation(0.0, 0.0, Some([0.7, 0.0, 0.0])),
+    );
+    let q = -result.incidence().elevator_rad();
+    let r = -result.incidence().rudder_rad();
+    assert!((q * libm::cos(0.7) - r * libm::sin(0.7) - 0.1).abs() < 1e-14);
+    assert!((q * libm::sin(0.7) + r * libm::cos(0.7) - 0.1).abs() < 1e-14);
+    let singular = evaluated(
+        TailControllerState::initial(Some(0.1)),
+        selected,
+        ControlMode::Automatic,
+        TailPilotIntent::try_new(0.2, 1.0).unwrap(),
+        TailRateTarget::try_new(0.0, 0.0).unwrap(),
+        observation(0.0, 0.0, None),
+    );
+    assert_eq!(singular.incidence(), TailIncidence::neutral());
+    assert_eq!(
+        singular.admitted_state(0.1).unwrap().heading_target_rad(),
+        Some(0.1)
+    );
+    // A q-axis limitation blocks further pitch-I accumulation through cos(roll),
+    // while the opposite pitch-error direction releases the retained integral.
+    let selected = profile(
+        PitchController::AttitudeRate {
+            attitude: pid(1.0, 1.0, 0.0),
+            rate: pid(1.0, 0.0, 0.0),
+            pitch_offset_bounds_rad: [-0.5, 0.5],
+        },
+        selected.yaw(),
+        1.0,
+    );
+    let target = TailRateTarget::try_new(0.0, 0.0).unwrap();
+    let initial = TailControllerState::initial(Some(0.1));
+    let accumulated = evaluated(
+        initial,
+        selected,
+        ControlMode::Automatic,
+        TailPilotIntent::try_new(0.2, 0.0).unwrap(),
+        target,
+        observation(0.0, 0.0, Some([0.7, 0.0, 0.0])),
+    )
+    .admitted_state(0.1)
+    .unwrap();
+    assert!((accumulated.stages()[1].integral() - 0.01).abs() < 1e-14);
+    let blocked = evaluated(
+        accumulated,
+        selected,
+        ControlMode::Automatic,
+        TailPilotIntent::try_new(0.2, 0.0).unwrap(),
+        target,
+        observation(-1.0, 0.0, Some([0.7, 0.0, 0.0])),
+    )
+    .admitted_state(0.1)
+    .unwrap();
+    assert_eq!(
+        blocked.stages()[1].integral(),
+        accumulated.stages()[1].integral()
+    );
+    let released = evaluated(
+        blocked,
+        selected,
+        ControlMode::Automatic,
+        TailPilotIntent::try_new(-0.1, 0.0).unwrap(),
+        target,
+        observation(-1.0, 0.0, Some([0.7, 0.0, 0.0])),
+    )
+    .admitted_state(0.1)
+    .unwrap();
+    assert!((released.stages()[1].integral() - 0.005).abs() < 1e-14);
+}
+
+#[test]
+fn speed_cascade_sign_and_initial_d_prevent_a_recovery_kick() {
+    let selected = profile(
+        PitchController::AirspeedAttitudeRate {
+            airspeed: pid(0.1, 0.0, 0.0),
+            attitude: pid(1.0, 0.0, 10.0),
+            rate: pid(1.0, 0.0, 0.0),
+            airspeed_bounds_mps: [8.0, 12.0],
+            pitch_offset_bounds_rad: [-0.3, 0.3],
+        },
+        YawController::Rate {
+            rate: pid(0.2, 0.0, 0.0),
+        },
+        1.0,
+    );
+    let observe = TailControlObservation {
+        airspeed_mps: 11.0,
+        ..observation(0.0, 0.0, Some([0.0; 3]))
+    };
+    let update = evaluated(
+        TailControllerState::initial(None),
+        selected,
+        ControlMode::Automatic,
+        TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+        TailRateTarget::try_new(0.0, 0.0).unwrap(),
+        observe,
+    );
+    assert!((update.incidence().elevator_rad() + 0.1).abs() < 1e-15);
+    assert_eq!(
+        update.admitted_state(0.0).unwrap(),
+        TailControllerState::initial(None)
+    );
+    let memory = update.admitted_state(0.1).unwrap();
+    assert_eq!(memory.stages()[1].filtered_derivative(), 0.0);
+}
+
+#[test]
+fn invalid_controller_values_and_intermediate_overflow_are_rejected() {
+    assert!(PidConfig::try_new(-1.0, 0.0, 0.0, [0.0; 2], [-0.2, 0.2], 0.0).is_err());
+    assert!(PidConfig::try_new(1.0, f64::NAN, 0.0, [0.0; 2], [-0.2, 0.2], 0.0).is_err());
+    assert!(PidConfig::try_new(1.0, 0.0, 0.0, [-1.0, -0.1], [-0.2, 0.2], 0.0).is_err());
+    assert!(
+        pid::PidEvaluation::evaluate(
+            pid(f64::MAX, 0.0, 0.0),
+            PidMemory::ZERO,
+            2.0,
+            0.0,
+            0.0,
+            false,
+            -1.0
+        )
+        .is_err()
+    );
+    assert!(TailRateTarget::try_new(2.0, -3.0).is_ok());
 }
 
 #[test]
@@ -422,35 +418,49 @@ fn pilot_position_mapping_rejects_invalid_intent_and_trim_without_changing_the_t
 
 #[test]
 fn pilot_position_inverse_preserves_trim_endpoints_and_round_trips_held_targets() {
-    let aircraft = crate::TestAircraft::try_new().unwrap().aircraft();
-    for trim in [-0.4, 0.12, 0.4] {
-        let mapping = TailPilotPositionMapping::try_new(&aircraft, trim).unwrap();
-        for normalized in [-1.0, -0.5, 0.0, 0.5, 1.0] {
-            let held = mapping
-                .resolve(
-                    &aircraft,
-                    mapping.trim_target(),
-                    TailPilotPositionCommand::Set(
-                        TailPilotPositionIntent::try_new(normalized).unwrap(),
-                    ),
-                )
-                .unwrap();
-            let recovered = mapping.normalized_target(held).unwrap();
-            if held == mapping.trim_target() {
-                assert_eq!(recovered.value(), 0.0);
-            } else {
-                assert!((recovered.value() - normalized).abs() < 1.0e-15);
+    for bounds in [[-0.4, 0.4], [-0.1, 0.08], [-0.8, 0.6]] {
+        let aircraft = crate::AircraftModel::try_new(
+            30.0,
+            crate::InertiaTensor::diagonal(1.0, 1.0, 1.0).unwrap(),
+            70.0,
+            0.0,
+            bounds[0],
+            bounds[1],
+            0.5,
+            1.0,
+            [0.0; 3],
+            [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
+        )
+        .unwrap();
+        for trim in [bounds[0], (bounds[0] + bounds[1]) * 0.3, bounds[1]] {
+            let mapping = TailPilotPositionMapping::try_new(&aircraft, trim).unwrap();
+            for normalized in [-1.0, -0.5, 0.0, 0.5, 1.0] {
+                let held = mapping
+                    .resolve(
+                        &aircraft,
+                        mapping.trim_target(),
+                        TailPilotPositionCommand::Set(
+                            TailPilotPositionIntent::try_new(normalized).unwrap(),
+                        ),
+                    )
+                    .unwrap();
+                let recovered = mapping.normalized_target(held).unwrap();
+                if held == mapping.trim_target() {
+                    assert_eq!(recovered.value(), 0.0);
+                } else {
+                    assert!((recovered.value() - normalized).abs() < 1.0e-15);
+                }
+                let reapplied = mapping
+                    .resolve(&aircraft, held, TailPilotPositionCommand::Set(recovered))
+                    .unwrap();
+                assert!((reapplied.position_m() - held.position_m()).abs() <= 2.0 * f64::EPSILON);
             }
-            let reapplied = mapping
-                .resolve(&aircraft, held, TailPilotPositionCommand::Set(recovered))
-                .unwrap();
-            assert!((reapplied.position_m() - held.position_m()).abs() < 1.0e-16);
         }
     }
 }
 
 #[test]
-fn pilot_position_inverse_rejects_targets_outside_software_travel() {
+fn pilot_position_inverse_rejects_targets_from_a_different_physical_travel() {
     let aircraft = crate::AircraftModel::try_new(
         30.0,
         crate::InertiaTensor::diagonal(1.0, 1.0, 1.0).unwrap(),
@@ -460,9 +470,12 @@ fn pilot_position_inverse_rejects_targets_outside_software_travel() {
         0.6,
         0.5,
         1.0,
+        [0.0; 3],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap();
-    let mapping = TailPilotPositionMapping::try_new(&aircraft, 0.12).unwrap();
+    let narrow_aircraft = crate::TestAircraft::try_new().unwrap().aircraft();
+    let mapping = TailPilotPositionMapping::try_new(&narrow_aircraft, 0.12).unwrap();
     for position in [-0.5, -0.400_000_000_000_000_1, 0.400_000_000_000_000_1, 0.5] {
         let target = crate::PilotPositionTarget::try_new(&aircraft, position).unwrap();
         assert_eq!(

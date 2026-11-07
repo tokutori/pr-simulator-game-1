@@ -195,7 +195,7 @@ pub(crate) fn range_value(minimum: f64, maximum: f64, step: f64, ratio: f64) -> 
 pub fn update_game_ui(
     state: &GameUiState,
     action: GameUiAction,
-    context: &GameUiContext<'_, '_>,
+    context: &GameUiContext<'_>,
 ) -> Result<GameUiUpdate, GameUiError> {
     let view = game_ui_view(state, context)?;
     let action = if let GameUiAction::ControlInput { input } = action {

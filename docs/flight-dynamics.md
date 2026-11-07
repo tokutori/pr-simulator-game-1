@@ -13,7 +13,7 @@
 | 座標系 | x | y | z | 原点 |
 |---|---|---|---|---|
 | Navigation（NED） | 北 | 東 | 下 | 発進地点の水平位置と基準湖面の交点 |
-| Body（FRD） | 前 | 右 | 下 | パイロットを除く機体の固定重心 $O$ |
+| Body（FRD） | 前 | 右 | 下 | 機体構造の固定datum $O$ |
 | 描画用world | 東 | 上 | 南 | NEDと同じ原点 |
 
 - 彦根会場の水平原点はWGS84緯度35.294075°、経度136.254448°とし、局所NEDの $N=E=0$ に対応させる。
@@ -82,7 +82,7 @@ I_B=\begin{bmatrix}I_{xx}&0&-I_{xz}\\0&I_{yy}&0\\-I_{xz}&0&I_{zz}\end{bmatrix}
 
 ### 機体と慣性の検証
 
-- `AircraftModel`はパイロットを除く機体質量、datumまわりの固定慣性、パイロット質量・固定高さ・移動限界を保持する。
+- `AircraftModel`はパイロットを除く機体質量・CG位置・datumまわりの固定慣性、パイロット質量・固定高さ・移動限界と軸別尾翼actuator限界を保持する。
 - 機体質量は正、パイロット質量は非負とし、全値の有限性を検証する。
 - `InertiaTensor`は対称正定値性に加え、次の半正定値性を検査する。
 
@@ -100,13 +100,15 @@ I_B=\begin{bmatrix}I_{xx}&0&-I_{xz}\\0&I_{yy}&0\\-I_{xz}&0&I_{zz}\end{bmatrix}
 - 100個の64 bit limbへ収容し、heap・追加依存・traceや積のoverflow/underflowを回避する。
 - 厳密に表現された回転後の境界テンソルは受理し、外部計算で丸めた成分も最終binary64値で再検査する。
 - 正定値性の失敗は`NonPositiveDefiniteTensor`、物理整合条件の失敗は`NonPhysicalInertiaTensor`とする。
+- 機体CGを $r_a$ とすると、$I_{a,CG}=I_{a,O}-m_a(\lVert r_a\rVert^2\operatorname{Id}-r_ar_a^\mathsf T)$ も物理慣性として検査する。
+- 連成質量行列・運動量・重力モーメントは一次質量モーメント $h=m_ar_a+m_pr_p$ を共有し、launch・telemetry・trimは合成CG $h/(m_a+m_p)$ を用いる。
 - 機体生成時に検証し、移動質量の連成行列と各RK4 stageでは保存済みテンソルを使用する。
 
 ### RK4と原子的更新
 
 - `advance`は正の有限timestep、有限の一定パイロット加速度、重力、機体モデル、現在状態、外力providerを受け取る。
 - providerは空力などの非重力外力をbody-frame wrenchとして返す。
-- coreが全質量への重力合力と、パイロット重力のdatumまわりモーメントを加える。
+- coreが全質量への重力合力と、機体・パイロットの各CGに働く重力のdatumまわりモーメントを加える。
 - 運動量収支の未知量はbody成分の $d v_O^B/dt$ と角加速度である。
 - 積分状態のNED速度へ変換する際は次式を使い、座標成分の微分と物理加速度を区別する。
 
@@ -179,7 +181,10 @@ W=W(x,y,z),\qquad V_{air}=V_{ground}-W
 - 負の揚力・モーメントは有効である。
 - 内部値を非公開とし、検証済みconstructorから構築する。
 - 各列を区分線型補間し、節点では元の行、両端では閉区間の値を返す。
-- 外挿・端点clamp・失速後曲線の追加は行わず、有限入力のoverflowも型付きエラーとする。
+- 表外は固定の理想平板baselineへC1接続する。$C_L=\sin(2\alpha)$、$C_{Di}=0$、$C_{Dv}=d_{min}\cos^2\alpha+2\sin^2\alpha$、横力・moment係数は0とし、$d_{min}$は表内profile dragの最小値とする。
+- 接続幅は各端から$\min(\pi/6,\text{周期端までの距離}/2)$とする。signed係数を端点の元片側勾配とbaselineの値・勾配によるcubic Hermiteで接続し、抗力は平方根を接続して二乗する。
+- 零抗力端点の非零勾配、接続係数の非有限値・二乗上界違反を構築時に拒否する。校正表は$-\pi<a\le0\le b<\pi$を満たし、trim探索は元の表内に保持する。
+- 全機baselineのmomentは既存基準点Pを合成の代表作用点とする。表外は飛行継続用の準定常近似であり、実機の失速・圧力中心移動・動的失速の同定には機体固有の高迎角データを要する。
 
 - `StaticPolarMetadata`は解析方式、離散設定ID、非ゼロmodel versionを持つ。
 - 設定IDは離散設定を識別し、解析方式・対象・参照量を揃えた一つの表を選択する。
@@ -272,7 +277,7 @@ MAC_{projected}=\frac{\int c(u)^2du}{S_{projected}},\qquad AR_s=\frac{b_s^2}{S_{
 - `HybridProxy`は一つの直線section区間を覆い、正の実面積weightと面積重心のquarter-chord作用点 $r_i^B$ を持つ。
 - 区間の隙間・重複・異なるgeometryへの流用を拒否し、weight和と面積を照合する。
 - `MirrorSpan`はsection・proxy・anchor・frameの反射対称性を要求する。
-- 幾何照合の相対許容差は $10^{-10}$、flowの受理範囲は閉境界表に従う。
+- 幾何照合の相対許容差は $10^{-10}$、flowは通常流域からplate荷重へ連続に接続する。
 
 - local-to-bodyの正規直交frame $Q_i$ はlocal spanをsectionのy-z方向へ整合させ、twistとdihedralを含む。
 - 固定normalは $n_i^B=Q_i(0,0,1)$ とし、投影spanへdihedralのcosを重ねて乗じない。
@@ -322,28 +327,16 @@ D_i=q_i S_{projected,i}\left(C_{D0}+\frac{C_{L,i}^2}{\pi AR_s e}\right)
 - 全機静的荷重へ主翼の差分と尾翼の実荷重・reference荷重の差を一度加える。面別の実荷重は全機polarの内訳ではなく合成モデルの値を表す。
 - 尾翼stripの誘導抗力には面全体のARを使う局所二乗近似を使用する。非一様流でのstrip間相互誘導は近似の範囲外である。
 - 両尾翼の $e=0.7$、$C_m=0$、水平 $C_{D0}=0.0038517428696657075$、垂直 $C_{D0}=0.003907975667072787$ は固定の合成値である。$C_{D0}$ は速度9.7 m/s、動粘性係数 $1.5\times10^{-5}$ m²/sの両面全層流平板として[NASAの式](https://ntrs.nasa.gov/api/citations/20100031107/downloads/20100031107.pdf)から求める。
-- 翼の線型揚力近似はanchorから約±0.2 radを物理的な目安とする。演算上の受理範囲は閉境界表に従う。
+- 翼の線型揚力近似はanchorから約±0.2 radを物理的な目安とする。この通常域から下記のplate荷重へ連続に移る。
 
-### 閉境界と失敗条件
+### 通常流域と全域継続
 
-以下はソフトウェアモデルの受理範囲である。
-
-| 条件 | 受理範囲 |
-|---|---|
-| static alpha | polar両端を含む閉区間 |
-| global beta、$\delta_e,\delta_r$ | 各絶対値 $\le0.2$ rad |
-| 全proxyのlocal alpha差 | $\lvert\alpha_{actual}-\alpha_{reference}\rvert\le0.2$ rad |
-| control込みlocal差 | $\lvert\alpha_{actual}-\alpha_{reference}+\delta_i\rvert\le0.2$ rad |
-| actual/referenceのlocal span angle | 各 $\lvert\operatorname{atan2}(v,\sqrt{u^2+w^2})\rvert\le0.2$ rad |
-| 全proxyのactual速度norm | $0.8V\le\lVert v_i^B\rVert\le1.2V$ |
-| actual/referenceのlocal forward | 各厳密に正 |
-
-- 密度・参照量・係数・状態の有限性、正値、姿勢等の条件も検査する。
-- 速度範囲は $0.8V$ と $1.2V$ の積で比較する。
-- 小さい正速度でも全境界を検査し、動圧のunderflowと角度未定義を区別する。
-- $V=0$ では構成・状態・controlを検証した後、全proxyの風とactual流を調べる。
-- datumと全proxyのactual速度が全て0の場合に空力0を返す。
-- 局所回転流・差動風があれば`UndefinedReference`として拒否し、後続proxyの風の失敗も検査する。
+- 通常局所式の重み$g$はC1 smoothstepの積とする。角度差・control込み角度差・局所span角は絶対値0.2から0.4 rad、速度比は[0.8,1.2]から[0.6,1.4]、局所迎角は$\pi/3$から$5\pi/12$で1から0へ移る。
+- 各proxyの増分は$g(W_{linear,actual}-W_{linear,reference})+(1-g)(W_{plate,actual}-W_{plate,reference})$とする。$g=0$では旧式を評価せず、$g>0$では全ての旧分母が正となる。
+- plate圧力は局所速度$[u,v,w]$に対して$F_n=-\rho A\operatorname{hypot}(u,w)w$とし、尾翼の既存$C_{D0}$を等方抗力へ使う。incidenceは流速と法線を同じ回転で変換する。
+- plateの作用点は既存quarter-chordから作動後chord方向へ$-0.25c$移した中弦点とする。局所offsetは$[-c\cos\delta/4,0,c\sin\delta/4]$で、momentはこの点の$r\times F$でdatumへ一回転送する。中立一様流ではactual/reference両差分が0となる。
+- global betaも絶対値0.2から0.4 radでpolarから全機plateへ接続する。同じ重み$k$でreferenceを旧$V[\cos\alpha,0,\sin\alpha]$から$[u,0,w]$へ接続し、pure-spanでreference=0とする。全機plateには$d_{min}$の等方抗力を使う。
+- datum速度0でも各proxyの局所風・回転流を評価する。plate式は零速度・逆流・pure-spanで定義される。密度・モデル・観測値と、運動中の動圧・荷重・momentの有限性を検査する。
 
 - `AerodynamicEvaluationError::Hybrid`は元の`AeroError`、`HybridSite`、`HybridLimit`を保持する。
 - siteはDatum・StaticPolar・Surface・surface内Proxy index・TailIncidence・Aggregateを区別する。
@@ -374,11 +367,11 @@ D_i=q_i S_{projected,i}\left(C_{D0}+\frac{C_{L,i}^2}{\pi AR_s e}\right)
 - 機体40 kg、パイロット60 kg、datum慣性 $\operatorname{diag}(900,1000,980)$ kg m²を合成入力とする。
 - パイロットの $y=z=0$、前後範囲±0.4 m、最大速度0.3 m/s、最大加速度0.8 m/s²を使用する。
 
-- datum alphaの閉区間は[-0.18,+0.18] rad、約±10.31°とする。
-- finの参照span角、各proxyのactual local flow、control込み迎角差を、汎用hybridの閉境界に照らして個別に検査する。
+- datum alphaの校正表は[-0.18,+0.18] rad、約±10.31°を覆う。
+- finの参照span角・各proxyの局所流・control込み迎角差は、通常式からplate荷重へC1接続する。機械的な尾翼角・slewの限界は機体JSONのactuator契約を適用する。
 
 - 全機の9節点・7係数列をJSONに保持し、迎角順序、有限値、抗力等の物理境界を検証する。
-- 実行時は保存された全機係数のPWL補間と局所荷重差を評価する。範囲外の入力は元の型付きエラーを返す。
+- 実行時は保存された全機係数のPWL補間と局所荷重差を評価する。表外は固定baselineへ連続に接続する。
 
 - trimは生成済みPWL列に対して求める。
 - $V=9.7$ m/s、$\rho=1.225$ kg/m³、$g=9.80665$ m/s²、alpha探索区間[0,0.06] radを使用する。
@@ -467,7 +460,7 @@ D_i=q_i S_{projected,i}\left(C_{D0}+\frac{C_{L,i}^2}{\pi AR_s e}\right)
 
 ## 検証範囲
 
-- 不正値、非正定値慣性、空力適用範囲外、非有限計算は型付きエラーとして返す。
+- 不正値、非正定値慣性、風場の適用範囲外、非有限計算は型付きエラーとして返す。
 - 失速域を使用する場合は、その範囲を含む係数モデルを別途検証する。
 - native/WASM比較はscenario・tick入力列・許容差を事前に固定し、失敗結果へ許容差を事後適合させない。
 

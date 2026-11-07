@@ -37,8 +37,12 @@ pub struct FlightRecordHeaderDocument {
     pub aircraft_model_version: u32,
     /// Environment model version.
     pub environment_version: u32,
-    /// Controller profile version.
-    pub controller_profile_version: u32,
+    /// Historical controller profile version, retained by legacy schemas.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_profile_version: Option<u32>,
+    /// Actual sealed control mode; absent when a legacy archive did not record it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control_mode: Option<crate::FlightRecordControlMode>,
     /// Resolved preset and independent gameplay axes.
     pub difficulty: FlightRecordDifficultyDocument,
     /// Explicit deterministic selection seed.

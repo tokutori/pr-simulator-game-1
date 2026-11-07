@@ -2,6 +2,77 @@ use super::*;
 use crate::{PLAYABLE_AIRCRAFT_JSON, playable_aircraft};
 
 #[test]
+fn registered_aircraft_integrates_post_stall_reverse_and_low_speed_flow() {
+    use birdman_game_core::{
+        ControlMode, FlightState, HybridAerodynamicLoad, NedPoint, NedVector, PilotPositionTarget,
+        TailFlightTickConfig, TailFlightTickInput, TailFlightTickState, TailPilotIntent,
+        TailPilotPositionCommand, TailRateTarget, UnitQuaternion, WindField,
+        advance_tail_flight_tick,
+    };
+    let definition = playable_aircraft().unwrap();
+    let aircraft = definition.aircraft();
+    let surfaces = definition.surfaces().unwrap();
+    let conditions = definition.document().trim.core_conditions().unwrap();
+    let trim = definition.trim().unwrap();
+    let loads = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
+        conditions.air_density_kg_m3(),
+        WindField::uniform(NedVector::zero()),
+    )
+    .unwrap();
+    let config = TailFlightTickConfig::new(
+        ControlMode::Manual,
+        birdman_game_format::controller::ControllerDocument::decode_json(
+            crate::DEFAULT_CONTROLLER_JSON,
+        )
+        .unwrap()
+        .core_profile(
+            birdman_game_core::ControllerReference::try_new(
+                trim.theta_rad(),
+                conditions.airspeed_mps(),
+            )
+            .unwrap(),
+            trim.alpha_rad(),
+        )
+        .unwrap(),
+        trim.pilot_mapping().unwrap(),
+        conditions.gravity(),
+    );
+    let input = TailFlightTickInput::new(
+        TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+        TailRateTarget::try_new(0.0, 0.0).unwrap(),
+        TailPilotPositionCommand::Hold,
+    );
+    for velocity in [
+        [9.7 * libm::cos(0.9), 0.0, 9.7 * libm::sin(0.9)],
+        [-9.7, 0.0, 0.0],
+        [0.02, 0.0, 0.0],
+    ] {
+        let initial = FlightState::try_new(
+            NedPoint::try_new(0.0, 0.0, -100.0).unwrap(),
+            NedVector::try_new(velocity[0], velocity[1], velocity[2]).unwrap(),
+            UnitQuaternion::IDENTITY,
+            BodyVector::zero(),
+            trim.pilot_position_m(),
+            0.0,
+        )
+        .unwrap();
+        let mut current = TailFlightTickState::try_new(
+            &aircraft,
+            0,
+            initial,
+            TailIncidence::neutral(),
+            PilotPositionTarget::try_new(&aircraft, trim.pilot_position_m()).unwrap(),
+        )
+        .unwrap();
+        for _ in 0..100 {
+            current = advance_tail_flight_tick(&aircraft, current, config, input, &loads).unwrap();
+        }
+        assert_eq!(current.tick_index(), 100);
+    }
+}
+
+#[test]
 fn bundled_aircraft_prepares_its_nonrectangular_broken_dihedral_surfaces() {
     let definition = playable_aircraft().unwrap();
     assert_eq!(definition.document().model_version, 7);
@@ -167,7 +238,7 @@ fn invalid_source_is_rejected_before_a_definition_is_published() {
     assert!(matches!(
         AircraftDefinition::from_document(document),
         Err(AircraftDefinitionError::Format(
-            AircraftFormatError::InvalidStructure
+            AircraftFormatError::Validation(_)
         ))
     ));
 }

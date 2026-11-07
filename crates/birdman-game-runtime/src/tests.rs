@@ -1371,6 +1371,30 @@ fn finish_boot(
     runtime: &mut ApplicationRuntime,
     mut initial: ApplicationOutput,
 ) -> ApplicationOutput {
+    for (document, request_id) in initial
+        .requests
+        .iter()
+        .filter_map(|request| match request {
+            ApplicationRequest::ReadConfiguration {
+                document,
+                request_id,
+                ..
+            } => Some((*document, *request_id)),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+    {
+        initial
+            .requests
+            .retain(|request| !matches!(request, ApplicationRequest::ReadConfiguration { .. }));
+        runtime
+            .observe_test(ApplicationInput::ConfigurationLoaded {
+                document,
+                request_id,
+                completion: ApplicationConfigurationLoad::Missing,
+            })
+            .unwrap();
+    }
     let request_id = initial
         .requests
         .iter()
@@ -2197,6 +2221,8 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         capabilities: ApplicationCapabilities {
             stored_records_available: true,
             flight_log_available: true,
+            analysis_available: true,
+            replay_available: true,
             ..Default::default()
         },
         ..screen_platform()
@@ -2418,19 +2444,19 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
             runtime.ui.analysis_time_seconds
         ),
         (
-            GameUiReplayView::Cinematic,
+            GameUiReplayView::Analysis,
             false,
             GameUiReplayCamera::Chase,
             0.015
         ),
     );
-    let ready = runtime.last_ready_resources.unwrap();
+    let prepared_key = runtime.resources.as_ref().unwrap().key;
     assert!(matches!(
         EnvironmentSelection::for_session(&runtime.application)
             .unwrap()
             .resolve()
             .unwrap(),
-        EnvironmentProjection::Unavailable { .. }
+        EnvironmentProjection::Available { .. }
     ));
     let next_request = runtime.next_request_id;
     let frame = runtime
@@ -2443,47 +2469,33 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         })
         .unwrap();
     let scene = &frame.drawing.as_ref().unwrap().scene;
-    let camera = scene
-        .camera
-        .as_ref()
-        .unwrap()
-        .world_from_head
-        .unwrap()
-        .position;
+    assert!(
+        scene
+            .geometry
+            .as_ref()
+            .is_none_or(|geometry| !geometry.aircraft_visible)
+    );
+    assert!(runtime.platform.analysis_available);
+    assert!(!runtime.platform.replay_available);
     assert_eq!(
-        scene.water_world_from_surface,
-        birdman_game_presentation::camera::Pose {
-            position: birdman_game_presentation::camera::Vector3 {
-                x: camera.x.round(),
-                y: 0.0,
-                z: camera.z.round()
-            },
-            ..birdman_game_presentation::camera::Pose::IDENTITY
-        }
+        runtime.application.set_playback_playing(true),
+        Err(birdman_game_core::GameSessionError::InvalidTransition)
     );
-    assert_ne!(
-        [
-            scene.water_world_from_surface.position.x,
-            scene.water_world_from_surface.position.z
-        ],
-        [
-            scene.world_from_aircraft.position.x,
-            scene.world_from_aircraft.position.z
-        ]
-    );
-
+    runtime.application.seek_playback(0.005).unwrap();
     assert!(frame.requests.is_empty());
     assert_eq!(runtime.next_request_id, next_request);
-    assert!(runtime.resources.as_ref().unwrap().key == ready);
+    assert!(runtime.resources.as_ref().unwrap().key == prepared_key);
     let replay = runtime.retained.as_ref().unwrap().clone();
-    let selected = structure(activate_action(
-        &mut runtime,
-        &replay,
-        GameUiAction::SetReplayView {
-            view: GameUiReplayView::Telemetry,
-        },
-    ));
-    activate_action(&mut runtime, &selected, GameUiAction::ToggleTechnical {});
+    assert!(
+        runtime
+            .observe_test(ApplicationInput::Control {
+                view_revision: replay.view_revision,
+                input: GameUiControlInput::Activate {
+                    control_id: "game-replay-view-mode".to_owned()
+                },
+            })
+            .is_err()
+    );
     let selected_ui = runtime.ui.clone();
     runtime
         .observe_test(ApplicationInput::Platform {
@@ -2628,6 +2640,35 @@ impl ObservedInput for ApplicationRuntime {
                             && frame.ranges.is_empty() && frame.readouts.is_empty()
                             && frame.fields.is_empty() && frame.button_labels.is_empty()
                             && frame.chart_cursor.is_none() && frame.flight_touch.is_empty())));
+        }
+        for (document, request_id) in output
+            .requests
+            .iter()
+            .filter_map(|request| match request {
+                ApplicationRequest::ReadConfiguration {
+                    document,
+                    request_id,
+                    ..
+                } => Some((*document, *request_id)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+        {
+            output
+                .requests
+                .retain(|request| !matches!(request, ApplicationRequest::ReadConfiguration { .. }));
+            let completed = self.update(
+                ApplicationObservation {
+                    observed_ms,
+                    input: ApplicationInput::ConfigurationLoaded {
+                        document,
+                        request_id,
+                        completion: ApplicationConfigurationLoad::Missing,
+                    },
+                },
+                &mut no_text_metrics,
+            )?;
+            assert!(completed.requests.is_empty());
         }
         // Return the original observation's actual View and remaining I/O, not the read completion's Frame.
         Ok(output)
@@ -2844,8 +2885,6 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
     let tail_meshes: Vec<_> = match &initial.requests[0] {
         ApplicationRequest::PrepareResources { assets, .. } => assets
             .scene
-            .as_ref()
-            .unwrap()
             .meshes
             .iter()
             .filter(|mesh| {
@@ -2904,11 +2943,12 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         .geometry
         .as_ref()
         .unwrap();
-    let definition = birdman_game_app::registered_aircraft().unwrap();
+    let selected = birdman_game_app::SelectedAircraft::bundled().unwrap();
+    let definition = selected.definition();
     for part in &geometry.part_poses {
         assert_eq!(part.pose, Pose::IDENTITY);
     }
-    let source = birdman_game_scene::prepared_scene::registered_scene().unwrap();
+    let source = birdman_game_scene::prepared_scene::PreparedScene::prepare(definition).unwrap();
     let ApplicationRequest::PrepareResources { assets, .. } = &initial.requests[0] else {
         unreachable!()
     };
@@ -2923,8 +2963,6 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
     {
         let mesh = assets
             .scene
-            .as_ref()
-            .unwrap()
             .meshes
             .iter()
             .find(|mesh| mesh.name == format!("structure-{index}"))
@@ -3001,7 +3039,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
     pose.controls.physical_incidence.vertical_tail_radians = 0.15;
     let articulated = runtime
         .assets
-        .project_geometry(Some(pose))
+        .project_geometry(Some(pose), &selected)
         .unwrap()
         .unwrap();
     for (frame, incidence) in [

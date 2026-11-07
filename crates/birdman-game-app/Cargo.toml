@@ -10,6 +10,7 @@ repository.workspace = true
 schema = ["dep:schemars", "birdman-game-format/schema"]
 
 [dependencies]
+sha2.workspace = true
 birdman-game-content.workspace = true
 birdman-game-core.workspace = true
 birdman-game-format.workspace = true

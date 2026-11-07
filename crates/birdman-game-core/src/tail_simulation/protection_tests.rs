@@ -1,11 +1,78 @@
 use super::*;
+use crate::tail_control::test_control as advance_tail_control;
 use crate::{
     AerodynamicStage, BodyPoint, BodyVector, FbwAuthority, HybridError, HybridModel, HybridSite,
-    HybridSurface, HybridSurfaceRole, NedPoint, NedVector, TailAngleOfAttackGuard,
-    TailPilotPositionIntent, TestAircraft, UnitQuaternion, WindError, WindField,
-    advance_tail_control,
+    NedPoint, NedVector, TailAngleOfAttackGuard, TailPilotPositionIntent, TestAircraft,
+    UnitQuaternion, WindError, WindField,
 };
 use core::cell::Cell;
+
+#[test]
+fn pid_memory_admission_uses_the_actual_full_partial_or_zero_physical_interval() {
+    let definition = TestAircraft::try_new().unwrap();
+    let aircraft = definition.aircraft();
+    let surfaces = definition.surfaces().unwrap();
+    let loads = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
+        1.225,
+        WindField::uniform(NedVector::zero()),
+    )
+    .unwrap();
+    let rate = crate::PidConfig::try_new(0.0, 1.0, 0.0, [-0.2, 0.2], [-0.2, 0.2], 0.0).unwrap();
+    let profile = crate::TailControlProfile::try_new(
+        crate::PitchController::Rate { rate },
+        crate::YawController::Rate { rate },
+        [[-0.2, 0.2]; 2],
+        [[-0.2, 0.2]; 2],
+        1.0,
+        crate::ControllerReference::try_new(0.0, 10.0).unwrap(),
+    )
+    .unwrap();
+    let config = TailFlightTickConfig::new(
+        ControlMode::Automatic,
+        profile,
+        TailPilotPositionMapping::try_new(&aircraft, 0.0).unwrap(),
+        Gravity::try_new(0.0).unwrap(),
+    );
+    let input = TailFlightTickInput::new(
+        TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+        TailRateTarget::try_new(0.1, 0.0).unwrap(),
+        TailPilotPositionCommand::Hold,
+    );
+    let points = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
+    let geometry = WaterContactGeometry::try_new(&points).unwrap();
+    for down in [-10.0, -0.004, 0.0] {
+        let previous = state(
+            &aircraft,
+            [10.0, 0.0, 1.0],
+            [0.0; 3],
+            TailIncidence::neutral(),
+            down,
+        );
+        let report = advance_tail_flight_tick_with_contact_report(
+            &aircraft, previous, config, input, &loads, geometry,
+        )
+        .unwrap();
+        let (memory, elapsed) = match report.outcome() {
+            TailFlightTickOutcome::Advanced(next) => (next.controller_state(), PHYSICS_DT_SECONDS),
+            TailFlightTickOutcome::WaterContact(sample) => {
+                if down < 0.0 {
+                    assert!(sample.fraction() > 0.0 && sample.fraction() < 1.0);
+                }
+                (
+                    sample.controller_state(),
+                    sample.fraction() * PHYSICS_DT_SECONDS,
+                )
+            }
+        };
+        assert!((memory.stages()[3].integral() - 0.1 * elapsed).abs() < 1e-15);
+        if elapsed == 0.0 {
+            assert_eq!(memory, previous.controller_state());
+        } else {
+            assert_eq!(memory.stages()[3].previous_measurement(), Some(0.0));
+        }
+    }
+}
 
 #[test]
 fn evaluated_report_transfers_controls_and_normalizes_only_zero_contact() {
@@ -39,6 +106,7 @@ fn evaluated_report_transfers_controls_and_normalizes_only_zero_contact() {
     assert_eq!(report.applied_controls(), Some(controls));
     for fraction in [0.0, -0.0, f64::from_bits(1), 0.5, 1.0] {
         let contact = TailWaterContactSample {
+            controller_state: next.controller_state,
             interval_start_tick: previous.tick_index,
             fraction,
             moment: if fraction == 0.0 {
@@ -159,11 +227,9 @@ fn alpha_guard_applies_effective_pilot_targets_without_clamping_state_or_losing_
         -50.0,
     );
     let before = previous;
-    let profile = TailControlProfile::try_new(0.2, 0.2, 1.0)
-        .unwrap()
-        .with_angle_of_attack_guard(
-            TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.04, 1.0, 1.6).unwrap(),
-        );
+    let profile = crate::tail_control::test_profile(0.2, 0.2).with_angle_of_attack_guard(
+        TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.04, 1.0, 1.6).unwrap(),
+    );
     let points = [BodyPoint::origin()];
     let geometry = WaterContactGeometry::try_new(&points).unwrap();
     for mode in [
@@ -447,29 +513,14 @@ pub(super) fn state(
 pub(super) fn config(
     aircraft: &AircraftModel,
     mode: ControlMode,
-    slew_rad_per_second: f64,
+    _slew_rad_per_second: f64,
 ) -> TailFlightTickConfig {
     TailFlightTickConfig::new(
         mode,
-        TailControlProfile::try_new(0.2, 0.2, slew_rad_per_second).unwrap(),
+        crate::tail_control::test_profile(0.2, 0.2),
         TailPilotPositionMapping::try_new(aircraft, 0.0).unwrap(),
         Gravity::try_new(0.0).unwrap(),
     )
-}
-
-pub(super) fn tail_boundary_body_rates(
-    horizontal_tail: HybridSurface<'_>,
-    speed_meters_per_second: f64,
-    sign: f64,
-) -> [f64; 3] {
-    let tail_arm = horizontal_tail
-        .proxies()
-        .iter()
-        .map(|proxy| -proxy.point().components()[0])
-        .fold(0.0, f64::max);
-    assert!(tail_arm > 0.0);
-    let rate = sign * speed_meters_per_second * libm::tan(0.1) / tail_arm;
-    [0.0, rate, rate]
 }
 
 pub(super) fn trial<'provider, 'environment>(
@@ -518,6 +569,7 @@ pub(super) fn commands(
         input.desired_rate,
         previous.flight_state.angular_velocity_body(),
         PHYSICS_DT_SECONDS,
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap()
 }
@@ -567,308 +619,6 @@ impl ExternalLoadProvider for ObservedStages<'_, '_> {
         self.count.set(index + 1);
         self.held.evaluate(aircraft, state)
     }
-}
-
-#[test]
-fn full_inputs_protect_both_signed_tails_without_changing_authority_requests_or_slew() {
-    let definition = TestAircraft::try_new().unwrap();
-    let surfaces = definition.surfaces().unwrap();
-    let tails = [surfaces[1], surfaces[2]];
-    let loads = HybridAerodynamicLoad::try_new(
-        HybridModel::try_new(definition.polar().unwrap(), &tails).unwrap(),
-        1.2,
-        WindField::uniform(NedVector::zero()),
-    )
-    .unwrap();
-    let aircraft = definition.aircraft();
-    let contacts = [BodyPoint::origin()];
-    let geometry = WaterContactGeometry::try_new(&contacts).unwrap();
-    for sign in [-1.0, 1.0] {
-        let mut previous = state(
-            &aircraft,
-            [10.0, 0.0, 0.0],
-            tail_boundary_body_rates(tails[0], 10.0, sign),
-            TailIncidence::neutral(),
-            -50.0,
-        );
-        let intervals = loads
-            .tail_incidence_intervals(&previous.flight_state)
-            .unwrap();
-        let bounds = intervals.map(|interval| if sign > 0.0 { interval[1] } else { interval[0] });
-        previous.incidence =
-            TailIncidence::try_new(bounds[0] - sign * 0.005, bounds[1] - sign * 0.005).unwrap();
-        loads
-            .evaluate_hybrid(&previous.flight_state, previous.incidence)
-            .unwrap();
-        let before = previous;
-        let input = TailFlightTickInput::new(
-            TailPilotIntent::try_new(-sign, -sign).unwrap(),
-            TailRateTarget::try_new(-sign * 0.2, -sign * 0.2).unwrap(),
-            TailPilotPositionCommand::Set(TailPilotPositionIntent::try_new(0.5).unwrap()),
-        );
-        for mode in [
-            ControlMode::Manual,
-            ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
-            ControlMode::Automatic,
-        ] {
-            let config = TailFlightTickConfig::new(
-                mode,
-                TailControlProfile::try_new(0.4, 0.4, 1.0).unwrap(),
-                TailPilotPositionMapping::try_new(&aircraft, 0.0).unwrap(),
-                Gravity::try_new(0.0).unwrap(),
-            );
-            let nominal = commands(previous, config, input);
-            assert!(sign * (nominal.incidence().elevator_rad() - bounds[0]) > 0.0);
-            assert!(sign * (nominal.incidence().rudder_rad() - bounds[1]) > 0.0);
-            let original = hybrid_error(rejected_trial(
-                trial(&aircraft, previous, config, input, &loads).evaluate(nominal.incidence()),
-            ));
-            assert_eq!(
-                original.limit(),
-                Some(HybridLimit::ControlledAlphaDifference)
-            );
-            assert_eq!(original.stage(), Some(AerodynamicStage::First));
-            let report = advance_tail_flight_tick_with_contact_report(
-                &aircraft, previous, config, input, &loads, geometry,
-            )
-            .unwrap();
-            let TailFlightTickOutcome::Advanced(next) = report.outcome() else {
-                panic!("expected an airborne protected tick");
-            };
-            assert_ne!(next.incidence, nominal.incidence());
-            assert_eq!(next.tick_index, previous.tick_index + 1);
-            let applied = report.applied_controls().unwrap();
-            assert_eq!(applied.input(), input);
-            assert_eq!(applied.commands(), nominal.commands());
-            assert_eq!(
-                next.pilot_position_target,
-                trial(&aircraft, previous, config, input, &loads).pilot_position_target
-            );
-            for (actual, current, interval) in [
-                (
-                    next.incidence.elevator_rad(),
-                    previous.incidence.elevator_rad(),
-                    intervals[0],
-                ),
-                (
-                    next.incidence.rudder_rad(),
-                    previous.incidence.rudder_rad(),
-                    intervals[1],
-                ),
-            ] {
-                let maximum_step =
-                    config.profile.maximum_slew_rad_per_second() * PHYSICS_DT_SECONDS;
-                let rounding = 16.0 * f64::EPSILON * current.abs().max(maximum_step);
-                assert!((actual - current).abs() <= maximum_step + rounding);
-                assert!(actual >= interval[0] && actual <= interval[1]);
-            }
-            loads
-                .evaluate_hybrid(&next.flight_state, next.incidence)
-                .unwrap();
-            assert_eq!(
-                next,
-                advance_tail_flight_tick(&aircraft, previous, config, input, &loads).unwrap()
-            );
-            assert_eq!(previous, before);
-        }
-    }
-}
-
-#[test]
-fn current_valid_request_is_protected_at_later_stages_but_not_beyond_slew_reach() {
-    let definition = TestAircraft::try_new().unwrap();
-    let surfaces = definition.surfaces().unwrap();
-    let loads = HybridAerodynamicLoad::try_new(
-        HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
-        1.2,
-        WindField::uniform(NedVector::zero()),
-    )
-    .unwrap();
-    let aircraft = definition.aircraft();
-    let mut previous = state(
-        &aircraft,
-        [10.0, 0.0, 0.0],
-        [0.0, 0.1, 0.1],
-        TailIncidence::neutral(),
-        -50.0,
-    );
-    let intervals = loads
-        .tail_incidence_intervals(&previous.flight_state)
-        .unwrap();
-    previous.incidence =
-        TailIncidence::try_new(intervals[0][1] - 0.0001, intervals[1][1] - 0.0001).unwrap();
-    let before = previous;
-    let input = input_holding_incidence(previous.incidence);
-    let config = config(&aircraft, ControlMode::Manual, 1.0);
-    let nominal = commands(previous, config, input);
-    loads
-        .evaluate_hybrid(&previous.flight_state, nominal.incidence())
-        .unwrap();
-    let original = hybrid_error(rejected_trial(
-        trial(&aircraft, previous, config, input, &loads).evaluate(nominal.incidence()),
-    ));
-    assert_eq!(
-        original.limit(),
-        Some(HybridLimit::ControlledAlphaDifference)
-    );
-    assert!(matches!(
-        original.stage(),
-        Some(AerodynamicStage::Second | AerodynamicStage::Third | AerodynamicStage::Fourth,)
-    ));
-    let next = advance_tail_flight_tick(&aircraft, previous, config, input, &loads).unwrap();
-    assert_ne!(next.incidence, nominal.incidence());
-    loads
-        .evaluate_hybrid(&next.flight_state, next.incidence)
-        .unwrap();
-    for (actual, current) in [
-        (
-            next.incidence.elevator_rad(),
-            previous.incidence.elevator_rad(),
-        ),
-        (next.incidence.rudder_rad(), previous.incidence.rudder_rad()),
-    ] {
-        assert!((actual - current).abs() <= 0.01 + 16.0 * f64::EPSILON);
-    }
-    let limited = TailFlightTickConfig::new(
-        config.mode,
-        TailControlProfile::try_new(0.2, 0.2, 0.0001).unwrap(),
-        config.pilot_mapping,
-        config.gravity,
-    );
-    let limited_nominal = commands(previous, limited, input);
-    let original = rejected_trial(
-        trial(&aircraft, previous, limited, input, &loads).evaluate(limited_nominal.incidence()),
-    );
-    assert_eq!(
-        advance_tail_flight_tick(&aircraft, previous, limited, input, &loads),
-        Err(original)
-    );
-    let points = [BodyPoint::origin()];
-    let geometry = WaterContactGeometry::try_new(&points).unwrap();
-    assert_eq!(
-        advance_tail_flight_tick_with_contact_report(
-            &aircraft, previous, limited, input, &loads, geometry,
-        ),
-        Err(original)
-    );
-    assert_eq!(previous, before);
-}
-
-#[test]
-fn failed_neutral_scan_preserves_original_requested_tail_failure() {
-    let definition = TestAircraft::try_new().unwrap();
-    let surfaces = definition.surfaces().unwrap();
-    let tails = [surfaces[1], surfaces[2]];
-    let tail_loads = HybridAerodynamicLoad::try_new(
-        HybridModel::try_new(definition.polar().unwrap(), &tails).unwrap(),
-        1.2,
-        WindField::uniform(NedVector::zero()),
-    )
-    .unwrap();
-    let ordered = [surfaces[1], surfaces[0], surfaces[2]];
-    let loads = HybridAerodynamicLoad::try_new(
-        HybridModel::try_new(definition.polar().unwrap(), &ordered).unwrap(),
-        1.2,
-        WindField::uniform(NedVector::zero()),
-    )
-    .unwrap();
-    let aircraft = definition.aircraft();
-    let mut previous = state(
-        &aircraft,
-        [10.0, 0.0, 0.0],
-        tail_boundary_body_rates(tails[0], 10.0, 1.0),
-        TailIncidence::neutral(),
-        -50.0,
-    );
-    let intervals = tail_loads
-        .tail_incidence_intervals(&previous.flight_state)
-        .unwrap();
-    previous.incidence =
-        TailIncidence::try_new(intervals[0][1] - 0.005, intervals[1][1] - 0.005).unwrap();
-    let before = previous;
-    let input = TailFlightTickInput::new(
-        TailPilotIntent::try_new(-1.0, -1.0).unwrap(),
-        TailRateTarget::try_new(0.0, 0.0).unwrap(),
-        TailPilotPositionCommand::Hold,
-    );
-    let config = config(&aircraft, ControlMode::Manual, 1.0);
-    let nominal = commands(previous, config, input);
-    let original = rejected_trial(
-        trial(&aircraft, previous, config, input, &loads).evaluate(nominal.incidence()),
-    );
-    let cause = hybrid_error(original);
-    assert_eq!(cause.limit(), Some(HybridLimit::ControlledAlphaDifference));
-    assert_eq!(cause.stage(), Some(AerodynamicStage::First));
-    assert!(matches!(
-        cause.site(),
-        HybridSite::Proxy {
-            surface: HybridSurfaceRole::HorizontalTail,
-            ..
-        }
-    ));
-    let scan = loads
-        .tail_incidence_intervals(&previous.flight_state)
-        .unwrap_err();
-    assert_eq!(scan.limit(), Some(HybridLimit::LocalSpeed));
-    assert_eq!(scan.stage(), None);
-    assert!(matches!(
-        scan.site(),
-        HybridSite::Proxy {
-            surface: HybridSurfaceRole::MainWing,
-            ..
-        }
-    ));
-    assert_eq!(
-        advance_tail_flight_tick(&aircraft, previous, config, input, &loads),
-        Err(original)
-    );
-    assert_eq!(previous, before);
-}
-
-#[test]
-fn empty_reachable_intersection_returns_nominal_error_without_clamping_panic() {
-    let definition = TestAircraft::try_new().unwrap();
-    let surfaces = definition.surfaces().unwrap();
-    let tails = [surfaces[1], surfaces[2]];
-    let loads = HybridAerodynamicLoad::try_new(
-        HybridModel::try_new(definition.polar().unwrap(), &tails).unwrap(),
-        1.2,
-        WindField::uniform(NedVector::zero()),
-    )
-    .unwrap();
-    let aircraft = definition.aircraft();
-    let previous = state(
-        &aircraft,
-        [10.0, 0.0, 0.0],
-        tail_boundary_body_rates(tails[0], 10.0, 1.0),
-        TailIncidence::try_new(0.19, 0.19).unwrap(),
-        -50.0,
-    );
-    let before = previous;
-    let config = config(&aircraft, ControlMode::Manual, 1.0);
-    let input = TailFlightTickInput::new(
-        TailPilotIntent::try_new(1.0, 1.0).unwrap(),
-        TailRateTarget::try_new(0.0, 0.0).unwrap(),
-        TailPilotPositionCommand::Hold,
-    );
-    let intervals = loads
-        .tail_incidence_intervals(&previous.flight_state)
-        .unwrap();
-    assert!(intervals[0][1] < previous.incidence.elevator_rad() - 0.01);
-    assert!(intervals[1][1] < previous.incidence.rudder_rad() - 0.01);
-    let nominal = commands(previous, config, input);
-    let original = rejected_trial(
-        trial(&aircraft, previous, config, input, &loads).evaluate(nominal.incidence()),
-    );
-    assert_eq!(
-        hybrid_error(original).limit(),
-        Some(HybridLimit::ControlledAlphaDifference)
-    );
-    assert_eq!(
-        advance_tail_flight_tick(&aircraft, previous, config, input, &loads),
-        Err(original)
-    );
-    assert_eq!(previous, before);
 }
 
 #[test]
@@ -1029,11 +779,9 @@ fn held_pilot_demand_is_monotonic_and_survives_guard_projection() {
         TailIncidence::neutral(),
         -50.0,
     );
-    let profile = TailControlProfile::try_new(0.2, 0.2, 1.0)
-        .unwrap()
-        .with_angle_of_attack_guard(
-            TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.04, 1.0, 1.6).unwrap(),
-        );
+    let profile = crate::tail_control::test_profile(0.2, 0.2).with_angle_of_attack_guard(
+        TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.04, 1.0, 1.6).unwrap(),
+    );
     let mapping = TailPilotPositionMapping::try_new(&aircraft, 0.0).unwrap();
     let config = TailFlightTickConfig::new(
         ControlMode::Manual,

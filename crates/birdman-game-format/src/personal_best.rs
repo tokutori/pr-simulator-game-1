@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use birdman_game_core::DistanceScore;
 use birdman_game_core::{
     ControlMode, CourseAxis, PersonalBestComparison, PersonalBestKey, SessionScenarioIdentity,
-    TailControlProfile, compare_personal_best,
+    compare_personal_best,
 };
 use sha2::{Digest, Sha256};
 
@@ -24,8 +24,6 @@ pub struct TailPersonalBestConfiguration<'a> {
     pub identity: &'a FlightRecordTailIdentityDocument,
     /// Authority mode used by the session.
     pub control_mode: ControlMode,
-    /// Once-resolved two-axis feedback, software slew and optional datum-alpha guard.
-    pub controller_profile: TailControlProfile,
 }
 
 /// Deterministic selection among eligible records of one explicit configuration.
@@ -128,8 +126,15 @@ fn key_for_validated_record(
         return Ok(None);
     }
     let header = &record.header;
-    let mode = identity.conditions.control_mode.to_core()?;
-    let profile = identity.conditions.controller_profile.to_core()?;
+    let mode = header
+        .control_mode
+        .ok_or(FlightRecordFormatError::InvalidRecord)?
+        .to_core()?;
+    let controller_sha = record
+        .control_identity
+        .controller_sha256
+        .as_deref()
+        .ok_or(FlightRecordFormatError::InvalidRecord)?;
     if matches!(
         record.header.difficulty.assistance,
         crate::FlightRecordAssistanceDocument::Manual
@@ -138,7 +143,7 @@ fn key_for_validated_record(
         return Err(FlightRecordFormatError::InvalidRecord);
     }
     let mut hasher = Sha256::new();
-    hasher.update(b"birdman-game/personal-best-key/tail-incidence/v3\0");
+    hasher.update(b"birdman-game/personal-best-key/tail-incidence/v5\0");
     hash_u32(&mut hasher, PERSONAL_BEST_COMPARISON_VERSION);
     hash_u32(&mut hasher, record.schema_version);
     for name in [
@@ -151,20 +156,18 @@ fn key_for_validated_record(
     hash_u32(&mut hasher, header.catalog_version);
     hash_u32(&mut hasher, header.scenario_id);
     hash_u32(&mut hasher, header.scenario_version);
+    if let Some(sha) = &record.control_identity.aircraft_sha256 {
+        hasher.update(sha.as_bytes());
+    }
     hash_u32(&mut hasher, header.aircraft_model_version);
     hash_u32(&mut hasher, header.environment_version);
-    hash_u32(&mut hasher, header.controller_profile_version);
+    hasher.update(controller_sha.as_bytes());
     hash_u64(&mut hasher, header.seed);
     let difficulty = header.difficulty.resolved_settings();
     hash_effective_hud(&mut hasher, difficulty);
     hash_assistance(&mut hasher, difficulty.assistance());
     hash_weather(&mut hasher, difficulty.weather());
     hash_controller_mode(&mut hasher, mode);
-    for gain in profile.gains_seconds() {
-        hash_f64(&mut hasher, gain);
-    }
-    hash_f64(&mut hasher, profile.maximum_slew_rad_per_second());
-    hash_tail_alpha_guard(&mut hasher, profile);
     for component in identity.conditions.course_axis_ne {
         hash_f64(&mut hasher, component);
     }
@@ -215,7 +218,19 @@ impl TailFlightRecordDocument {
             || header.scenario_version != scenario.scenario_version
             || header.aircraft_model_version != scenario.aircraft_model_version
             || header.environment_version != scenario.environment_version
-            || header.controller_profile_version != scenario.controller_profile_version
+            || scenario.controller_identity
+                != self
+                    .control_identity
+                    .controller_sha256
+                    .as_deref()
+                    .map(|sha| {
+                        crate::controller_identity(
+                            &self.control_identity.controller_profile_id,
+                            sha,
+                        )
+                    })
+            || header.control_mode.map(|mode| mode.to_core()).transpose()?
+                != Some(configuration.control_mode)
             || header.seed != scenario.seed
             || header.difficulty.resolved_settings()
                 != crate::FlightRecordDifficultyDocument::from(configuration.difficulty)
@@ -226,30 +241,13 @@ impl TailFlightRecordDocument {
         }
         self.identity_metadata =
             FlightRecordIdentityMetadata::Resolved(Box::new(TailPersonalBestIdentity {
-                conditions: TailPersonalBestConditions::from_resolved(
-                    configuration.control_mode,
-                    configuration.controller_profile,
-                    course_axis,
-                ),
+                conditions: TailPersonalBestConditions::from_resolved(course_axis),
                 build,
             }));
         self.header.personal_best_key =
             canonical_tail_personal_best_key(&self)?.map(PersonalBestKey::digest);
         self.validate()?;
         Ok(self)
-    }
-}
-
-fn hash_tail_alpha_guard(hasher: &mut Sha256, profile: TailControlProfile) {
-    if let Some(guard) = profile.angle_of_attack_guard() {
-        hasher.update(b"birdman-game/tail-alpha-guard/v1\0");
-        for value in guard.alpha_interval_rad().into_iter().chain([
-            guard.trim_alpha_rad(),
-            guard.preview_seconds(),
-            guard.pitch_gain_seconds(),
-        ]) {
-            hash_f64(hasher, value);
-        }
     }
 }
 
@@ -308,4 +306,31 @@ fn hash_u64(hasher: &mut Sha256, value: u64) {
 fn hash_f64(hasher: &mut Sha256, value: f64) {
     let canonical_bits = if value == 0.0 { 0 } else { value.to_bits() };
     hash_u64(hasher, canonical_bits);
+}
+
+/// Fixed-length identity of the named aircraft and its original source digest.
+pub fn aircraft_identity(configuration_id: &str, raw_sha256: &str) -> [u8; 32] {
+    source_identity(
+        b"birdman-game/aircraft-identity/v1\0",
+        configuration_id,
+        raw_sha256,
+    )
+}
+
+/// Fixed-length identity of a controller and its exact original source digest.
+pub fn controller_identity(controller_id: &str, raw_sha256: &str) -> [u8; 32] {
+    source_identity(
+        b"birdman-game/controller-identity/v1\0",
+        controller_id,
+        raw_sha256,
+    )
+}
+
+fn source_identity(domain: &[u8], configuration_id: &str, raw_sha256: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    hasher.update((configuration_id.len() as u64).to_le_bytes());
+    hasher.update(configuration_id.as_bytes());
+    hasher.update(raw_sha256.as_bytes());
+    hasher.finalize().into()
 }

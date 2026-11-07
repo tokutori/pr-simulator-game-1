@@ -3,20 +3,21 @@ use crate::{
     AeroError, AerodynamicEvaluationError, AerodynamicStage, BodyPoint, BodyVector,
     CompositeCgLaunchConditions, CourseAxis, DynamicsError, FbwAuthority, Gravity,
     HybridAerodynamicLoad, HybridError, HybridModel, HybridSite, HybridSurface, LoadError,
-    NedPoint, NedVector, TailControlProfile, TailFlightScenarioParameters, TailIncidence,
-    TailPilotIntent, TailPilotPositionCommand, TailRateTarget, TestAircraft, WindField,
+    NedPoint, NedVector, TailFlightScenarioParameters, TailIncidence, TailPilotIntent,
+    TailPilotPositionCommand, TailRateTarget, TestAircraft, WindError, WindField,
 };
 
 const CONTACT_POINTS: [BodyPoint; 1] = [BodyPoint::origin()];
 
 fn identity() -> SessionScenarioIdentity {
     SessionScenarioIdentity {
+        aircraft_identity: [0; 32],
         catalog_version: 10,
         scenario_id: 6,
         scenario_version: 1,
         aircraft_model_version: 1,
         environment_version: 1,
-        controller_profile_version: 1,
+        controller_identity: Some([1; 32]),
         seed: 42,
     }
 }
@@ -28,7 +29,7 @@ fn configuration<'a>(
     cg_down: f64,
     maximum_ticks: u64,
     mode: ControlMode,
-) -> GameSessionConfiguration<'a> {
+) -> (GameSessionConfiguration, HybridAerodynamicLoad<'a>) {
     configuration_for_heading(
         definition,
         surfaces,
@@ -48,7 +49,7 @@ fn configuration_for_heading<'a>(
     maximum_ticks: u64,
     mode: ControlMode,
     heading_rad: f64,
-) -> GameSessionConfiguration<'a> {
+) -> (GameSessionConfiguration, HybridAerodynamicLoad<'a>) {
     let trim = definition.trim().unwrap();
     let ground = trim
         .initial_state_for_ground_launch(NedPoint::try_new(0.0, 0.0, cg_down).unwrap(), heading_rad)
@@ -85,22 +86,26 @@ fn configuration_for_heading<'a>(
     let scenario = TailFlightScenario::try_new(
         parameters,
         load,
-        TailControlProfile::try_new(0.5, 0.5, 0.8).unwrap(),
+        crate::tail_control::test_profile(0.5, 0.5),
     )
     .unwrap();
-    GameSessionConfiguration::try_new_tail(scenario, mode, maximum_ticks, identity()).unwrap()
+    (
+        GameSessionConfiguration::try_new_tail(scenario, mode, maximum_ticks, identity()).unwrap(),
+        load,
+    )
 }
 
-fn launch(configuration: GameSessionConfiguration<'_>) -> GameSession<'_> {
+fn launch(
+    (configuration, loads): (GameSessionConfiguration, HybridAerodynamicLoad<'_>),
+) -> FixtureSession<'_> {
     let mut session = GameSession::new();
     session.open_setup().unwrap();
     session.prepare_flight(configuration).unwrap();
     session.mark_briefing_ready().unwrap();
     session.start_countdown(1).unwrap();
-    session
-        .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
-        .unwrap();
-    session
+    let token = session.countdown_token().unwrap();
+    session.observe_countdown(token, 1.0, true).unwrap();
+    FixtureSession { session, loads }
 }
 
 fn input() -> TailFlightTickInput {
@@ -126,11 +131,7 @@ fn flight_progress_uses_signed_sealed_course_and_datum_despite_pilot_motion() {
         heading_rad,
     ));
     let initial = session.snapshot().tail_flight_state().unwrap();
-    let initial_cg = session
-        .telemetry()
-        .unwrap()
-        .unwrap()
-        .composite_cg_position_ned_m;
+    let initial_cg = session.telemetry().unwrap().composite_cg_position_ned_m;
     let initial_datum = initial.flight_state().datum_position_ned();
     let [north, east, down] = initial_datum.components();
     let position = NedPoint::try_new(
@@ -166,11 +167,7 @@ fn flight_progress_uses_signed_sealed_course_and_datum_despite_pilot_motion() {
     assert!((progress.net_horizontal_m() - 5.0).abs() < 1.0e-12);
     let cg_progress = course_distance_score(
         initial_cg,
-        session
-            .telemetry()
-            .unwrap()
-            .unwrap()
-            .composite_cg_position_ned_m,
+        session.telemetry().unwrap().composite_cg_position_ned_m,
         CourseAxis::try_new(libm::cos(heading_rad), libm::sin(heading_rad)).unwrap(),
     )
     .unwrap();
@@ -269,9 +266,8 @@ fn tail_session_shares_lifecycle_pause_retry_and_record_contract() {
     assert_eq!(session.snapshot().phase(), SessionPhase::BriefingReady);
     assert_eq!(session.configuration_identity(), Some(identity()));
     session.start_countdown(1).unwrap();
-    session
-        .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
-        .unwrap();
+    let token = session.countdown_token().unwrap();
+    session.observe_countdown(token, 1.0, true).unwrap();
     assert_eq!(session.snapshot().tail_flight_state(), Some(state));
     session.advance_tail_flight_tick(input()).unwrap();
     session.advance_tail_flight_tick(input()).unwrap();
@@ -613,7 +609,7 @@ fn running_owner_rejects_non_running_phases_before_evaluation() {
         10,
         ControlMode::Manual,
     ));
-    let reject = |session: &mut GameSession<'_>| {
+    let reject = |session: &mut GameSession| {
         let snapshot = session.snapshot();
         let samples = session
             .flight_record()
@@ -696,6 +692,7 @@ fn running_owner_preserves_callback_order_and_stage_failure_priority() {
             let observed = Cell::new(None);
             let tick_failure = TailFlightTickError::TickOverflow;
             let telemetry_failure = FlightTelemetryError::Wind(crate::WindError::OutsideGrid);
+            let loads = session.loads;
             let outcome = session.advance_tail_flight_tick_with(
                 input(),
                 |configuration, state, sampled_input| {
@@ -711,6 +708,8 @@ fn running_owner_preserves_callback_order_and_stage_failure_priority() {
                         state,
                         configuration.control_mode,
                         sampled_input,
+                        &loads,
+                        crate::WaterContactGeometry::try_new(&CONTACT_POINTS).unwrap(),
                     )?;
                     let report = if stage == Stage::Append {
                         let crate::TailFlightTickOutcome::Advanced(next) = report.outcome() else {
@@ -720,6 +719,8 @@ fn running_owner_preserves_callback_order_and_stage_failure_priority() {
                             next,
                             configuration.control_mode,
                             sampled_input,
+                            &loads,
+                            crate::WaterContactGeometry::try_new(&CONTACT_POINTS).unwrap(),
                         )?
                     } else {
                         report
@@ -737,7 +738,7 @@ fn running_owner_preserves_callback_order_and_stage_failure_priority() {
                     if stage == Stage::Telemetry {
                         return Err(telemetry_failure);
                     }
-                    configuration.telemetry(state)
+                    configuration.telemetry(state, &loads)
                 },
                 |configuration, terminal| {
                     events.borrow_mut().push("score");
@@ -868,4 +869,32 @@ fn running_owner_finalization_rejection_retains_the_previous_owner() {
     assert_eq!(session.snapshot(), snapshot);
     assert_eq!(session.flight_record().unwrap().samples(), samples);
     assert_eq!(session.flight_record().unwrap().finalization(), metadata);
+}
+
+struct FixtureSession<'a> {
+    session: GameSession,
+    loads: HybridAerodynamicLoad<'a>,
+}
+impl core::ops::Deref for FixtureSession<'_> {
+    type Target = GameSession;
+    fn deref(&self) -> &GameSession {
+        &self.session
+    }
+}
+impl core::ops::DerefMut for FixtureSession<'_> {
+    fn deref_mut(&mut self) -> &mut GameSession {
+        &mut self.session
+    }
+}
+impl FixtureSession<'_> {
+    fn advance_tail_flight_tick(
+        &mut self,
+        input: TailFlightTickInput,
+    ) -> Result<SessionSnapshot, GameSessionError> {
+        self.session.advance_tail_flight_tick(
+            input,
+            &self.loads,
+            crate::WaterContactGeometry::try_new(&CONTACT_POINTS).unwrap(),
+        )
+    }
 }

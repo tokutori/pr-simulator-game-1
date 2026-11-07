@@ -7,21 +7,21 @@
 
 - 制御、authority混合、actuator、身体の位置・速度・保持目標は共有Rust coreの決定的な状態とする。
 - WebとNativeの入力adapterは機器の値を機器非依存のintentへ変換し、整数tickへ割り当てる。
-- FBWは直前成功tickのbody角速度を観測する。
+- controllerは直前成功tickのbody角速度、姿勢、対気速度と採用済みのPID memoryを観測する。
 - adapterに追加の制御ループや物理定数を置かない。
 - DOM、Gamepad API、OSイベント、描画はこのcore境界に含めない。
 
 | 型 | 意味と範囲 |
 |---|---|
 | `TailPilotIntent` | normalized nose-up/right-turn。各閉区間[-1,1] |
-| `TailRateTarget` | body正方向のpitch q / yaw r目標。各閉区間±0.2 rad/s |
-| `TailIncidence` | 水平・垂直尾翼のphysical effective incidence。各閉区間±0.2 rad |
+| `TailRateTarget` | body正方向のpitch q / yaw r目標。入力ownerが選択controllerの軸別使用範囲へ写像する |
+| `TailIncidence` | 水平・垂直尾翼のphysical effective incidence。principal angleの閉区間±π rad。機械stopは機体JSONで指定 |
 | `TailPilotPositionCommand` | 身体位置の`Set`要求または`Hold` |
 | `ControlMode` | Manual、Shared（authority）、Automaticの直和型 |
-| `TailFlightTickState` | body/pilot state、二系統incidence、保持pilot target、整数tickの単一正本 |
+| `TailFlightTickState` | body/pilot state、二系統incidence、保持pilot target、固定長PID memory、整数tickの単一正本 |
 
 - 独立したroll入力は持たない。
-- manualの正nose-up/right-turnは、それぞれ水平・垂直尾翼のphysical incidenceへ-0.2 rad倍で写像する。
+- manualの正nose-up/right-turnは、それぞれ水平・垂直尾翼の負incidence側へ写像する。正負別の使用角限界はcontroller JSONから取る。
 - observed roll rateを操作量に使わない。
 
 FBW authorityは舵指令だけに適用する。Manualはpilot指令、Automaticはcontroller指令を選び、Sharedは有限な $a\in[0,1]$ で線型混合する。
@@ -31,17 +31,34 @@ u=(1-a)u_{pilot}+a u_{FBW}
 ```
 
 - Informationは表示だけへ作用する。
-- AssistanceのStrong / Assisted / Light / Manualはauthority 1 / 0.5 / 0.2 / 0へ解決する。
-- 既定の支援はLightである。
-- 実際に解決した`ControlMode::Shared`のauthorityを保持し、保存後にAssistanceから再解決しない。
+- 現行の選択は手動・混合・自動の3種で、authorityは0・controller JSONのA・1へ解決する。同梱Aは0.5で、既定の選択は混合とする。
+- 旧LightとExpertの現行選択は同じ混合へ正規化する。archiveの記録時の分類と値は元のmetadataを保持する。
+- 封印した実効`ControlMode`をUI・記録・PBへ使い、保存後に現在のAssistanceやcontrollerから再解決しない。
 - 身体の位置目標は舵authorityと独立であり、Automaticでも入力できる。
 - 未入力時は保持中の目標を使用する。
 
-## FBWとactuator
+## controller JSONとPID
 
-- `tail_rate_feedback_incidence`は各軸の`gain × (observed - target)`を±0.2 radへ飽和する。
-- `TailControlProfile`のq/r gainは各0.2 s、最大slewは各1 rad/sとし、機体の空力係数から分離する。
-- `advance_tail_control`はauthority混合、physical saturation、slewを純粋に評価し、混合要求と次区間の保持incidenceを返す。
+- 所有: controller JSONはID、合法テンプレート、各PID、入力目標範囲、尾翼の使用角範囲、body rate範囲、混合比、迎角保護を定義する。機械stopと軸別physical slewは機体JSONが所有する。
+- pitch: Rate、AttitudeRate、AirspeedAttitudeRateを選ぶ。yawはRate、HeadingRateを選び、省略した外側の段の目標は入力から供給する。
+- 各PID: Kp・Ki・Kd、積分寄与の上下限、出力上下限、微分フィルタ時定数を持つ。Iと出力の区間は0を含み、[0,0]で無効化できる。
+- 符号: 速度誤差は観測速度−目標速度、姿勢・heading・rateの誤差は目標−観測とする。正のq/r要求を負の尾翼incidenceへ変換する。
+- 運動学: Euler角速度とbody q/rを正規321変換で接続する。heading誤差と観測差分は同じ最短角差を使う。正規姿勢分解の特異点では外側観測を未取得とし、body rateの減衰制御を使う。
+- 同梱設定: 二軸Rate-P、Kp 0.2 s、Ki/Kd 0、使用角とrate範囲±0.2、A 0.5とする。同じ実効Aで従来のRate-P式と一致する。
+
+PIDの現在出力は、現在の誤差、採用済み積分寄与 $I_n$、観測の微分から計算する。
+
+```math
+u_n=K_p e_n+I_n+K_d D_n
+```
+
+- 微分時刻: 前回採用した観測から現在の観測までの時間を使う。測定値微分へ誤差の符号を適用し、時定数による一次フィルタを使う。初回・観測復帰の微分は0とする。
+- 積分時刻: 現在から次の実採用状態までの物理時間を使う。部分接触はfraction相当の時間とし、fraction 0はmemory全体を保持する。
+- 採用: 現在出力と候補memoryを一度計算し、RK4 stageと接触root探索で再積分しない。成功した物理区間の確定時にmemoryを一度commitし、失敗時は元のmemoryを保持する。
+- anti-windup: 各段の出力飽和と下流のclamp・混合・保護・physical slewが阻害する増減方向を各PIDへ戻す。阻害方向へのI更新を止め、飽和を解消する方向の更新を認可する。
+- 選択: 文書単独の検証と機体とのpair検査を分ける。文書単独で有効なら保存・選択でき、使用角が機体stop内にあることや実trimと目標範囲の整合を確認して準備・開始・Retryを認可する。
+
+## actuatorと区間の採用
 
 - 整数tick $k$ のstateは前区間の保持値 $\delta_k$ を持つ。
 - 入力 $k$ による更新値 $\delta_{k+1}$ は区間 $(k,k+1]$ の全RK4 stageへ保持する。
@@ -49,28 +66,11 @@ u=(1-a)u_{pilot}+a u_{FBW}
 - Replayのexact sampleは保存値、区間内点は終端側sampleの保持incidenceを返す。
 - 入力から連続したactuator軌跡を推測しない。
 
-### 局所迎角差と尾翼角の合成範囲
+### 局所迎角差と尾翼角の評価
 
-Manual・Shared・Automaticの全てへ、同じRust tick内で保護を適用する。
-hybridの各proxyが持つ局所迎角差 $\Delta\alpha_i$ と尾翼角の合計を検査する。
-
-```math
-I(s)=[-0.2,0.2]\cap\bigcap_i[-0.2-\Delta\alpha_i,0.2-\Delta\alpha_i]
-```
-
-- 最初に通常のauthority・slewで生成した保持incidenceを、全RK4 stageと公開stateで評価する。
-- 公開stateは非接触時のweighted endpoint、接触時の同時刻terminal stateである。
-- 成功結果は変更せず採用する。
-
-- 合成角制限に失敗した場合は、現在状態の許容区間と`previous ± maximum_slew × PHYSICS_DT_SECONDS`の可到達区間を交差する。
-- 各軸の投影要求、前tick incidenceの投影値、中央、下限、上限から最大25組を追加検査し、最初に成功した結果だけを公開する。
-- controller、身体目標、身体加速度は一度だけ導出して候補間で固定する。
-- incidenceを候補ごとの全stageへ保持し、刻み・物理式・係数・適用範囲を変更しない。
-
-- この探索は有限候補による1 tickの検査である。
-- 連続区間の網羅、将来の継続安全、失速保護、姿勢・迎角の保持は保証しない。
-- `StaticAlpha`、局所速度、風の領域外等の独立した失敗は元の型付きエラーを保持する。
-- 候補が得られない場合は名目指令の元cause/site/stageで終了し、最後の有効stateとrecordを維持する。
+- Manual・Shared・Automaticの全てで、authority・slewから導いた保持incidenceを一度採用し、全RK4 stageと公開stateで同じ値を評価する。
+- 局所迎角差と尾翼角の合計が通常域を超える場合は、[共有空力の全域継続](flight-dynamics.md#通常流域と全域継続)によって局所線型式からplate荷重へ滑らかに移る。
+- 公開stateは非接触時のweighted endpoint、接触時の同時刻terminal stateである。風の領域外・非有限計算等の失敗は元のcause/site/stageを保持し、最後の有効stateとrecordを保持する。
 - endpointの直接評価はstageを`None`とし、Fourth stageと区別する。
 
 ### 迎角と身体目標のsoft保護
@@ -78,7 +78,7 @@ I(s)=[-0.2,0.2]\cap\bigcap_i[-0.2-\Delta\alpha_i,0.2-\Delta\alpha_i]
 - `TailAngleOfAttackGuard`は検証済みprofileに保持するoptional policyである。
 - 公開Playableの設定はdatum alpha運用帯[-0.09,+0.09] rad、preview 1.0 s、pitch gain 1.6 sとし、基準alphaはtrimのdatum alphaである。
 - Manual・Shared・Automaticに同じpolicyを適用し、元のauthority、q/r gain、slewを維持する。
-- これらは合成controllerの設計値であり、hybridのhard envelopeを拡大しない。
+- これらは通常運用帯へ操縦を補助する合成controllerの設計値である。
 
 - guardはdatum $O$ で同じ風場を評価し、対地速度から風を引いてbodyへ変換した速度の`atan2(down, forward)`を使う。
 - HUD・record telemetryが示す合成重心 $G$ のalphaとは区別する。
@@ -118,21 +118,21 @@ rudder要求はこのalpha policyで変更しない。
 ## 移動質量の力学
 
 - パイロットの身体移動は機体前後方向の1自由度とする。
-- パイロットを除く機体の固定重心をdatum $O$ とし、主翼・尾翼・接触点・眼位置の基準をdatumから保持する。
+- 機体構造の固定datum $O$ から主翼・尾翼・接触点・眼位置と、機体単体CG位置 $r_a$ を保持する。
 - 機体は剛体、パイロットは機体に対して回転しない質点である。
 - 相対位置 $x_p$、速度 $\dot x_p$、加速度 $\ddot x_p$ を扱い、質量・固定高さ・範囲・最大速度・最大加速度・初期状態は検証済み`AircraftModel`へ含める。
 
 機体質量 $m_a$、パイロット質量 $m_p$、固定高さ $z_p$、位置 $r_p^B=(x_p,0,z_p)$ から合成重心を導出する。
 
 ```math
-M=m_a+m_p,\qquad r_G^B=\frac{m_p r_p^B}{M}
+M=m_a+m_p,\qquad h=m_a r_a^B+m_p r_p^B,\qquad r_G^B=\frac{h}{M}
 ```
 
-datumまわりの機体固定慣性を $I_a$、$d_a=-r_G^B$、$d_p=r_p^B-r_G^B$ とし、平行軸の定理で合成慣性を求める。
+datumまわりの機体固定慣性を $I_{a,O}$ とし、平行軸の定理で合成慣性を求める。
 
 ```math
-I_G=I_a+m_a\left(\lVert d_a\rVert^2 I_3-d_a d_a^T\right)
-       +m_p\left(\lVert d_p\rVert^2 I_3-d_p d_p^T\right)
+I_G=I_{a,O}+m_p\left(\lVert r_p\rVert^2 I_3-r_p r_p^T\right)
+       -M\left(\lVert r_G\rVert^2 I_3-r_G r_G^T\right)
 ```
 
 固定点 $i$ は $r_{Oi}^B$ を保持する。積分状態はdatumの位置・対地速度、姿勢・角速度、$x_p,\dot x_p$ とする。
@@ -155,11 +155,11 @@ v_G^N=v_O^N+R_{NB}(\omega^B\times r_G^B+\dot r_G^B)
 $v_O^B=R_{NB}^Tv_O^N$、$\dot r_p^B=(\dot x_p,0,0)$ とし、内部質量の相対運動を運動量へ含める。
 
 ```math
-P^B=Mv_O^B+m_p(\omega^B\times r_p^B+\dot r_p^B)
+P^B=Mv_O^B+\omega^B\times h+m_p\dot r_p^B
 ```
 
 ```math
-H_O^B=I_a\omega^B+m_p r_p^B\times(v_O^B+\omega^B\times r_p^B+\dot r_p^B)
+H_O^B=I_{a,O}\omega^B+m_a r_a^B\times v_O^B+m_p r_p^B\times(v_O^B+\omega^B\times r_p^B+\dot r_p^B)
 ```
 
 外力 $F^B$ とdatumまわりの外部モーメント $M_O^B$ は、重力を含む全質量要素・作用点から評価する。
@@ -182,7 +182,7 @@ $m_p=0$、身体静止、無外力時の全運動量・角運動量、一般3次
 ## 身体の目標位置と停止policy
 
 - `TailPilotPositionCommand`は新しいnormalized inputの`Set`と、前tickの保持要求を使う`Hold`を排他的に表す。
-- `TailPilotPositionMapping`は[-1,0,1]を[-0.4,trim,0.4] mへ区分線型に写像し、出力を±0.4 mへ制限する。
+- `TailPilotPositionMapping`は[-1,0,1]を機体JSONの[最小位置,trim,最大位置] mへ区分線型に写像する。逆写像も同じ物理範囲を使い、trimが端点に一致する場合の中立入力を0とする。
 - 新しいflightの保持targetはtrim、中立inputもtrimとする。
 - 欠損・切断の`Hold`は保持中の要求位置を名目要求とする。
 - 速度・加速度・移動範囲は身体policyが検証し、位置の瞬間的な変更を禁止する。

@@ -12,9 +12,9 @@ processing = "Original SVG vector artwork; no external source transformation; UT
 
 [[assets]]
 path = "assets/aircraft/playable-glider-v7.json"
-sha256 = "7b04c2918e79b17535a51b16ad2c4dfe5d1218b8729ac14ccfebb698c979a701"
+sha256 = "5f71fcf543afb8119ba05f9294bf0e09e485b3aa376ef28328da4d7fd2f42132"
 source = "Original fictional glider parameters and procedural structural definition"
-source_version = "Aircraft document schema 4; physical model 7"
+source_version = "Aircraft document schema 5; physical model 7"
 license = "MIT"
 license_url = "../LICENSE"
 attribution = "pr-simulator-game contributors"
@@ -189,3 +189,13 @@ license = "ODbL-1.0"
 license_url = "https://opendatacommons.org/licenses/odbl/1-0/"
 attribution = "© OpenStreetMap contributors"
 processing = "tools/world-build/build_biwa_world.py; WGS84 origin 35.294075,136.254448; 3 km square; beach, woodland, tree-row, pier, quay and breakwater ways; source OSM XML excluded"
+
+[[assets]]
+path = "assets/controllers/default-rate-v1.json"
+sha256 = "8094c4ed598565cceaa5ef03c3d84c036dbebb42245d1e581763e29bddeb4f0d"
+source = "Original two-axis rate controller settings"
+source_version = "Controller document schema 1"
+license = "MIT"
+license_url = "../LICENSE"
+attribution = "pr-simulator-game contributors"
+processing = "Rate-P feedback; physical actuator stops and slew remain in the independent aircraft document"

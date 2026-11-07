@@ -186,7 +186,7 @@ fn deserialize_terminal_failure<'de, Decoder: serde::Deserializer<'de>>(
 }
 
 /// Current archive schema with named two-tail controls.
-pub const TAIL_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 8;
+pub const TAIL_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 10;
 
 /// Explicit model/controller names; their independent versions remain in the common header.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,8 +195,14 @@ pub const TAIL_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 8;
 pub struct FlightRecordTailIdentityDocument {
     /// Immutable aircraft configuration name.
     pub aircraft_configuration_id: String,
+    /// SHA-256 of the exact aircraft source bytes; absent in legacy archives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aircraft_sha256: Option<String>,
     /// Software tail-controller profile name, independent of aircraft data.
     pub controller_profile_id: String,
+    /// Exact original controller source digest; absent in legacy archives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_sha256: Option<String>,
 }
 
 /// Named physical angles in radians, preserving the two-tail contract without a roll slot.
@@ -205,10 +211,10 @@ pub struct FlightRecordTailIdentityDocument {
 #[serde(deny_unknown_fields)]
 pub struct TailIncidenceDocument {
     /// Horizontal-tail effective incidence, positive for negative pitch moment on an aft tail.
-    #[cfg_attr(feature = "schema", schemars(range(min = -0.2, max = 0.2)))]
+    #[cfg_attr(feature = "schema", schemars(range(min = -core::f64::consts::PI, max = core::f64::consts::PI)))]
     pub horizontal_tail_rad: f64,
     /// Vertical-tail effective incidence, positive for negative yaw moment with the configured fin.
-    #[cfg_attr(feature = "schema", schemars(range(min = -0.2, max = 0.2)))]
+    #[cfg_attr(feature = "schema", schemars(range(min = -core::f64::consts::PI, max = core::f64::consts::PI)))]
     pub vertical_tail_rad: f64,
 }
 
@@ -357,38 +363,28 @@ impl TailFlightRecordDocument {
         let finalization = TailFlightRecordFinalizationDocument::try_from_core(finalization)?;
         let core_header = record.header();
         let scenario = core_header.scenario;
-        let schema_version = if record
-            .samples()
-            .iter()
-            .all(|sample| sample.tail_wrenches.is_some())
+        if scenario.aircraft_identity != [0; 32]
+            && identity.aircraft_sha256.as_deref().is_none_or(|sha| {
+                crate::aircraft_identity(&identity.aircraft_configuration_id, sha)
+                    != scenario.aircraft_identity
+            })
         {
-            TAIL_FLIGHT_RECORD_SCHEMA_VERSION
-        } else if record
-            .samples()
-            .iter()
-            .all(|sample| sample.tail_wrenches.is_none())
-            && record
-                .samples()
-                .iter()
-                .all(|sample| sample.wing_bending_factor.is_some())
-        {
-            7
-        } else if record
-            .samples()
-            .iter()
-            .all(|sample| sample.tail_wrenches.is_none())
-            && record
-                .samples()
-                .iter()
-                .all(|sample| sample.wing_bending_factor.is_none())
-            && record
-                .finalization()
-                .is_some_and(|metadata| metadata.boundary_event.is_none())
-        {
-            6
-        } else {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
+        let Some(controller_sha) = identity.controller_sha256.as_deref() else {
             return Err(FlightRecordFormatError::InvalidRecord);
         };
+        if identity.aircraft_sha256.is_none()
+            || scenario.controller_identity
+                != Some(crate::controller_identity(
+                    &identity.controller_profile_id,
+                    controller_sha,
+                ))
+            || core_header.control_mode.is_none()
+        {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
+        let schema_version = TAIL_FLIGHT_RECORD_SCHEMA_VERSION;
         let document = Self {
             schema_version,
             header: FlightRecordHeaderDocument {
@@ -397,7 +393,8 @@ impl TailFlightRecordDocument {
                 scenario_version: scenario.scenario_version,
                 aircraft_model_version: scenario.aircraft_model_version,
                 environment_version: scenario.environment_version,
-                controller_profile_version: scenario.controller_profile_version,
+                controller_profile_version: None,
+                control_mode: core_header.control_mode.map(Into::into),
                 difficulty: settings.into(),
                 seed: scenario.seed,
                 maximum_flight_ticks: core_header.maximum_flight_ticks,
@@ -419,14 +416,42 @@ impl TailFlightRecordDocument {
         Ok(document)
     }
 
+    /// Reads the saved actual mode without applying current controller settings to legacy metadata.
+    pub fn recorded_control_mode(&self) -> Option<crate::FlightRecordControlMode> {
+        self.header
+            .control_mode
+            .or_else(|| match &self.identity_metadata {
+                FlightRecordIdentityMetadata::Unrecognized(value) => value
+                    .get("conditions")?
+                    .get("control_mode")
+                    .and_then(|value| serde_json::from_value(value.clone()).ok()),
+                _ => None,
+            })
+            .filter(|mode| mode.to_core().is_ok())
+    }
+
     fn scenario_identity(&self) -> SessionScenarioIdentity {
         SessionScenarioIdentity {
+            aircraft_identity: self
+                .control_identity
+                .aircraft_sha256
+                .as_deref()
+                .map(|sha| {
+                    crate::aircraft_identity(&self.control_identity.aircraft_configuration_id, sha)
+                })
+                .unwrap_or([0; 32]),
             catalog_version: self.header.catalog_version,
             scenario_id: self.header.scenario_id,
             scenario_version: self.header.scenario_version,
             aircraft_model_version: self.header.aircraft_model_version,
             environment_version: self.header.environment_version,
-            controller_profile_version: self.header.controller_profile_version,
+            controller_identity: self
+                .control_identity
+                .controller_sha256
+                .as_deref()
+                .map(|sha| {
+                    crate::controller_identity(&self.control_identity.controller_profile_id, sha)
+                }),
             seed: self.header.seed,
         }
     }
@@ -435,7 +460,7 @@ impl TailFlightRecordDocument {
     pub fn to_finalized_core_record(&self) -> Result<FlightRecord, FlightRecordFormatError> {
         if !matches!(
             self.schema_version,
-            6 | 7 | TAIL_FLIGHT_RECORD_SCHEMA_VERSION
+            6 | 7 | 8 | 9 | TAIL_FLIGHT_RECORD_SCHEMA_VERSION
         ) {
             return Err(FlightRecordFormatError::UnsupportedSchemaVersion);
         }
@@ -450,7 +475,7 @@ impl TailFlightRecordDocument {
                     .samples
                     .iter()
                     .any(|sample| sample.wing_bending_factor.is_none()))
-            || (self.schema_version == 8
+            || (self.schema_version >= 8
                 && self
                     .samples
                     .iter()
@@ -468,7 +493,7 @@ impl TailFlightRecordDocument {
                         .finalization
                         .boundary_event
                         .is_some_and(|event| event.tail_wrenches.is_some())))
-            || (self.schema_version == 8
+            || (self.schema_version >= 8
                 && (self
                     .samples
                     .iter()
@@ -477,6 +502,46 @@ impl TailFlightRecordDocument {
                         .finalization
                         .boundary_event
                         .is_some_and(|event| event.tail_wrenches.is_none())))
+        {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
+        if (self.schema_version >= 9 && self.control_identity.aircraft_sha256.is_none())
+            || (self.schema_version < 9 && self.control_identity.aircraft_sha256.is_some())
+        {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
+        if self.schema_version >= 10 {
+            if self.control_identity.controller_sha256.is_none()
+                || self.header.control_mode.is_none()
+                || self.header.controller_profile_version.is_some()
+            {
+                return Err(FlightRecordFormatError::InvalidRecord);
+            }
+        } else if self.control_identity.controller_sha256.is_some()
+            || self.header.control_mode.is_some()
+            || self
+                .header
+                .controller_profile_version
+                .is_none_or(|version| version == 0)
+        {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
+        if let Some(mode) = self.header.control_mode {
+            mode.to_core()?;
+        }
+        if let Some(sha) = &self.control_identity.controller_sha256
+            && (sha.len() != 64
+                || !sha
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+        {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
+        if let Some(sha) = &self.control_identity.aircraft_sha256
+            && (sha.len() != 64
+                || !sha
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
         {
             return Err(FlightRecordFormatError::InvalidRecord);
         }
@@ -490,6 +555,9 @@ impl TailFlightRecordDocument {
             || self.header.score_definition_version
                 != birdman_game_core::COURSE_DISTANCE_SCORE_VERSION
             || !(self.header.physics_model_version == birdman_game_core::PHYSICS_MODEL_VERSION
+                || self.header.physics_model_version == 8
+                || self.header.physics_model_version == 7
+                || self.header.physics_model_version == 6
                 || self.header.physics_model_version == 5
                 || self.header.physics_model_version == 4
                 || (self.schema_version == 6 && self.header.physics_model_version == 3))
@@ -501,9 +569,14 @@ impl TailFlightRecordDocument {
         {
             return Err(FlightRecordFormatError::InvalidRecord);
         }
-        let header =
-            FlightRecordHeader::try_new(self.scenario_identity(), self.header.maximum_flight_ticks)
-                .map_err(|_| FlightRecordFormatError::InvalidRecord)?;
+        let header = FlightRecordHeader::try_new(
+            self.scenario_identity(),
+            self.header.maximum_flight_ticks,
+            self.recorded_control_mode()
+                .map(|mode| mode.to_core())
+                .transpose()?,
+        )
+        .map_err(|_| FlightRecordFormatError::InvalidRecord)?;
         let samples = self
             .samples
             .iter()
@@ -629,7 +702,7 @@ impl TailFlightRecordDocument {
             serde_json::from_slice(input).map_err(|_| FlightRecordFormatError::InvalidJson)?;
         if !matches!(
             version.schema_version,
-            6 | 7 | TAIL_FLIGHT_RECORD_SCHEMA_VERSION
+            6 | 7 | 8 | 9 | TAIL_FLIGHT_RECORD_SCHEMA_VERSION
         ) {
             return Err(FlightRecordFormatError::UnsupportedSchemaVersion);
         }
@@ -645,9 +718,12 @@ impl TailFlightRecordDocument {
         identity: &FlightRecordTailIdentityDocument,
         scenario: SessionScenarioIdentity,
         physics_model_version: u32,
+        control_mode: birdman_game_core::ControlMode,
     ) -> Result<(), FlightRecordFormatError> {
         self.validate()?;
-        if self.control_identity != *identity
+        if scenario.controller_identity.is_none()
+            || self.header.control_mode != Some(control_mode.into())
+            || self.control_identity != *identity
             || self.scenario_identity() != scenario
             || self.header.physics_model_version != physics_model_version
         {

@@ -15,7 +15,7 @@ const TITLE_RETURN_LABEL: &str = "タイトルへ戻る";
 /// Projects shared menu content, action admission, groups, layout and record charts.
 pub fn game_ui_view(
     state: &GameUiState,
-    context: &GameUiContext<'_, '_>,
+    context: &GameUiContext<'_>,
 ) -> Result<GameUiView, GameUiError> {
     let phase = context.session.snapshot().phase();
     let scene = scene(phase);
@@ -159,7 +159,7 @@ pub fn game_ui_view(
                 "飛行準備へ進む",
                 SessionCommand::Prepare {},
                 GameUiEmphasis::Primary,
-                true,
+                context.controller_pair_diagnostic.is_none(),
             );
             menu.session(
                 "game-setup-back",
@@ -361,6 +361,13 @@ pub fn game_ui_view(
         SessionPhase::Result => result::result(&mut menu, state, context)?,
         SessionPhase::Replay => {
             notification(&mut menu, context);
+            if !context.aircraft_replay_available {
+                menu.status(
+                    "game-replay-aircraft-required",
+                    "",
+                    "この記録の機体JSONを読み込むと映像を再生できる。",
+                );
+            }
             replay(&mut menu, state, context)?;
             logs(&mut menu, context);
         }
@@ -721,7 +728,62 @@ fn flight_camera_choices(menu: &mut Menu, state: &GameUiState) {
     menu.automatic_sections();
 }
 
-fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+fn setup(menu: &mut Menu, context: &GameUiContext<'_>) {
+    menu.section("aircraft", "機体", GameUiSectionLayout::Column);
+    menu.status("game-setup-aircraft", "選択中", context.aircraft_name);
+    if !context.aircraft_notification.is_empty() {
+        menu.status(
+            "game-setup-aircraft-notification",
+            "",
+            context.aircraft_notification,
+        );
+    }
+    menu.platform(
+        "game-setup-load-aircraft",
+        "機体JSONを読み込む",
+        GameUiPlatformCommand::LoadConfiguration {
+            document: birdman_game_format::ConfigurationDocumentKind::Aircraft,
+        },
+        true,
+    );
+    menu.platform(
+        "game-setup-delete-aircraft",
+        "読み込んだ機体を削除する",
+        GameUiPlatformCommand::DeleteConfiguration {
+            document: birdman_game_format::ConfigurationDocumentKind::Aircraft,
+        },
+        context.aircraft_can_delete,
+    );
+    menu.automatic_sections();
+    menu.section("controller", "制御設定", GameUiSectionLayout::Column);
+    menu.status("game-setup-controller", "選択中", context.controller_name);
+    if !context.controller_notification.is_empty() {
+        menu.status(
+            "game-setup-controller-notification",
+            "",
+            context.controller_notification,
+        );
+    }
+    menu.platform(
+        "game-setup-load-controller",
+        "制御設定JSONを読み込む",
+        GameUiPlatformCommand::LoadConfiguration {
+            document: birdman_game_format::ConfigurationDocumentKind::Controller,
+        },
+        true,
+    );
+    menu.platform(
+        "game-setup-delete-controller",
+        "読み込んだ制御設定を削除する",
+        GameUiPlatformCommand::DeleteConfiguration {
+            document: birdman_game_format::ConfigurationDocumentKind::Controller,
+        },
+        context.controller_can_delete,
+    );
+    if let Some(diagnostic) = &context.controller_pair_diagnostic {
+        menu.status("game-setup-controller-pair", "開始条件", diagnostic);
+    }
+    menu.automatic_sections();
     let difficulty = context.difficulty;
     progress(menu, SessionPhase::FlightSetup);
     menu.section(
@@ -815,15 +877,25 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     for assistance in [
         AssistanceLevel::Strong,
         AssistanceLevel::Assisted,
-        AssistanceLevel::Light,
         AssistanceLevel::Manual,
     ] {
+        let (base, code, description) = catalog::assistance(assistance);
+        let label = if assistance == AssistanceLevel::Assisted {
+            context.controller_shared_authority.map_or_else(
+                || base.to_owned(),
+                |authority| format!("混合（FBW {:.0}%）", authority * 100.0),
+            )
+        } else {
+            base.to_owned()
+        };
         menu.choice(
             "assistance",
             "操縦支援",
-            catalog::assistance(assistance),
+            (&label, code, description),
             SessionCommand::SelectAssistance { assistance },
-            difficulty.assistance() == assistance,
+            difficulty.assistance() == assistance
+                || assistance == AssistanceLevel::Assisted
+                    && difficulty.assistance() == AssistanceLevel::Light,
         );
     }
     for weather in [
@@ -957,7 +1029,7 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     display_settings(menu, context);
 }
 
-fn briefing(menu: &mut Menu, context: &GameUiContext<'_, '_>, phase: SessionPhase) {
+fn briefing(menu: &mut Menu, context: &GameUiContext<'_>, phase: SessionPhase) {
     progress(menu, phase);
     menu.status(
         "game-briefing-conditions",
@@ -966,7 +1038,7 @@ fn briefing(menu: &mut Menu, context: &GameUiContext<'_, '_>, phase: SessionPhas
             "プリセット: {}\n表示情報: {}\n操縦支援: {}\n気象: {}",
             catalog::preset(context.preset).0,
             catalog::information(context.difficulty.information()).0,
-            catalog::assistance(context.difficulty.assistance()).0,
+            assistance_description(context),
             catalog::weather(context.difficulty.weather()).0
         ),
     );
@@ -1007,7 +1079,7 @@ fn progress(menu: &mut Menu, phase: SessionPhase) {
     );
 }
 
-fn feedback(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+fn feedback(menu: &mut Menu, context: &GameUiContext<'_>) {
     if !context.platform.notification.is_empty() {
         menu.status(
             "game-preparation-feedback",
@@ -1092,7 +1164,7 @@ fn credits(menu: &mut Menu) {
     }
 }
 
-fn display_settings(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+fn display_settings(menu: &mut Menu, context: &GameUiContext<'_>) {
     use birdman_game_app::display_settings::DISPLAY_SETTING_STEPS;
     let current = context.display_settings;
     if !context.display_settings_notification.is_empty() {
@@ -1138,7 +1210,7 @@ fn display_setting_step_label(step: f64) -> &'static str {
     }
 }
 
-fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+fn water_quality(menu: &mut Menu, context: &GameUiContext<'_>) {
     menu.automatic_sections();
     use crate::screen_render_auto::{ScreenRenderAutoStatus, ScreenRenderSelection};
     let confirmed = context.platform.render_quality_confirmed;
@@ -1235,7 +1307,7 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     }
 }
 
-fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_>) {
     menu.automatic_sections();
     use crate::screen_render_auto::{
         ScreenRenderAutoStatus, ScreenRenderSelection, ScreenShadowMap,
@@ -1372,16 +1444,19 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     }
 }
 
-fn technical_configuration(context: &GameUiContext<'_, '_>) -> String {
+fn technical_configuration(context: &GameUiContext<'_>) -> String {
     let mut description = match context.identity {
         Some(identity) => format!(
-            "Catalog: v{}\nScenario: {} / v{}\nAircraft: v{}\nEnvironment: v{}\nController: v{}\nSeed: {}:{}",
+            "Catalog: v{}\nScenario: {} / v{}\nAircraft: v{}\nEnvironment: v{}\nController: {}\nSeed: {}:{}",
             identity.catalog_version,
             identity.scenario_id,
             identity.scenario_version,
             identity.aircraft_model_version,
             identity.environment_version,
-            identity.controller_profile_version,
+            identity
+                .controller_identity
+                .map(digest_hex)
+                .unwrap_or_else(|| "未記録".to_owned()),
             identity.seed >> 32,
             identity.seed as u32
         ),
@@ -1437,7 +1512,10 @@ fn technical_configuration(context: &GameUiContext<'_, '_>) -> String {
     } else {
         description.push_str("\nBuild来歴: 不明（保存情報を現在の値で補完しない）");
     }
-    match super::environment::game_ui_environment_diagnostics(context.identity) {
+    match super::environment::game_ui_environment_diagnostics(
+        context.identity,
+        context.representative_position_ned_m,
+    ) {
         Ok(environment) => description.push_str(&format!("\n\n気象の詳細\n{environment}")),
         Err(error) => description.push_str(&format!(
             "\n気象の詳細を取得できない: {}",
@@ -1451,17 +1529,29 @@ fn digest_hex(digest: [u8; 32]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn configuration(context: &GameUiContext<'_, '_>) -> String {
+fn assistance_description(context: &GameUiContext<'_>) -> String {
+    let label = catalog::assistance(context.difficulty.assistance()).0;
+    let mut description = context.controller_effective_authority.map_or_else(
+        || label.to_owned(),
+        |authority| format!("{label}（FBW {:.0}%）", authority * 100.0),
+    );
+    if context.archived_identity.is_none() {
+        description.push_str("・迎角保護: 有効");
+    }
+    description
+}
+
+fn configuration(context: &GameUiContext<'_>) -> String {
     format!(
         "{} / {} / {} / {}",
         catalog::preset(context.preset).0,
         catalog::information(context.difficulty.information()).0,
-        catalog::assistance(context.difficulty.assistance()).0,
+        assistance_description(context),
         catalog::weather(context.difficulty.weather()).0
     )
 }
 
-fn notification(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+fn notification(menu: &mut Menu, context: &GameUiContext<'_>) {
     let mut message = context.platform.notification.clone();
     if let Some(notification) = context.record_notification {
         if !message.is_empty() {
@@ -1490,7 +1580,7 @@ fn notification(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     }
 }
 
-fn logs(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+fn logs(menu: &mut Menu, context: &GameUiContext<'_>) {
     menu.section("flight-log-actions", "飛行ログ", GameUiSectionLayout::Row);
     let enabled = context.platform.flight_log_available && context.record.is_some();
     menu.platform(
@@ -1517,7 +1607,7 @@ fn logs(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
 fn analysis(
     menu: &mut Menu,
     state: &GameUiState,
-    context: &GameUiContext<'_, '_>,
+    context: &GameUiContext<'_>,
     replay: bool,
 ) -> Result<(), GameUiError> {
     menu.section("analysis-tabs", "", GameUiSectionLayout::Row);
@@ -1665,7 +1755,7 @@ fn analysis(
 fn replay(
     menu: &mut Menu,
     state: &GameUiState,
-    context: &GameUiContext<'_, '_>,
+    context: &GameUiContext<'_>,
 ) -> Result<(), GameUiError> {
     if state.replay_view == GameUiReplayView::Analysis {
         analysis(menu, state, context, true)?;
@@ -1687,7 +1777,11 @@ fn replay(
             }
         ),
         GameUiAction::SetReplayView { view: next },
-        next != GameUiReplayView::Analysis || context.platform.analysis_available,
+        if next == GameUiReplayView::Analysis {
+            context.platform.analysis_available
+        } else {
+            context.platform.replay_available
+        },
     );
     if let Some(clock) = context.session.playback_clock() {
         if state.replay_view != GameUiReplayView::Analysis
@@ -1882,7 +1976,7 @@ fn description(
 
 pub(super) fn layout(
     state: &GameUiState,
-    context: &GameUiContext<'_, '_>,
+    context: &GameUiContext<'_>,
     phase: SessionPhase,
 ) -> Result<GameUiLayout, GameUiError> {
     let viewport = context.platform.viewport;
@@ -1991,7 +2085,7 @@ pub(super) fn layout(
     })
 }
 
-fn theme(font: f64) -> GameUiTheme {
+pub(super) fn theme(font: f64) -> GameUiTheme {
     GameUiTheme {
         title_text: GameUiTextStyle {
             font_size_px: 1.75 * font,

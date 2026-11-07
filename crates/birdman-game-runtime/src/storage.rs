@@ -6,6 +6,7 @@ use birdman_game_app::record_persistence::{
     RecordWriteObservation,
 };
 use birdman_game_core::SessionPhase;
+use birdman_game_format::ConfigurationDocumentKind;
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
@@ -13,6 +14,7 @@ use super::{ApplicationRequest, ApplicationRuntimeError};
 
 #[derive(Default)]
 pub(super) struct StorageOwner {
+    documents: [ConfigurationSlot; 2],
     keyboard_read: Option<u32>,
     keyboard_loaded: bool,
     keyboard_save: Option<(u32, birdman_game_app::flight_input::KeyboardControlSettings)>,
@@ -45,6 +47,108 @@ enum PreviewState {
     Unrequested,
     Ready,
     Failed,
+}
+
+#[derive(Default)]
+struct ConfigurationSlot {
+    job: Option<ConfigurationJob>,
+    loaded: bool,
+    has_saved: bool,
+    notification: String,
+}
+
+enum ConfigurationJob {
+    Read(u32),
+    Pick {
+        request_id: u32,
+        source: [u8; 32],
+    },
+    Write {
+        request_id: u32,
+        source: [u8; 32],
+        candidate: SelectedConfiguration,
+    },
+    Delete {
+        request_id: u32,
+        source: [u8; 32],
+        candidate: SelectedConfiguration,
+    },
+}
+
+pub(super) enum SelectedConfiguration {
+    Aircraft(Box<birdman_game_app::SelectedAircraft>),
+    Controller(Box<birdman_game_app::SelectedController>),
+}
+
+impl SelectedConfiguration {
+    fn bundled(document: ConfigurationDocumentKind) -> Result<Self, String> {
+        match document {
+            ConfigurationDocumentKind::Aircraft => birdman_game_app::SelectedAircraft::bundled()
+                .map(|selected| Self::Aircraft(Box::new(selected)))
+                .map_err(|cause| cause.to_string()),
+            ConfigurationDocumentKind::Controller => {
+                birdman_game_app::SelectedController::bundled()
+                    .map(|selected| Self::Controller(Box::new(selected)))
+                    .map_err(|cause| cause.to_string())
+            }
+        }
+    }
+
+    fn decode(document: ConfigurationDocumentKind, bytes: Vec<u8>) -> Result<Self, String> {
+        match document {
+            ConfigurationDocumentKind::Aircraft => {
+                let selected = birdman_game_app::SelectedAircraft::decode(bytes)
+                    .map_err(|cause| cause.to_string())?;
+                selected
+                    .launch_position()
+                    .map_err(|cause| cause.to_string())?;
+                Ok(Self::Aircraft(Box::new(selected)))
+            }
+            ConfigurationDocumentKind::Controller => {
+                birdman_game_app::SelectedController::decode(bytes)
+                    .map(|selected| Self::Controller(Box::new(selected)))
+                    .map_err(|cause| cause.to_string())
+            }
+        }
+    }
+
+    fn original(&self) -> &[u8] {
+        match self {
+            Self::Aircraft(selected) => selected.original(),
+            Self::Controller(selected) => selected.original(),
+        }
+    }
+
+    pub(super) fn apply(
+        self,
+        application: &mut ApplicationSession,
+    ) -> Result<(), birdman_game_core::GameSessionError> {
+        match self {
+            Self::Aircraft(selected) => application.select_aircraft(*selected),
+            Self::Controller(selected) => application.select_controller(*selected),
+        }
+    }
+}
+
+/// Original configuration bytes produced by a requested storage or file-picker operation.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ApplicationConfigurationLoad {
+    /// The persistent document does not exist.
+    Missing,
+    /// The user dismissed the file picker.
+    Cancelled,
+    /// Original bytes; shared Rust owns validation, hashing and selection.
+    Found {
+        /// Unmodified source document, including its encoding bytes.
+        bytes: Vec<u8>,
+    },
+    /// Original platform I/O failure.
+    Failed {
+        /// Diagnostic from the platform API.
+        cause: String,
+    },
 }
 
 struct LoadJob {
@@ -130,7 +234,267 @@ struct DisplaySettingsDocument {
     display_settings: birdman_game_app::display_settings::DisplaySettings,
 }
 
+fn configuration_label(document: ConfigurationDocumentKind) -> &'static str {
+    match document {
+        ConfigurationDocumentKind::Aircraft => "機体",
+        ConfigurationDocumentKind::Controller => "制御設定",
+    }
+}
+fn configuration_identity(
+    application: &ApplicationSession,
+    document: ConfigurationDocumentKind,
+) -> Option<[u8; 32]> {
+    match document {
+        ConfigurationDocumentKind::Aircraft => application
+            .aircraft()
+            .ok()
+            .map(|selected| selected.identity()),
+        ConfigurationDocumentKind::Controller => application
+            .controller()
+            .ok()
+            .map(|selected| selected.identity()),
+    }
+}
+fn configuration_admitted(
+    application: &ApplicationSession,
+    document: ConfigurationDocumentKind,
+    source: [u8; 32],
+) -> bool {
+    application.core_session().snapshot().phase() == SessionPhase::FlightSetup
+        && configuration_identity(application, document) == Some(source)
+}
+
 impl StorageOwner {
+    fn document_slot(&self, document: ConfigurationDocumentKind) -> &ConfigurationSlot {
+        &self.documents[match document {
+            ConfigurationDocumentKind::Aircraft => 0,
+            ConfigurationDocumentKind::Controller => 1,
+        }]
+    }
+    fn document_slot_mut(&mut self, document: ConfigurationDocumentKind) -> &mut ConfigurationSlot {
+        &mut self.documents[match document {
+            ConfigurationDocumentKind::Aircraft => 0,
+            ConfigurationDocumentKind::Controller => 1,
+        }]
+    }
+    pub(super) fn configuration_needs_read(&self, document: ConfigurationDocumentKind) -> bool {
+        let slot = self.document_slot(document);
+        !slot.loaded && slot.job.is_none()
+    }
+    pub(super) fn configuration_loading(&self) -> bool {
+        self.documents.iter().any(|slot| !slot.loaded)
+    }
+    pub(super) fn configuration_pending(&self) -> bool {
+        self.documents.iter().any(|slot| slot.job.is_some())
+    }
+    pub(super) fn configuration_can_delete(&self, document: ConfigurationDocumentKind) -> bool {
+        self.document_slot(document).has_saved
+    }
+    pub(super) fn configuration_notification(&self, document: ConfigurationDocumentKind) -> &str {
+        &self.document_slot(document).notification
+    }
+
+    pub(super) fn read_configuration(
+        &mut self,
+        document: ConfigurationDocumentKind,
+        request_id: u32,
+    ) -> ApplicationRequest {
+        self.document_slot_mut(document).job = Some(ConfigurationJob::Read(request_id));
+        ApplicationRequest::ReadConfiguration {
+            document,
+            request_id,
+            maximum_bytes: document.maximum_json_bytes() as u32,
+        }
+    }
+
+    pub(super) fn pick_configuration(
+        &mut self,
+        document: ConfigurationDocumentKind,
+        request_id: u32,
+        application: &ApplicationSession,
+    ) -> Option<ApplicationRequest> {
+        if self.document_slot(document).job.is_some()
+            || application.core_session().snapshot().phase() != SessionPhase::FlightSetup
+        {
+            return None;
+        }
+        let source = configuration_identity(application, document)?;
+        let slot = self.document_slot_mut(document);
+        slot.job = Some(ConfigurationJob::Pick { request_id, source });
+        slot.notification = format!("{}ファイルを選択する。", configuration_label(document));
+        Some(ApplicationRequest::PickConfiguration {
+            document,
+            request_id,
+            maximum_bytes: document.maximum_json_bytes() as u32,
+        })
+    }
+
+    pub(super) fn delete_configuration(
+        &mut self,
+        document: ConfigurationDocumentKind,
+        request_id: u32,
+        application: &ApplicationSession,
+    ) -> Option<ApplicationRequest> {
+        let slot = self.document_slot(document);
+        if slot.job.is_some()
+            || !slot.has_saved
+            || application.core_session().snapshot().phase() != SessionPhase::FlightSetup
+        {
+            return None;
+        }
+        let source = configuration_identity(application, document)?;
+        let candidate = match SelectedConfiguration::bundled(document) {
+            Ok(candidate) => candidate,
+            Err(cause) => {
+                self.document_slot_mut(document).notification = format!(
+                    "既定の{}を準備できない。原因: {cause}",
+                    configuration_label(document)
+                );
+                return None;
+            }
+        };
+        let slot = self.document_slot_mut(document);
+        slot.job = Some(ConfigurationJob::Delete {
+            request_id,
+            source,
+            candidate,
+        });
+        slot.notification = format!("保存した{}を削除中", configuration_label(document));
+        Some(ApplicationRequest::DeleteConfiguration {
+            document,
+            request_id,
+        })
+    }
+
+    pub(super) fn configuration_read_completed(
+        &mut self,
+        document: ConfigurationDocumentKind,
+        request_id: u32,
+        completion: ApplicationConfigurationLoad,
+        application: &ApplicationSession,
+        write_id: u32,
+    ) -> (Option<SelectedConfiguration>, Option<ApplicationRequest>) {
+        let slot = self.document_slot_mut(document);
+        let expected = match &slot.job {
+            Some(ConfigurationJob::Read(id)) => *id,
+            Some(ConfigurationJob::Pick { request_id, .. }) => *request_id,
+            _ => return (None, None),
+        };
+        if expected != request_id {
+            return (None, None);
+        }
+        let source = match slot.job.take().unwrap() {
+            ConfigurationJob::Read(_) => {
+                slot.loaded = true;
+                None
+            }
+            ConfigurationJob::Pick { source, .. } => Some(source),
+            _ => unreachable!(),
+        };
+        if source.is_some_and(|source| !configuration_admitted(application, document, source)) {
+            return (None, None);
+        }
+        let bytes = match completion {
+            ApplicationConfigurationLoad::Missing | ApplicationConfigurationLoad::Cancelled => {
+                slot.notification.clear();
+                return (None, None);
+            }
+            ApplicationConfigurationLoad::Failed { cause } => {
+                slot.notification = if cause.starts_with("NotAllowedError:") {
+                    format!(
+                        "{}ファイルは画面のタップ・クリック、またはVRの決定操作で選択する。",
+                        configuration_label(document)
+                    )
+                } else {
+                    format!(
+                        "{}ファイルを読み込めない。原因: {cause}",
+                        configuration_label(document)
+                    )
+                };
+                return (None, None);
+            }
+            ApplicationConfigurationLoad::Found { bytes } => bytes,
+        };
+        if source.is_none() {
+            slot.has_saved = true;
+        }
+        let candidate = match SelectedConfiguration::decode(document, bytes) {
+            Ok(candidate) => candidate,
+            Err(cause) => {
+                slot.notification = format!(
+                    "{}定義を修正して読み込み直す。詳細: {cause}",
+                    configuration_label(document)
+                );
+                return (None, None);
+            }
+        };
+        let Some(source) = source else {
+            slot.notification = format!("保存済みの{}を復元した。", configuration_label(document));
+            return (Some(candidate), None);
+        };
+        let bytes = candidate.original().to_vec();
+        slot.job = Some(ConfigurationJob::Write {
+            request_id: write_id,
+            source,
+            candidate,
+        });
+        slot.notification = format!("{}を保存中", configuration_label(document));
+        (
+            None,
+            Some(ApplicationRequest::WriteConfiguration {
+                document,
+                request_id: write_id,
+                bytes,
+            }),
+        )
+    }
+
+    pub(super) fn configuration_saved(
+        &mut self,
+        document: ConfigurationDocumentKind,
+        request_id: u32,
+        failure: Option<String>,
+        application: &ApplicationSession,
+    ) -> Option<SelectedConfiguration> {
+        let slot = self.document_slot_mut(document);
+        let (expected, source) = match &slot.job {
+            Some(
+                ConfigurationJob::Write {
+                    request_id, source, ..
+                }
+                | ConfigurationJob::Delete {
+                    request_id, source, ..
+                },
+            ) => (*request_id, *source),
+            _ => return None,
+        };
+        if expected != request_id {
+            return None;
+        }
+        let job = slot.job.take().unwrap();
+        if let Some(cause) = failure {
+            slot.notification = format!("保存操作を再試行する。原因: {cause}");
+            return None;
+        }
+        if !configuration_admitted(application, document, source) {
+            return None;
+        }
+        match job {
+            ConfigurationJob::Write { candidate, .. } => {
+                slot.has_saved = true;
+                slot.notification =
+                    format!("{}を読み込み、保存した。", configuration_label(document));
+                Some(candidate)
+            }
+            ConfigurationJob::Delete { candidate, .. } => {
+                slot.has_saved = false;
+                slot.notification = format!("既定の{}へ戻した。", configuration_label(document));
+                Some(candidate)
+            }
+            _ => unreachable!(),
+        }
+    }
+
     pub(super) fn keyboard_needs_read(&self) -> bool {
         !self.keyboard_loaded && self.keyboard_read.is_none()
     }
@@ -392,6 +756,9 @@ impl StorageOwner {
     }
 
     pub(super) fn close(&mut self) {
+        for slot in &mut self.documents {
+            slot.job = None;
+        }
         self.saves.clear();
         self.save_notification = None;
         self.load = None;
@@ -710,5 +1077,220 @@ impl StorageOwner {
             self.save_notification = Some((job.source, notification));
         }
         self.saves.remove(&request_id);
+    }
+}
+
+#[cfg(test)]
+mod configuration_tests {
+    use super::*;
+    use crate::ApplicationInput;
+    use birdman_game_app::application::{BackendReadiness, SessionCommand};
+
+    fn original(application: &ApplicationSession, document: ConfigurationDocumentKind) -> &[u8] {
+        match document {
+            ConfigurationDocumentKind::Aircraft => application.aircraft().unwrap().original(),
+            ConfigurationDocumentKind::Controller => application.controller().unwrap().original(),
+        }
+    }
+
+    #[test]
+    fn original_configuration_sources_commit_after_matching_save_and_delete_completions() {
+        for document in [
+            ConfigurationDocumentKind::Aircraft,
+            ConfigurationDocumentKind::Controller,
+        ] {
+            let other = match document {
+                ConfigurationDocumentKind::Aircraft => ConfigurationDocumentKind::Controller,
+                ConfigurationDocumentKind::Controller => ConfigurationDocumentKind::Aircraft,
+            };
+            let mut application = ApplicationSession::default();
+            application
+                .execute(SessionCommand::OpenSetup {}, BackendReadiness::Ready)
+                .unwrap();
+            let previous = configuration_identity(&application, document).unwrap();
+            let mut owner = StorageOwner::default();
+            owner.read_configuration(document, 1);
+            owner.configuration_read_completed(
+                document,
+                1,
+                ApplicationConfigurationLoad::Missing,
+                &application,
+                2,
+            );
+            let (raw, key) = match document {
+                ConfigurationDocumentKind::Aircraft => (
+                    birdman_game_content::PLAYABLE_AIRCRAFT_JSON,
+                    "configuration_id",
+                ),
+                ConfigurationDocumentKind::Controller => (
+                    birdman_game_content::DEFAULT_CONTROLLER_JSON,
+                    "controller_id",
+                ),
+            };
+            let mut source: serde_json::Value = serde_json::from_slice(raw).unwrap();
+            source[key] = serde_json::json!("custom-definition-a");
+            if document == ConfigurationDocumentKind::Controller {
+                source["incidence_bounds_rad"][0] = serde_json::json!([-0.3, 0.3]);
+            }
+            let bytes =
+                format!(" \n{}\n\t", serde_json::to_string_pretty(&source).unwrap()).into_bytes();
+            assert!(
+                matches!(owner.pick_configuration(document, 3, &application), Some(ApplicationRequest::PickConfiguration { document: selected, maximum_bytes, .. }) if selected == document && maximum_bytes as usize == document.maximum_json_bytes())
+            );
+            let (_, wrong) = owner.configuration_read_completed(
+                other,
+                3,
+                ApplicationConfigurationLoad::Found {
+                    bytes: bytes.clone(),
+                },
+                &application,
+                4,
+            );
+            assert!(wrong.is_none() && owner.configuration_pending());
+            let (_, write) = owner.configuration_read_completed(
+                document,
+                3,
+                ApplicationConfigurationLoad::Found {
+                    bytes: bytes.clone(),
+                },
+                &application,
+                4,
+            );
+            assert!(
+                matches!(write, Some(ApplicationRequest::WriteConfiguration { document: selected, request_id: 4, bytes: source }) if selected == document && source == bytes)
+            );
+            assert_eq!(
+                configuration_identity(&application, document),
+                Some(previous)
+            );
+            assert!(
+                owner
+                    .configuration_saved(other, 4, None, &application)
+                    .is_none()
+            );
+            assert!(owner.configuration_pending());
+            assert!(
+                owner
+                    .configuration_saved(document, 99, None, &application)
+                    .is_none()
+            );
+            assert!(
+                owner
+                    .configuration_saved(
+                        document,
+                        4,
+                        Some("atomic write failed".into()),
+                        &application
+                    )
+                    .is_none()
+            );
+            assert_eq!(
+                configuration_identity(&application, document),
+                Some(previous)
+            );
+            owner.pick_configuration(document, 5, &application);
+            owner.configuration_read_completed(
+                document,
+                5,
+                ApplicationConfigurationLoad::Found {
+                    bytes: bytes.clone(),
+                },
+                &application,
+                6,
+            );
+            owner
+                .configuration_saved(document, 6, None, &application)
+                .unwrap()
+                .apply(&mut application)
+                .unwrap();
+            assert_eq!(original(&application, document), bytes);
+            if document == ConfigurationDocumentKind::Controller {
+                assert!(application.controller_pair().is_err());
+            }
+            assert!(
+                owner
+                    .configuration_saved(document, 6, None, &application)
+                    .is_none()
+            );
+            assert!(
+                owner
+                    .delete_configuration(document, 7, &application)
+                    .is_some()
+            );
+            assert!(
+                owner
+                    .configuration_saved(document, 7, Some("delete failed".into()), &application)
+                    .is_none()
+            );
+            assert_eq!(original(&application, document), bytes);
+            owner.delete_configuration(document, 8, &application);
+            owner
+                .configuration_saved(document, 8, None, &application)
+                .unwrap()
+                .apply(&mut application)
+                .unwrap();
+            assert_eq!(original(&application, document), raw);
+            assert!(!owner.configuration_can_delete(document));
+        }
+    }
+
+    #[test]
+    fn invalid_saved_sources_keep_defaults_and_wrong_kind_completions_keep_shutdown_pending() {
+        for document in [
+            ConfigurationDocumentKind::Aircraft,
+            ConfigurationDocumentKind::Controller,
+        ] {
+            let mut application = ApplicationSession::default();
+            let mut owner = StorageOwner::default();
+            owner.read_configuration(document, 1);
+            let (selected, request) = owner.configuration_read_completed(
+                document,
+                1,
+                ApplicationConfigurationLoad::Found {
+                    bytes: b"invalid".to_vec(),
+                },
+                &application,
+                2,
+            );
+            assert!(
+                selected.is_none() && request.is_none() && owner.configuration_can_delete(document)
+            );
+            assert!(owner.document_slot(document).loaded);
+            application
+                .execute(SessionCommand::OpenSetup {}, BackendReadiness::Ready)
+                .unwrap();
+            owner.pick_configuration(document, 3, &application);
+            application
+                .execute(SessionCommand::ReturnToTitle {}, BackendReadiness::Ready)
+                .unwrap();
+            let bytes = original(&application, document).to_vec();
+            let (selected, request) = owner.configuration_read_completed(
+                document,
+                3,
+                ApplicationConfigurationLoad::Found { bytes },
+                &application,
+                4,
+            );
+            assert!(selected.is_none() && request.is_none() && !owner.configuration_pending());
+        }
+        let mut shutdown = crate::shutdown::ShutdownOwner::default();
+        shutdown.requests(&[ApplicationRequest::ReadConfiguration {
+            document: ConfigurationDocumentKind::Aircraft,
+            request_id: 3,
+            maximum_bytes: 262144,
+        }]);
+        shutdown.begin(None);
+        assert!(!shutdown.observe(&ApplicationInput::ConfigurationLoaded {
+            document: ConfigurationDocumentKind::Controller,
+            request_id: 3,
+            completion: ApplicationConfigurationLoad::Missing
+        }));
+        assert_eq!(shutdown.lifecycle(), crate::ApplicationLifecycle::Closing);
+        assert!(shutdown.observe(&ApplicationInput::ConfigurationLoaded {
+            document: ConfigurationDocumentKind::Aircraft,
+            request_id: 3,
+            completion: ApplicationConfigurationLoad::Missing
+        }));
+        assert_eq!(shutdown.lifecycle(), crate::ApplicationLifecycle::Drained);
     }
 }

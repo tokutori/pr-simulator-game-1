@@ -514,6 +514,7 @@ impl FlightInputState {
     /// Resolves one physical tick against the target confirmed immediately before it.
     pub(crate) fn tick_input(
         &mut self,
+        body_rate_bounds: [[f64; 2]; 2],
         gamepads: &[FlightGamepadObservation],
         held_target_normalized: f64,
         settings: KeyboardControlSettings,
@@ -579,10 +580,19 @@ impl FlightInputState {
                 (nose_up, turn_right, pilot_position) = demand;
             }
         }
-        let limits = TailRateTarget::limits_rad_per_second();
+        let target = |value: f64, bounds: [f64; 2]| {
+            if value < 0.0 {
+                -value * bounds[0]
+            } else {
+                value * bounds[1]
+            }
+        };
         Ok(TailFlightTickInput::new(
             TailPilotIntent::try_new(nose_up, turn_right)?,
-            TailRateTarget::try_new(nose_up * limits[0], turn_right * limits[1])?,
+            TailRateTarget::try_new(
+                target(nose_up, body_rate_bounds[0]),
+                target(turn_right, body_rate_bounds[1]),
+            )?,
             pilot_position,
         )
         .with_pilot_motion_admission(

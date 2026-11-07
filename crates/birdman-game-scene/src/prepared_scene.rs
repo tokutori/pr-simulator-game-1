@@ -1,9 +1,9 @@
-//! Immutable registered scene assets and caller-owned deformation buffers.
+//! Selected-aircraft templates and caller-owned deformation buffers.
 
 use std::sync::OnceLock;
 
 use birdman_game_app::LaunchVenueError;
-use birdman_game_content::{AircraftDefinitionError, ShapeError};
+use birdman_game_content::{AircraftDefinition, ShapeError};
 use birdman_game_core::WingBendingFactor;
 
 use crate::{
@@ -17,13 +17,12 @@ use crate::{
     wing_texture::{self, WingTextureError},
 };
 
-static SCENE: OnceLock<Result<PreparedScene, ScenePreparationError>> = OnceLock::new();
+static WING_TEXTURES: OnceLock<Result<PreparedWingTextures, ScenePreparationError>> =
+    OnceLock::new();
 
 /// Original CPU asset-generation failures, before any GPU resources are created.
 #[derive(Clone, Debug)]
 pub enum ScenePreparationError {
-    /// The registered physical aircraft failed admission.
-    Aircraft(AircraftDefinitionError),
     /// Structural positions cannot be represented by the shared mesh format.
     Structure(ShapeError),
     /// A registered tail cannot form its static skin.
@@ -45,7 +44,6 @@ pub enum ScenePreparationError {
 impl core::fmt::Display for ScenePreparationError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Aircraft(_) => f.write_str("Registered aircraft validation failed"),
             Self::Structure(_) => f.write_str("Structural geometry projection failed"),
             Self::Tail(cause) => write!(f, "Tail skin generation failed: {cause}"),
             Self::Terrain(cause) => write!(f, "Terrain generation failed: {cause}"),
@@ -62,7 +60,6 @@ impl core::fmt::Display for ScenePreparationError {
 impl core::error::Error for ScenePreparationError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
-            Self::Aircraft(cause) => Some(cause),
             Self::Structure(cause) => Some(cause),
             Self::VenueStructures(cause) => Some(cause),
             Self::LaunchPlatform(cause) => Some(cause),
@@ -237,39 +234,34 @@ pub struct PreparedScene {
     wing: WingGeometry,
     cockpit: CockpitGeometry,
     tails: [TailGeometry; 2],
-    structure: PreparedStructure<'static>,
+    structure: PreparedStructure,
     terrain: &'static [VenueTerrainMesh],
     shore_structures: &'static [ShoreStructureMesh; 3],
-    wing_textures: PreparedWingTextures,
+    wing_textures: &'static PreparedWingTextures,
     launch_platform: LaunchPlatformGeometry,
 }
 
-/// Prepares the registered scene once and borrows the same assets on subsequent calls.
-pub fn registered_scene() -> Result<&'static PreparedScene, ScenePreparationError> {
-    SCENE
-        .get_or_init(PreparedScene::prepare)
-        .as_ref()
-        .map_err(Clone::clone)
-}
-
 impl PreparedScene {
-    fn prepare() -> Result<Self, ScenePreparationError> {
-        let definition =
-            birdman_game_app::registered_aircraft().map_err(ScenePreparationError::Aircraft)?;
+    /// Owns the selected aircraft templates; world assets and fixed images retain their shared caches.
+    pub fn prepare(definition: &AircraftDefinition) -> Result<Self, ScenePreparationError> {
         let mut structure =
             AirframeStructure::new(definition).map_err(ScenePreparationError::Structure)?;
         structure
-            .update_with_factor(WingBendingFactor::try_new(0.0).unwrap())
+            .update_with_factor(definition, WingBendingFactor::try_new(0.0).unwrap())
             .map_err(ScenePreparationError::Structure)?;
         Ok(Self {
-            wing: WingGeometry::new(),
-            cockpit: CockpitGeometry::new(),
-            tails: TailGeometry::registered().map_err(ScenePreparationError::Tail)?,
+            wing: WingGeometry::new(definition),
+            cockpit: CockpitGeometry::new(definition),
+            tails: TailGeometry::from_definition(definition)
+                .map_err(ScenePreparationError::Tail)?,
             structure: structure.into_prepared(),
             terrain: registered_terrain().map_err(ScenePreparationError::Terrain)?,
             shore_structures: registered_structures()
                 .map_err(ScenePreparationError::VenueStructures)?,
-            wing_textures: PreparedWingTextures::prepare()?,
+            wing_textures: WING_TEXTURES
+                .get_or_init(PreparedWingTextures::prepare)
+                .as_ref()
+                .map_err(Clone::clone)?,
             launch_platform: LaunchPlatformGeometry::prepare()?,
         })
     }
@@ -290,7 +282,7 @@ impl PreparedScene {
     }
 
     /// Borrows neutral structural batches, with shared physical topology and materials.
-    pub const fn structure(&self) -> &PreparedStructure<'static> {
+    pub const fn structure(&self) -> &PreparedStructure {
         &self.structure
     }
 
@@ -305,8 +297,8 @@ impl PreparedScene {
     }
 
     /// Borrows completed wing images for direct upload by any renderer.
-    pub const fn wing_textures(&self) -> &PreparedWingTextures {
-        &self.wing_textures
+    pub const fn wing_textures(&self) -> &'static PreparedWingTextures {
+        self.wing_textures
     }
 
     /// Borrows the launch deck and support geometry derived from the registered venue.
@@ -317,37 +309,43 @@ impl PreparedScene {
     /// Allocates only deformation buffers and adopts an explicit recorded bending factor.
     pub fn frame(
         &self,
+        definition: &AircraftDefinition,
         factor: WingBendingFactor,
-    ) -> Result<PreparedAirframeFrame<'_>, ShapeError> {
+    ) -> Result<PreparedAirframeFrame, ShapeError> {
         let mut frame = PreparedAirframeFrame {
-            geometry: &self.wing,
             wing: self.wing.frame(),
             structure: self.structure.frame(),
             factor: None,
         };
-        frame.update(factor)?;
+        frame.update(self, definition, factor)?;
         Ok(frame)
     }
 }
 
-/// Reusable aircraft positions; static topology, rigid members and tail skins remain borrowed.
-pub struct PreparedAirframeFrame<'scene> {
-    geometry: &'scene WingGeometry,
+/// Owned reusable aircraft positions with short-lived access to template topology.
+pub struct PreparedAirframeFrame {
     wing: WingFrame,
-    structure: StructuralFrame<'scene, 'static>,
+    structure: StructuralFrame,
     factor: Option<WingBendingFactor>,
 }
 
-impl PreparedAirframeFrame<'_> {
+impl PreparedAirframeFrame {
     /// Updates both wing skin and members; failed projections remain unpublished until recovery.
-    pub fn update(&mut self, factor: WingBendingFactor) -> Result<bool, ShapeError> {
+    pub fn update(
+        &mut self,
+        geometry: &PreparedScene,
+        definition: &AircraftDefinition,
+        factor: WingBendingFactor,
+    ) -> Result<bool, ShapeError> {
         if self.factor == Some(factor) {
             return Ok(false);
         }
         self.factor = None;
-        self.geometry
-            .update_frame_with_factor(&mut self.wing, factor)?;
-        self.structure.update(factor)?;
+        geometry
+            .wing
+            .update_frame_with_factor(definition, &mut self.wing, factor)?;
+        self.structure
+            .update(&geometry.structure, definition, factor)?;
         self.factor = Some(factor);
         Ok(true)
     }
@@ -363,9 +361,13 @@ impl PreparedAirframeFrame<'_> {
     }
 
     /// Borrows one valid structural batch; rigid and tail batches use the immutable scene buffer.
-    pub fn structure_positions(&self, mesh: usize) -> Option<&[[f32; 3]]> {
+    pub fn structure_positions<'a>(
+        &'a self,
+        geometry: &'a PreparedScene,
+        mesh: usize,
+    ) -> Option<&'a [[f32; 3]]> {
         self.factor?;
-        self.structure.positions(mesh)
+        self.structure.positions(&geometry.structure, mesh)
     }
 }
 
@@ -376,8 +378,14 @@ mod tests {
 
     #[test]
     fn registered_bundle_reuses_immutable_meshes_and_completed_image_chains() {
-        let scene = registered_scene().unwrap();
-        assert!(core::ptr::eq(scene, registered_scene().unwrap()));
+        let source_definition = birdman_game_content::playable_aircraft().unwrap();
+        let scene = PreparedScene::prepare(&source_definition).unwrap();
+        assert!(core::ptr::eq(
+            scene.wing_textures(),
+            PreparedScene::prepare(&source_definition)
+                .unwrap()
+                .wing_textures()
+        ));
         assert!(core::ptr::eq(
             scene.terrain(),
             registered_terrain().unwrap()
@@ -454,6 +462,7 @@ mod tests {
 
     #[test]
     fn deformation_borrows_static_topology_and_recovers_without_replacing_upload_buffers() {
+        let source_definition = birdman_game_content::playable_aircraft().unwrap();
         use crate::mesh::{MeshProjectionError, write_area_weighted_normals};
         let positions = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
         let mut sums = [[0.0; 3]; 3];
@@ -512,9 +521,9 @@ mod tests {
             area_weighted_normals(&[[0.0; 3]; 3], &[0, 1, 2]),
             Err(MeshProjectionError::DegenerateNormal)
         );
-        let scene = registered_scene().unwrap();
+        let scene = PreparedScene::prepare(&source_definition).unwrap();
         let mut frame = scene
-            .frame(WingBendingFactor::try_new(0.0).unwrap())
+            .frame(&source_definition, WingBendingFactor::try_new(0.0).unwrap())
             .unwrap();
         let wing_pointers = frame
             .wing()
@@ -523,18 +532,19 @@ mod tests {
             .each_ref()
             .map(|positions| positions.as_ptr());
         let member_pointers: Vec<_> = (0..scene.structure().meshes().len())
-            .map(|index| frame.structure_positions(index).unwrap().as_ptr())
+            .map(|index| frame.structure_positions(&scene, index).unwrap().as_ptr())
             .collect();
-        let mut expected =
-            AirframeStructure::new(birdman_game_app::registered_aircraft().unwrap()).unwrap();
+        let mut expected = AirframeStructure::new(&source_definition).unwrap();
         for value in [0.3, 1.6, 0.3] {
             let factor = WingBendingFactor::try_new(value).unwrap();
-            assert!(frame.update(factor).unwrap());
-            assert!(!frame.update(factor).unwrap());
+            assert!(frame.update(&scene, &source_definition, factor).unwrap());
+            assert!(!frame.update(&scene, &source_definition, factor).unwrap());
             assert_eq!(frame.bending_factor(), Some(factor));
-            expected.update_with_factor(factor).unwrap();
+            expected
+                .update_with_factor(&source_definition, factor)
+                .unwrap();
             for (index, mesh) in scene.structure().meshes().iter().enumerate() {
-                let positions = frame.structure_positions(index).unwrap();
+                let positions = frame.structure_positions(&scene, index).unwrap();
                 assert_eq!(positions, expected.meshes()[index].positions());
                 assert_eq!(positions.as_ptr(), member_pointers[index]);
                 if mesh.attachment() != StructuralAttachment::MainWing {
@@ -553,14 +563,18 @@ mod tests {
         }
         assert!(
             frame
-                .update(WingBendingFactor::try_new(f64::MAX).unwrap())
+                .update(
+                    &scene,
+                    &source_definition,
+                    WingBendingFactor::try_new(f64::MAX).unwrap()
+                )
                 .is_err()
         );
         assert_eq!(frame.bending_factor(), None);
         assert!(frame.wing().is_none());
-        assert!(frame.structure_positions(0).is_none());
+        assert!(frame.structure_positions(&scene, 0).is_none());
         let factor = WingBendingFactor::try_new(0.3).unwrap();
-        assert!(frame.update(factor).unwrap());
+        assert!(frame.update(&scene, &source_definition, factor).unwrap());
         assert_eq!(frame.bending_factor(), Some(factor));
         assert_eq!(
             frame

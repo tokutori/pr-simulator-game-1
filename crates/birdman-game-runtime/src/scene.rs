@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use birdman_game_presentation::camera::{
     CameraError, Pose, Quaternion, Vector3, camera_local_pose, compose_pose, flight_camera_pose,
-    flight_relative_pose, registered_pilot_eye,
+    flight_relative_pose, pilot_eye,
 };
 use birdman_game_presentation::game_ui::{
     GameUiFlightCamera, GameUiPresentationMode, GameUiReplayCamera, GameUiState, GameUiViewport,
@@ -156,7 +156,9 @@ impl SceneOwner {
         ) {
             self.look = [0.0; 2];
         }
-        let replay = if matches!(phase, SessionPhase::Replay | SessionPhase::Attract) {
+        let replay = if matches!(phase, SessionPhase::Replay | SessionPhase::Attract)
+            && context.application.replay_available()
+        {
             let session = context.application.core_session();
             let record = session
                 .playback_record()
@@ -172,6 +174,11 @@ impl SceneOwner {
                 replay_camera_view(
                     record,
                     context.application.display_control_identity(),
+                    context.application.aircraft().map_err(|_| {
+                        ApplicationRuntimeError::Camera(
+                            birdman_game_presentation::camera::CameraError::AircraftUnavailable,
+                        )
+                    })?,
                     clock.time_seconds(),
                     context.ui.replay_camera,
                     phase == SessionPhase::Attract,
@@ -294,13 +301,13 @@ impl SceneOwner {
                 }
             } else if chase {
                 XrCameraMount::External {
-                    world_from_tracking: flight_camera_pose(&flight, true, look)
+                    world_from_tracking: flight_camera_pose(&flight, true, look, pilot_eye(context.application.aircraft().map_err(|_| ApplicationRuntimeError::Camera(birdman_game_presentation::camera::CameraError::AircraftUnavailable))?.definition().document().structure.pilot_eye_offset_frd_m))
                         .map_err(ApplicationRuntimeError::Camera)?,
                 }
             } else {
                 XrCameraMount::Aircraft {
                     aircraft_from_tracking: camera_local_pose(
-                        registered_pilot_eye().map_err(ApplicationRuntimeError::Camera)?,
+                        pilot_eye(context.application.aircraft().map_err(|_| ApplicationRuntimeError::Camera(birdman_game_presentation::camera::CameraError::AircraftUnavailable))?.definition().document().structure.pilot_eye_offset_frd_m),
                         flight.pilot_position_meters,
                         flight.initial_pilot_position_meters,
                         false,

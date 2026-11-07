@@ -5,12 +5,10 @@ use super::{
 };
 use crate::{
     BodyPoint, BodyVector, CompositeCgLaunchConditions, ControlMode, CourseAxis, Gravity,
-    HybridAerodynamicLoad, HybridModel, NedPoint, NedVector, TailControlProfile,
-    TailFlightScenario, TailFlightScenarioParameters, TailFlightTickInput, TailIncidence,
-    TailPilotIntent, TailPilotPositionCommand, TailRateTarget, TestAircraft, WindField,
+    HybridAerodynamicLoad, HybridModel, NedPoint, NedVector, TailFlightScenario,
+    TailFlightScenarioParameters, TailFlightTickInput, TailIncidence, TailPilotIntent,
+    TailPilotPositionCommand, TailRateTarget, TestAircraft, WindField,
 };
-
-use alloc::boxed::Box;
 
 include!("game_session_pause_tests.rs");
 
@@ -48,7 +46,7 @@ fn prepared_launch_projection_is_read_only_and_preserves_the_retry_initial_state
     assert_eq!(session.prepared_launch_state(), None);
     assert_eq!(launched.tail_flight_state(), Some(initial));
     session
-        .advance_tail_flight_tick(neutral_input(&session))
+        .advance_fixture_tick(neutral_input(&session))
         .unwrap();
     session.pause(PauseReason::Manual).unwrap();
     assert_eq!(session.prepared_launch_state(), None);
@@ -64,9 +62,16 @@ fn prepared_launch_projection_is_read_only_and_preserves_the_retry_initial_state
     assert_eq!(session.prepared_launch_state(), None);
 }
 
-fn configuration(maximum_ticks: u64) -> GameSessionConfiguration<'static> {
-    let definition = Box::leak(Box::new(TestAircraft::try_new().unwrap()));
-    let surfaces = Box::leak(Box::new(definition.surfaces().unwrap()));
+fn configuration(maximum_ticks: u64) -> GameSessionConfiguration {
+    configuration_with_profile(maximum_ticks, crate::tail_control::test_profile(0.5, 0.5))
+}
+
+fn configuration_with_profile(
+    maximum_ticks: u64,
+    profile: crate::TailControlProfile,
+) -> GameSessionConfiguration {
+    let definition = TestAircraft::try_new().unwrap();
+    let surfaces = definition.surfaces().unwrap();
     let trim = definition.trim().unwrap();
     let ground = trim
         .initial_state_for_ground_launch(NedPoint::try_new(0.0, 0.0, -10.5).unwrap(), 0.0)
@@ -97,28 +102,29 @@ fn configuration(maximum_ticks: u64) -> GameSessionConfiguration<'static> {
         )
         .unwrap(),
         HybridAerodynamicLoad::try_new(
-            HybridModel::try_new(definition.polar().unwrap(), surfaces).unwrap(),
+            HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
             TestAircraft::TRIM_AIR_DENSITY_KG_M3,
             WindField::uniform(NedVector::zero()),
         )
         .unwrap(),
-        TailControlProfile::try_new(0.5, 0.5, 0.8).unwrap(),
+        profile,
     )
     .unwrap();
     let identity = SessionScenarioIdentity {
+        aircraft_identity: [0; 32],
         catalog_version: 4,
         scenario_id: 42,
         scenario_version: 3,
         aircraft_model_version: 2,
         environment_version: 5,
-        controller_profile_version: 7,
+        controller_identity: Some([7; 32]),
         seed: 0x5eed,
     };
     GameSessionConfiguration::try_new_tail(scenario, ControlMode::Manual, maximum_ticks, identity)
         .unwrap()
 }
 
-fn session(maximum_ticks: u64) -> GameSession<'static> {
+fn session(maximum_ticks: u64) -> GameSession {
     let mut session = GameSession::new();
     session.open_setup().unwrap();
     session
@@ -135,12 +141,12 @@ fn finalized_demo_record() -> crate::FlightRecord {
         .unwrap();
     while demo.snapshot().phase() != SessionPhase::Result {
         let input = neutral_input(&demo);
-        demo.advance_tail_flight_tick(input).unwrap();
+        demo.advance_fixture_tick(input).unwrap();
     }
     demo.take_finalized_result_record().unwrap()
 }
 
-fn neutral_input(_session: &GameSession<'_>) -> TailFlightTickInput {
+fn neutral_input(_session: &GameSession) -> TailFlightTickInput {
     TailFlightTickInput::new(
         TailPilotIntent::try_new(0.0, 0.0).unwrap(),
         TailRateTarget::try_new(0.0, 0.0).unwrap(),
@@ -167,7 +173,7 @@ fn flight_progress_is_read_only_and_unavailable_outside_live_phases() {
     assert_eq!(initial.cross_track_m(), 0.0);
     assert_eq!(initial.net_horizontal_m(), 0.0);
     session
-        .advance_tail_flight_tick(neutral_input(&session))
+        .advance_fixture_tick(neutral_input(&session))
         .unwrap();
     let progress = session.flight_progress().unwrap().unwrap();
     assert!(progress.course_parallel_m() > 0.0);
@@ -398,7 +404,7 @@ fn countdown_owner_orders_callbacks_and_launches_only_once() {
     let configuration = configuration(100);
     let identity = configuration.identity;
     let initial = configuration.initial_state();
-    let reading = configuration.telemetry(initial.flight_state()).unwrap();
+    let reading = configuration.scenario.initial_telemetry();
     current.prepare_flight(configuration).unwrap();
     current.mark_briefing_ready().unwrap();
     current.start_countdown(1).unwrap();
@@ -471,10 +477,7 @@ fn countdown_nanosecond_boundary_and_record_start_failure_preserve_commit_order(
     let elapsed = current.countdown_elapsed_seconds();
     let configured = current.configured_mut().unwrap();
     let initial = configured.configuration.initial_state();
-    let telemetry = configured
-        .configuration
-        .telemetry(initial.flight_state())
-        .unwrap();
+    let telemetry = configured.configuration.scenario.initial_telemetry();
     configured
         .record
         .begin_tail(initial, telemetry, None)
@@ -565,7 +568,7 @@ fn abort_from_paused_flight_finalizes_the_last_valid_tick() {
         .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
         .unwrap();
     session
-        .advance_tail_flight_tick(neutral_input(&session))
+        .advance_fixture_tick(neutral_input(&session))
         .unwrap();
     let last_state = session.snapshot().tail_flight_state().unwrap();
     session.pause(PauseReason::DocumentHidden).unwrap();
@@ -593,7 +596,7 @@ fn result_seconds_queries_are_pure_without_enabling_playback_commands() {
         .unwrap();
     for _ in 0..3 {
         session
-            .advance_tail_flight_tick(neutral_input(&session))
+            .advance_fixture_tick(neutral_input(&session))
             .unwrap();
     }
     let before = session.snapshot();
@@ -653,7 +656,7 @@ fn result_seconds_queries_are_pure_without_enabling_playback_commands() {
 #[test]
 fn seconds_queries_reject_phases_without_a_finalized_result() {
     let mut session = GameSession::new();
-    let assert_rejected = |session: &GameSession<'_>| {
+    let assert_rejected = |session: &GameSession| {
         assert_eq!(
             session.playback_sample_at_seconds(0.0),
             Err(GameSessionError::InvalidTransition)
@@ -685,7 +688,7 @@ fn replay_phase_retains_the_immutable_result_and_record() {
         .unwrap();
     for _ in 0..3 {
         session
-            .advance_tail_flight_tick(neutral_input(&session))
+            .advance_fixture_tick(neutral_input(&session))
             .unwrap();
     }
     session.abort_flight().unwrap();
@@ -738,7 +741,7 @@ fn replay_phase_retains_the_immutable_result_and_record() {
         ))
     );
     assert_eq!(
-        session.advance_tail_flight_tick(neutral_input(&session)),
+        session.advance_fixture_tick(neutral_input(&session)),
         Err(GameSessionError::InvalidTransition)
     );
     session.leave_replay().unwrap();
@@ -830,7 +833,7 @@ fn archived_record_opens_replay_from_title_and_returns_without_result() {
         sample_storage
     );
     assert!(viewer.tail_pilot_position_mapping().is_none());
-    assert_eq!(viewer.telemetry(), Ok(None));
+    assert_eq!(viewer.telemetry(), None);
     viewer.leave_replay().unwrap();
     assert_eq!(viewer.snapshot(), SessionSnapshot::Title);
     assert!(viewer.flight_record().is_none());
@@ -845,10 +848,10 @@ fn time_limit_finalizes_once_and_retry_restores_identical_configuration() {
         .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
         .unwrap();
     session
-        .advance_tail_flight_tick(neutral_input(&session))
+        .advance_fixture_tick(neutral_input(&session))
         .unwrap();
     let result = session
-        .advance_tail_flight_tick(neutral_input(&session))
+        .advance_fixture_tick(neutral_input(&session))
         .unwrap()
         .result()
         .unwrap();
@@ -883,7 +886,7 @@ fn failed_retry_reservation_preserves_result_record_and_replay_until_retry_succe
         .unwrap();
     while session.snapshot().phase() != SessionPhase::Result {
         session
-            .advance_tail_flight_tick(neutral_input(&session))
+            .advance_fixture_tick(neutral_input(&session))
             .unwrap();
     }
     let snapshot = session.snapshot();
@@ -979,7 +982,7 @@ fn hybrid_flight_reaches_contact_result_without_skipping_terminal_state() {
         .unwrap();
     loop {
         let snapshot = session
-            .advance_tail_flight_tick(neutral_input(&session))
+            .advance_fixture_tick(neutral_input(&session))
             .unwrap();
         if snapshot.phase() == SessionPhase::Result {
             let result = snapshot.result().unwrap();
@@ -1045,12 +1048,13 @@ fn briefing_cancellation_releases_the_sealed_configuration_for_setup() {
 fn rejects_incomplete_resolved_model_version_identity() {
     let scenario = configuration(100).scenario;
     let invalid_identity = SessionScenarioIdentity {
+        aircraft_identity: [0; 32],
         catalog_version: 1,
         scenario_id: 1,
         scenario_version: 1,
         aircraft_model_version: 0,
         environment_version: 1,
-        controller_profile_version: 1,
+        controller_identity: Some([1; 32]),
         seed: 0,
     };
 
@@ -1094,10 +1098,34 @@ fn briefing_record_factory_preserves_the_owner_on_failure_and_receives_the_seale
         .unwrap();
     session.countdown_token = 9;
     session.open_setup().unwrap();
-    let sealed = configuration(100);
+    let profile = crate::tail_control::test_profile(0.5, 0.5);
+    let profile = crate::TailControlProfile::try_new(
+        profile.pitch(),
+        profile.yaw(),
+        profile.incidence_bounds_rad(),
+        profile.body_rate_bounds_rad_per_second(),
+        0.8,
+        profile.reference(),
+    )
+    .unwrap();
+    let requested_mode = ControlMode::Shared(crate::FbwAuthority::try_new(0.5).unwrap());
+    let effective_mode = ControlMode::Shared(crate::FbwAuthority::try_new(0.8).unwrap());
+    let configure = || {
+        let prepared = configuration_with_profile(100, profile);
+        GameSessionConfiguration::try_new_tail(
+            prepared.scenario,
+            requested_mode,
+            100,
+            prepared.identity,
+        )
+        .unwrap()
+    };
+    let sealed = configure();
+    assert_eq!(sealed.control_mode, effective_mode);
     let identity = sealed.identity;
     let initial = sealed.initial_state();
-    let header = crate::FlightRecordHeader::try_new(identity, 100).unwrap();
+    let header =
+        crate::FlightRecordHeader::try_new(identity, 100, Some(sealed.control_mode)).unwrap();
     let attract_storage = session.attract_record.as_ref().unwrap().samples().as_ptr();
     let setup = session.snapshot();
     assert_eq!(
@@ -1111,7 +1139,7 @@ fn briefing_record_factory_preserves_the_owner_on_failure_and_receives_the_seale
     );
     assert_eq!(session.snapshot(), setup);
     assert!(session.flight_record().is_none());
-    session.prepare_flight(configuration(100)).unwrap();
+    session.prepare_flight(configure()).unwrap();
     session
         .fail_briefing(super::BriefingFailure::AssetUnavailable)
         .unwrap();
@@ -1148,4 +1176,63 @@ fn briefing_record_factory_preserves_the_owner_on_failure_and_receives_the_seale
         session.attract_record.as_ref().unwrap().samples().as_ptr(),
         attract_storage
     );
+    assert_eq!(
+        session.flight_record().unwrap().header().control_mode,
+        Some(effective_mode)
+    );
+    session.mark_briefing_ready().unwrap();
+    session.start_countdown(1).unwrap();
+    session
+        .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
+        .unwrap();
+    session
+        .advance_fixture_tick(TailFlightTickInput::new(
+            TailPilotIntent::try_new(0.5, 0.0).unwrap(),
+            TailRateTarget::try_new(0.0, 0.0).unwrap(),
+            TailPilotPositionCommand::Hold,
+        ))
+        .unwrap();
+    let recorded = session
+        .flight_record()
+        .unwrap()
+        .samples()
+        .last()
+        .unwrap()
+        .controls
+        .input_from_previous
+        .unwrap();
+    let manual = recorded.manual_incidence_target().elevator_rad();
+    let feedback = recorded.fbw_incidence_target().elevator_rad();
+    assert!(
+        (recorded.mixed_incidence_target().elevator_rad() - (manual + 0.8 * (feedback - manual)))
+            .abs()
+            < 1e-15
+    );
+}
+
+trait FixtureTick {
+    fn advance_fixture_tick(
+        &mut self,
+        input: TailFlightTickInput,
+    ) -> Result<SessionSnapshot, GameSessionError>;
+}
+impl FixtureTick for GameSession {
+    fn advance_fixture_tick(
+        &mut self,
+        input: TailFlightTickInput,
+    ) -> Result<SessionSnapshot, GameSessionError> {
+        let definition = TestAircraft::try_new().unwrap();
+        let surfaces = definition.surfaces().unwrap();
+        let loads = HybridAerodynamicLoad::try_new(
+            HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
+            TestAircraft::TRIM_AIR_DENSITY_KG_M3,
+            WindField::uniform(NedVector::zero()),
+        )
+        .unwrap();
+        self.advance_tail_flight_tick(
+            input,
+            &loads,
+            crate::WaterContactGeometry::try_new(&[BodyPoint::origin()]).unwrap(),
+        )
+    }
 }

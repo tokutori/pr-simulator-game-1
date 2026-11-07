@@ -42,6 +42,7 @@ fn main() {
         aircraft_asset.clone(),
         workspace_dir.join("crates/birdman-game-content/Cargo.toml"),
         workspace_dir.join("crates/birdman-game-format/src/aircraft.rs"),
+        workspace_dir.join("crates/birdman-game-format/src/aircraft/validation.rs"),
         dynamics_source.clone(),
         aerodynamics_source.clone(),
         hybrid_trim_source,
@@ -63,6 +64,9 @@ fn main() {
         shared_venue_asset,
         workspace_dir.join("crates/birdman-game-app/src/application.rs"),
         workspace_dir.join("crates/birdman-game-app/src/application/commands.rs"),
+        workspace_dir.join("crates/birdman-game-app/src/controller.rs"),
+        workspace_dir.join("crates/birdman-game-format/src/controller.rs"),
+        workspace_dir.join("assets/controllers/default-rate-v1.json"),
         aircraft_asset,
     ];
     scenario_files.extend(rust_sources(&workspace_dir, &content_source));

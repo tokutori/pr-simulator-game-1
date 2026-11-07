@@ -15,7 +15,7 @@ use crate::scoring::{DistanceScore, DistanceScoreError};
 use crate::session_contract::{SessionEndReason, SessionScenarioIdentity};
 use crate::tail_simulation::{TailFlightTickError, TailFlightTickState};
 
-impl<'a> GameSession<'a> {
+impl GameSession {
     #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
     #[cfg_attr(verus_only, verus_spec(outcome =>
         requires
@@ -76,7 +76,7 @@ impl<'a> GameSession<'a> {
     pub(super) fn abort_flight_with_score(
         &mut self,
         score: impl FnOnce(
-            &GameSessionConfiguration<'a>,
+            &GameSessionConfiguration,
             SessionTerminalState,
         ) -> Result<DistanceScore, DistanceScoreError>,
     ) -> Result<SessionSnapshot, GameSessionError> {

@@ -21,6 +21,7 @@ birdman-game-scene.workspace = true
 
 [target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
 birdman-game-format.workspace = true
+rfd = "=0.15.4"
 serde.workspace = true
 serde_json.workspace = true
 wgpu = { version = "=29.0.4", default-features = false }

@@ -21,7 +21,6 @@ pub use environment::{
 };
 pub use hybrid_session::{
     HybridSessionPreparation, HybridSessionPreparationError, identity_for_selection,
-    registered_aircraft,
 };
 pub use venue::{
     LaunchPlatform, LaunchVenue, LaunchVenueError, VenueCatalog, VenueCatalogError, launch_venue,
@@ -29,7 +28,7 @@ pub use venue::{
 };
 
 /// Default public flight assistance.
-pub const DEFAULT_ASSISTANCE: AssistanceLevel = AssistanceLevel::Light;
+pub const DEFAULT_ASSISTANCE: AssistanceLevel = AssistanceLevel::Assisted;
 /// Fixed seed selected by the public Web application.
 pub const DEFAULT_SESSION_SEED: u64 = (0x5f98_u64 << 32) | 0x55aa;
 /// Existing public flight duration limit in fixed physics ticks.
@@ -38,12 +37,6 @@ pub const DEFAULT_MAXIMUM_FLIGHT_TICKS: u64 = 4_000;
 pub const MAXIMUM_FLIGHT_FRAME_GAP_MILLISECONDS: u32 = 150;
 /// Default registered weather selected by the public hybrid model.
 pub const DEFAULT_WEATHER: WeatherClass = WeatherClass::Typical;
-
-/// Resolves the public default through the same assistance mapping as flight settings.
-pub fn default_control_mode() -> ControlMode {
-    application::commands::control_mode(DEFAULT_ASSISTANCE)
-        .expect("the registered default assistance has valid authority")
-}
 
 /// Returns the public initial difficulty settings for an explicit control mode.
 pub fn default_difficulty(control_mode: ControlMode) -> DifficultySettings {
@@ -67,3 +60,9 @@ pub fn technical_error_text(error: &dyn core::error::Error) -> String {
     }
     text
 }
+
+mod aircraft;
+pub use aircraft::SelectedAircraft;
+
+mod controller;
+pub use controller::{ControllerPreparationError, SelectedController};

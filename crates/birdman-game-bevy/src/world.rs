@@ -81,6 +81,7 @@ struct SubmittedShadow {
 }
 
 struct Candidate {
+    manifest: ApplicationGeometryAssets,
     stage: ResourceStage,
     target: ApplicationGraphicsTarget,
     root: Entity,
@@ -106,7 +107,6 @@ struct Candidate {
 
 #[derive(Resource, Default)]
 pub(crate) struct NativeGpu {
-    manifest: Option<ApplicationGeometryAssets>,
     meshes: BTreeMap<u32, Vec<Handle<Mesh>>>,
     dirty_meshes: Vec<bevy::asset::AssetId<Mesh>>,
     water_meshes: BTreeMap<u32, Handle<Mesh>>,
@@ -478,6 +478,7 @@ pub(crate) fn execute(
             return Ok(None);
         }
     };
+    gpu.prune_geometry(world);
     world.insert_resource(gpu);
     Ok(Some(result))
 }
@@ -531,13 +532,7 @@ impl NativeGpu {
         let xr_display = copy_display;
         #[cfg(not(all(feature = "openxr", any(target_os = "windows", target_os = "linux"))))]
         let _ = copy_display;
-        if let Some(manifest) = &assets.scene {
-            self.manifest = Some(manifest.clone());
-        }
-        let manifest = self
-            .manifest
-            .clone()
-            .ok_or("Static scene upload is unavailable")?;
+        let manifest = &assets.scene;
         let layer = readiness::free_layer(world)?;
         if !world.contains_resource::<Assets<Mesh>>()
             || !world.contains_resource::<Assets<Image>>()
@@ -857,6 +852,7 @@ impl NativeGpu {
             world.entity_mut(reflection_camera).insert(ambient);
         }
         Ok(Candidate {
+            manifest: manifest.clone(),
             stage: ResourceStage::Preparing,
             target,
             root,
@@ -964,6 +960,52 @@ impl NativeGpu {
         candidate.stage = ResourceStage::Committing { request_id, after };
         self.active = Some(resource_id);
         Ok(())
+    }
+
+    fn prune_geometry(&mut self, world: &mut World) {
+        let live_meshes: std::collections::BTreeSet<_> = self
+            .candidates
+            .values()
+            .flat_map(|candidate| candidate.meshes.iter().map(Handle::id))
+            .collect();
+        let live_textures: std::collections::BTreeSet<_> = self
+            .candidates
+            .values()
+            .flat_map(|candidate| {
+                candidate
+                    .manifest
+                    .wing_textures
+                    .iter()
+                    .map(|texture| texture.buffer.buffer_id)
+            })
+            .collect();
+        self.meshes.retain(|_, handles| {
+            if handles
+                .iter()
+                .any(|handle| live_meshes.contains(&handle.id()))
+            {
+                return true;
+            }
+            for handle in handles {
+                world.resource_mut::<Assets<Mesh>>().remove(handle.id());
+            }
+            false
+        });
+        self.water_meshes.retain(|_, handle| {
+            if live_meshes.contains(&handle.id()) {
+                return true;
+            }
+            world.resource_mut::<Assets<Mesh>>().remove(handle.id());
+            false
+        });
+        self.textures.retain(|id, handle| {
+            if live_textures.contains(id) {
+                return true;
+            }
+            world.resource_mut::<Assets<Image>>().remove(handle.id());
+            false
+        });
+        self.dirty_meshes.retain(|id| live_meshes.contains(id));
     }
 
     fn next_revision(&mut self) -> u64 {
@@ -1415,6 +1457,9 @@ pub(crate) fn poll(world: &mut World) -> Vec<ApplicationInput> {
             _ => {}
         }
     }
+    if !inputs.is_empty() {
+        gpu.prune_geometry(world);
+    }
     world.insert_resource(gpu);
     let mut completed = screen_render::timing::poll(world);
     for input in &mut completed {
@@ -1571,6 +1616,22 @@ mod tests {
         gpu.candidates.insert(
             3,
             Candidate {
+                manifest: ApplicationGeometryAssets {
+                    meshes: Vec::new(),
+                    wing_textures: std::array::from_fn(|_| {
+                        birdman_game_runtime::ApplicationGeometryTexture {
+                            buffer: birdman_game_runtime::ApplicationBufferDescriptor {
+                                buffer_id: 0,
+                                data_type: birdman_game_runtime::ApplicationBufferType::U8,
+                                components: 4,
+                                count: 0,
+                                stride_bytes: 4,
+                            },
+                            size: [0, 0],
+                            mip_level_count: 0,
+                        }
+                    }),
+                },
                 stage: ResourceStage::Prepared,
                 target: ApplicationGraphicsTarget {
                     renderer_resource_id: 7,
@@ -1807,8 +1868,6 @@ mod tests {
             .unwrap();
         let material_count = assets
             .scene
-            .as_ref()
-            .unwrap()
             .meshes
             .iter()
             .flat_map(|mesh| mesh.materials.iter().map(|material| material.material_id))
@@ -2108,7 +2167,7 @@ mod tests {
             .requests
             .iter()
             .find_map(|request| match request {
-                ApplicationRequest::PrepareResources { assets, .. } => assets.scene.as_ref(),
+                ApplicationRequest::PrepareResources { assets, .. } => Some(&assets.scene),
                 _ => None,
             })
             .expect("Prepared scene upload");

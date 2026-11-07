@@ -1,5 +1,6 @@
 use crate::assets::ApplicationAssetError;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use birdman_game_core::WingBendingFactor;
 use birdman_game_format::WaterQuality;
@@ -11,7 +12,7 @@ use birdman_game_scene::airframe_structure::StructuralAttachment;
 use birdman_game_scene::lake_water::{LakeWaveProjection, water_quality_profile};
 use birdman_game_scene::lake_water_mesh::{PreparedWaterChunk, PreparedWaterGeometry};
 use birdman_game_scene::mesh::{area_weighted_normals, write_area_weighted_normals};
-use birdman_game_scene::prepared_scene::{PreparedAirframeFrame, registered_scene};
+use birdman_game_scene::prepared_scene::{PreparedAirframeFrame, PreparedScene};
 use birdman_game_scene::tail_geometry::TailMaterial;
 use birdman_game_scene::wing_geometry::WingMaterial;
 use serde::Serialize;
@@ -271,14 +272,15 @@ struct DynamicMesh {
     update: ApplicationMeshUpdate,
     sums: Vec<[f64; 3]>,
     normals: Vec<[f32; 3]>,
-    indices: &'static [u32],
+    indices: Vec<u32>,
 }
 
 pub(super) struct GeometryOwner {
     tail_pivots: [Vector3; 2],
     assets: ApplicationGeometryAssets,
     buffers: BTreeMap<u32, Buffer>,
-    frame: PreparedAirframeFrame<'static>,
+    source: Arc<PreparedScene>,
+    frame: PreparedAirframeFrame,
     dynamic: Vec<DynamicMesh>,
     revision: u32,
     published: bool,
@@ -288,10 +290,16 @@ pub(super) struct GeometryOwner {
 type GeometryResult<Value> = Result<Value, ApplicationAssetError>;
 
 impl GeometryOwner {
-    pub(super) fn prepare(next_id: &mut u32) -> GeometryResult<Self> {
-        let source = registered_scene().map_err(ApplicationAssetError::ScenePreparation)?;
+    pub(super) fn prepare(
+        next_id: &mut u32,
+        definition: &birdman_game_content::AircraftDefinition,
+    ) -> GeometryResult<Self> {
+        let source = Arc::new(
+            PreparedScene::prepare(definition).map_err(ApplicationAssetError::ScenePreparation)?,
+        );
         let frame = source
             .frame(
+                definition,
                 WingBendingFactor::try_new(0.0).map_err(ApplicationAssetError::FrameDeformation)?,
             )
             .map_err(|cause| {
@@ -300,6 +308,7 @@ impl GeometryOwner {
                 )
             })?;
         let mut owner = Self {
+            source: Arc::clone(&source),
             tail_pivots: std::array::from_fn(|index| {
                 let [x, y, z] = source.tails()[index].origin;
                 Vector3 { x, y, z }
@@ -360,14 +369,14 @@ impl GeometryOwner {
                 next_id,
                 format!("wing-{index}"),
                 ApplicationMeshAttachment::Aircraft,
-                Buffer::BorrowedF32(surface.positions().as_flattened()),
-                Buffer::BorrowedU32(surface.indices()),
+                Buffer::F32(surface.positions().as_flattened().to_vec()),
+                Buffer::U32(surface.indices().to_vec()),
                 surface.indices(),
                 materials,
             )?;
             let uv = owner.insert(
                 next_id,
-                Buffer::BorrowedF32(surface.uvs().as_flattened()),
+                Buffer::F32(surface.uvs().as_flattened().to_vec()),
                 ApplicationBufferType::F32,
                 2,
                 surface.uvs().len(),
@@ -380,8 +389,8 @@ impl GeometryOwner {
                 next_id,
                 format!("cockpit-{index}"),
                 ApplicationMeshAttachment::Aircraft,
-                Buffer::BorrowedF32(surface.positions.as_flattened()),
-                Buffer::BorrowedU32(&surface.indices),
+                Buffer::F32(surface.positions.as_flattened().to_vec()),
+                Buffer::U32(surface.indices.clone()),
                 &surface.indices,
                 vec![material(
                     0,
@@ -451,7 +460,7 @@ impl GeometryOwner {
                 ),
                 _ => (
                     ApplicationMeshAttachment::Aircraft,
-                    Buffer::BorrowedF32(mesh.positions().as_flattened()),
+                    Buffer::F32(mesh.positions().as_flattened().to_vec()),
                 ),
             };
             let mesh_index = owner.mesh(
@@ -459,7 +468,7 @@ impl GeometryOwner {
                 format!("structure-{index}"),
                 attachment,
                 position_buffer,
-                Buffer::BorrowedU32(mesh.indices()),
+                Buffer::U32(mesh.indices().to_vec()),
                 mesh.indices(),
                 vec![material(
                     0,
@@ -537,7 +546,7 @@ impl GeometryOwner {
                 name.to_owned(),
                 ApplicationMeshAttachment::World,
                 Buffer::F32(positions.into_flattened()),
-                Buffer::BorrowedU32(&mesh.indices),
+                Buffer::U32(mesh.indices.clone()),
                 &mesh.indices,
                 vec![material(
                     0,
@@ -694,7 +703,7 @@ impl GeometryOwner {
         let mesh_index = self.assets.meshes.len();
         self.assets.meshes.push(ApplicationMeshAsset {
             frustum_culled: attachment == ApplicationMeshAttachment::World,
-            mesh_id: mesh_index as u32 + 1,
+            mesh_id: position.buffer_id,
             name,
             attachment,
             local_pose: Pose::IDENTITY,
@@ -713,7 +722,7 @@ impl GeometryOwner {
         next_id: &mut u32,
         mesh_index: usize,
         source: DynamicSource,
-        indices: &'static [u32],
+        indices: &[u32],
     ) -> GeometryResult<()> {
         let binding = self.dynamic.len();
         let count = self.assets.meshes[mesh_index].position.count as usize;
@@ -738,7 +747,7 @@ impl GeometryOwner {
             },
             sums: vec![[0.0; 3]; count],
             normals: vec![[0.0; 3]; count],
-            indices,
+            indices: indices.to_vec(),
         });
         Ok(())
     }
@@ -835,6 +844,7 @@ impl GeometryOwner {
     pub(super) fn project(
         &mut self,
         pose: Option<FlightRenderPose>,
+        definition: &birdman_game_content::AircraftDefinition,
     ) -> GeometryResult<ApplicationGeometryFrame> {
         let factor = match pose.map(|pose| pose.wing_deformation) {
             None => Some(0.0),
@@ -852,6 +862,8 @@ impl GeometryOwner {
             let changed = self
                 .frame
                 .update(
+                    &self.source,
+                    definition,
                     WingBendingFactor::try_new(factor)
                         .map_err(ApplicationAssetError::FrameDeformation)?,
                 )
@@ -871,17 +883,18 @@ impl GeometryOwner {
                                 ApplicationAssetError::Geometry("Unaccepted wing frame".to_owned())
                             })?
                             .surface_positions()[index],
-                        DynamicSource::Structure(index) => {
-                            self.frame.structure_positions(index).ok_or_else(|| {
+                        DynamicSource::Structure(index) => self
+                            .frame
+                            .structure_positions(&self.source, index)
+                            .ok_or_else(|| {
                                 ApplicationAssetError::Geometry(
                                     "Unaccepted structural frame".to_owned(),
                                 )
-                            })?
-                        }
+                            })?,
                     };
                     write_area_weighted_normals(
                         positions,
-                        mesh.indices,
+                        &mesh.indices,
                         &mut mesh.sums,
                         &mut mesh.normals,
                     )
@@ -950,9 +963,11 @@ impl GeometryOwner {
             Buffer::Wing(index) => ApplicationBufferSlice::F32(
                 self.frame.wing()?.surface_positions()[*index].as_flattened(),
             ),
-            Buffer::Structure(index) => {
-                ApplicationBufferSlice::F32(self.frame.structure_positions(*index)?.as_flattened())
-            }
+            Buffer::Structure(index) => ApplicationBufferSlice::F32(
+                self.frame
+                    .structure_positions(&self.source, *index)?
+                    .as_flattened(),
+            ),
             Buffer::Normal(index) => {
                 ApplicationBufferSlice::F32(self.dynamic[*index].normals.as_flattened())
             }

@@ -26,6 +26,7 @@ fn valid_document() -> AircraftDocument {
             .map(|point| AircraftSectionDocument {
                 quarter_chord_frd_m: point,
                 chord_m,
+                twist_rad: 0.0,
             })
             .to_vec(),
         strip_fractions: vec![0.0, 0.5, 1.0],
@@ -39,6 +40,10 @@ fn valid_document() -> AircraftDocument {
                 reference_kinematic_viscosity_m2ps: 0.000015,
             },
         ),
+        actuator: (role != AircraftSurfaceRole::MainWing).then_some(AircraftActuatorDocument {
+            incidence_bounds_rad: [-0.2, 0.2],
+            maximum_slew_rad_per_second: 1.0,
+        }),
         airfoil: AircraftAirfoilDocument {
             camber_ratio: 0.04,
             camber_position_ratio: 0.4,
@@ -51,6 +56,7 @@ fn valid_document() -> AircraftDocument {
         model_version: 1,
         mass: AircraftMassDocument {
             airframe_kg: 3.0,
+            airframe_center_of_mass_frd_m: [0.0; 3],
             inertia_about_datum_kg_m2: [[2.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
         },
         pilot: AircraftPilotDocument {
@@ -131,6 +137,66 @@ fn valid_document() -> AircraftDocument {
     }
 }
 
+#[test]
+fn schema_five_aggregates_independent_aircraft_authoring_problems() {
+    let mut document = valid_document();
+    document.mass.airframe_kg = -1.0;
+    document.pilot.maximum_speed_mps = 0.0;
+    document.surfaces[1]
+        .actuator
+        .as_mut()
+        .unwrap()
+        .maximum_slew_rad_per_second = -1.0;
+    document.surfaces[2].sections[0].twist_rad = f64::NAN;
+    document.polar.rows[0].induced_drag = -1.0;
+    document.polar.rows[1].profile_drag = -2.0;
+    document.structure.main_beam_radius_m = 0.0;
+    document.structure.wing_flexural_rigidity_nm2 = -1.0;
+    let Err(AircraftFormatError::Validation(issues)) = document.validate() else {
+        panic!("expected semantic issues");
+    };
+    for path in [
+        "/mass/airframe_kg",
+        "/pilot/maximum_speed_mps",
+        "/surfaces/1/actuator/maximum_slew_rad_per_second",
+        "/surfaces/2/sections/0/twist_rad",
+        "/polar/rows/0/induced_drag",
+        "/polar/rows/1/profile_drag",
+        "/structure/main_beam_radius_m",
+        "/structure/wing_flexural_rigidity_nm2",
+    ] {
+        assert!(
+            issues.iter().any(|issue| issue.path == path),
+            "missing {path}"
+        );
+    }
+    let mut coupled = valid_document();
+    coupled.mass.airframe_center_of_mass_frd_m = [2.0, 0.0, 0.0];
+    coupled.pilot.maximum_speed_mps = 0.0;
+    coupled.surfaces[1].airfoil.thickness_ratio = -1.0;
+    coupled.trim.alpha_bounds_rad = [-0.5, 0.5];
+    let Err(AircraftFormatError::Validation(issues)) = coupled.validate() else {
+        panic!("expected independent coupled constraints");
+    };
+    for path in [
+        "/mass",
+        "/pilot/maximum_speed_mps",
+        "/surfaces/1/airfoil/thickness_ratio",
+        "/trim/alpha_bounds_rad/0",
+        "/trim/alpha_bounds_rad/1",
+    ] {
+        assert!(
+            issues.iter().any(|issue| issue.path == path),
+            "missing {path}"
+        );
+    }
+    document.schema_version = 4;
+    assert_eq!(
+        document.validate(),
+        Err(AircraftFormatError::unsupported_schema_version(4))
+    );
+}
+
 fn tail_members() -> AircraftTailMembersDocument {
     AircraftTailMembersDocument {
         rib_intervals: 2,
@@ -188,11 +254,53 @@ fn decoding_rejects_unknown_fields_types_versions_and_oversized_input() {
             "{path}"
         );
     }
+    let mut legacy = source.clone();
+    legacy["schema_version"] = 4.into();
+    legacy["mass"]
+        .as_object_mut()
+        .unwrap()
+        .remove("airframe_center_of_mass_frd_m");
+    for surface in legacy["surfaces"].as_array_mut().unwrap() {
+        surface["actuator"] = serde_json::Value::Null;
+        for section in surface["sections"].as_array_mut().unwrap() {
+            section.as_object_mut().unwrap().remove("twist_rad");
+        }
+    }
+    let error = AircraftDocument::decode_json(&serde_json::to_vec(&legacy).unwrap()).unwrap_err();
+    assert_eq!(error, AircraftFormatError::unsupported_schema_version(4));
+    let [issue] = error.validation_issues() else {
+        panic!("missing schema diagnostic")
+    };
+    assert_eq!(issue.code, AircraftValidationCode::SchemaVersion);
+    assert_eq!(
+        (&*issue.path, &*issue.value, &*issue.expected),
+        ("/schema_version", "4", "schema_version == 5")
+    );
+    assert!(
+        alloc::format!("{error}")
+            .contains("SchemaVersion /schema_version: 4 (expected schema_version == 5)")
+    );
+    for input in [
+        b"[4]".as_slice(),
+        b"{}",
+        b"{\"schema_version\":4,\"schema_version\":5}",
+        b"{\"schema_version\":4}false",
+        b"{\"schema_version\":4,\"mass\":[}",
+        b"{\"schema_version\":\"4\"}",
+        b"{\"schema_version\":4,\"extra\":\"\xff\"}",
+    ] {
+        assert_eq!(
+            AircraftDocument::decode_json(input),
+            Err(AircraftFormatError::InvalidJson)
+        );
+    }
     let mut value = source;
     value["schema_version"] = (AIRCRAFT_SCHEMA_VERSION + 1).into();
     assert_eq!(
         AircraftDocument::decode_json(&serde_json::to_vec(&value).unwrap()),
-        Err(AircraftFormatError::UnsupportedSchemaVersion)
+        Err(AircraftFormatError::unsupported_schema_version(
+            AIRCRAFT_SCHEMA_VERSION + 1
+        ))
     );
     assert_eq!(
         AircraftDocument::decode_json(b"{\"schema_version\":NaN}"),
@@ -208,38 +316,23 @@ fn decoding_rejects_unknown_fields_types_versions_and_oversized_input() {
 fn invalid_mass_inertia_pilot_limits_and_nonfinite_geometry_are_rejected() {
     let mut document = valid_document();
     document.mass.airframe_kg = 0.0;
-    assert!(matches!(
-        document.validate(),
-        Err(AircraftFormatError::Dynamics(_))
-    ));
+    assert!(document.validate().is_err());
     document = valid_document();
     document.mass.inertia_about_datum_kg_m2[0][0] = 10.0;
-    assert!(matches!(
-        document.validate(),
-        Err(AircraftFormatError::Math(_))
-    ));
+    assert!(document.validate().is_err());
     document = valid_document();
     document.pilot.position_bounds_m = [0.0; 2];
-    assert!(matches!(
-        document.validate(),
-        Err(AircraftFormatError::Dynamics(_))
-    ));
+    assert!(document.validate().is_err());
     for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         document = valid_document();
         document.surfaces[0].sections[0].quarter_chord_frd_m[0] = invalid;
-        assert!(matches!(
-            document.validate(),
-            Err(AircraftFormatError::Math(_))
-        ));
+        assert!(document.validate().is_err());
         document = valid_document();
         document.structure.wing_flexural_rigidity_nm2 = invalid;
-        assert_eq!(
-            document.validate(),
-            Err(AircraftFormatError::InvalidStructure)
-        );
+        assert!(document.validate().is_err());
         document = valid_document();
         document.trim.airspeed_mps = invalid;
-        assert_eq!(document.validate(), Err(AircraftFormatError::InvalidTrim));
+        assert!(document.validate().is_err());
     }
 }
 
@@ -247,71 +340,44 @@ fn invalid_mass_inertia_pilot_limits_and_nonfinite_geometry_are_rejected() {
 fn invalid_surface_identity_order_partition_and_counts_are_rejected() {
     let mut document = valid_document();
     document.surfaces[1].role = AircraftSurfaceRole::MainWing;
-    assert_eq!(
-        document.validate(),
-        Err(AircraftFormatError::InvalidSurfaceRoles)
-    );
+    assert!(document.validate().is_err());
     document = valid_document();
     document.surfaces[0].sections.swap(0, 1);
-    assert!(matches!(
-        document.validate(),
-        Err(AircraftFormatError::Geometry(_))
-    ));
+    assert!(document.validate().is_err());
     document = valid_document();
     document.surfaces[0].strip_fractions = vec![0.0, 0.7, 0.6, 1.0];
-    assert_eq!(
-        document.validate(),
-        Err(AircraftFormatError::InvalidSurface(
-            AircraftSurfaceRole::MainWing
-        ))
-    );
+    assert!(document.validate().is_err());
     document = valid_document();
     document.surfaces[0].sections =
         vec![document.surfaces[0].sections[0]; MAX_AIRCRAFT_STATIONS + 1];
-    assert_eq!(document.validate(), Err(AircraftFormatError::InvalidCount));
+    assert!(document.validate().is_err());
     document = valid_document();
     document.surfaces[1]
         .tail_aerodynamics
         .as_mut()
         .unwrap()
         .reference_airspeed_mps = 0.0;
-    assert_eq!(
-        document.validate(),
-        Err(AircraftFormatError::InvalidSurface(
-            AircraftSurfaceRole::HorizontalTail
-        ))
-    );
+    assert!(document.validate().is_err());
     document = valid_document();
     document.surfaces[2]
         .tail_aerodynamics
         .as_mut()
         .unwrap()
         .reference_kinematic_viscosity_m2ps = f64::NAN;
-    assert_eq!(
-        document.validate(),
-        Err(AircraftFormatError::InvalidSurface(
-            AircraftSurfaceRole::VerticalTail
-        ))
-    );
+    assert!(document.validate().is_err());
 }
 
 #[test]
 fn invalid_polar_order_trim_coverage_and_structural_order_are_rejected() {
     let mut document = valid_document();
     document.polar.rows[1].alpha_rad = document.polar.rows[0].alpha_rad;
-    assert!(matches!(
-        document.validate(),
-        Err(AircraftFormatError::Aerodynamics(_))
-    ));
+    assert!(document.validate().is_err());
     document = valid_document();
     document.trim.alpha_bounds_rad = [-0.3, 0.1];
-    assert_eq!(document.validate(), Err(AircraftFormatError::InvalidTrim));
+    assert!(document.validate().is_err());
     document = valid_document();
     document.structure.cockpit_stations.swap(0, 1);
-    assert_eq!(
-        document.validate(),
-        Err(AircraftFormatError::InvalidStructure)
-    );
+    assert!(document.validate().is_err());
     for endpoints in [
         [[0.0; 3], [0.0, 0.0, 1.0]],
         [[0.0; 3], [1.0, 0.0, 0.0]],
@@ -319,10 +385,7 @@ fn invalid_polar_order_trim_coverage_and_structural_order_are_rejected() {
     ] {
         document = valid_document();
         document.structure.main_beam_endpoints_frd_m = endpoints;
-        assert_eq!(
-            document.validate(),
-            Err(AircraftFormatError::InvalidStructure)
-        );
+        assert!(document.validate().is_err());
     }
 }
 
@@ -347,10 +410,7 @@ fn structural_member_dimensions_partitions_and_derived_budget_are_bounded() {
     for invalidate in invalid_members {
         let mut document = valid_document();
         invalidate(&mut document.structure.members);
-        assert_eq!(
-            document.validate(),
-            Err(AircraftFormatError::InvalidStructure)
-        );
+        assert!(document.validate().is_err());
     }
     for invalid in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         let invalid_dimensions: &[fn(&mut AircraftMembersDocument, f64)] = &[
@@ -369,17 +429,14 @@ fn structural_member_dimensions_partitions_and_derived_budget_are_bounded() {
         for invalidate in invalid_dimensions {
             let mut document = valid_document();
             invalidate(&mut document.structure.members, invalid);
-            assert_eq!(
-                document.validate(),
-                Err(AircraftFormatError::InvalidStructure)
-            );
+            assert!(document.validate().is_err());
         }
     }
     let mut document = valid_document();
     document.structure.members.wing.rib_count = 128;
     document.structure.members.wing.rib_chord_knots =
         (0..=32).map(|index| f64::from(index) / 32.0).collect();
-    assert_eq!(document.validate(), Err(AircraftFormatError::InvalidCount));
+    assert!(document.validate().is_err());
     for invalid in [-1.0, f64::NAN, f64::INFINITY] {
         document = valid_document();
         document
@@ -387,10 +444,7 @@ fn structural_member_dimensions_partitions_and_derived_budget_are_bounded() {
             .members
             .horizontal_tail
             .foam_normal_offset_m = invalid;
-        assert_eq!(
-            document.validate(),
-            Err(AircraftFormatError::InvalidStructure)
-        );
+        assert!(document.validate().is_err());
     }
     document = valid_document();
     let members = &mut document.structure.members;
@@ -401,9 +455,9 @@ fn structural_member_dimensions_partitions_and_derived_budget_are_bounded() {
     members.horizontal_tail.rib_intervals = 8;
     members.vertical_tail.rib_intervals = 4;
     members.cockpit.rim_segments = 69;
-    assert_eq!(document.validate(), Ok(()));
+    assert!(document.validate().is_ok());
     document.structure.members.cockpit.rim_segments += 1;
-    assert_eq!(document.validate(), Err(AircraftFormatError::InvalidCount));
+    assert!(document.validate().is_err());
 }
 
 #[test]

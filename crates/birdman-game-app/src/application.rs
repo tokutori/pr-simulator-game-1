@@ -106,7 +106,12 @@ pub struct RecordSourceId(u64);
 
 /// Sole application owner of the game, player selection and sealed preparation metadata.
 pub struct ApplicationSession {
-    session: GameSession<'static>,
+    session: GameSession,
+    aircraft: Result<crate::SelectedAircraft, birdman_game_content::AircraftDefinitionError>,
+    controller:
+        Result<crate::SelectedController, birdman_game_format::controller::ControllerFormatError>,
+    controller_pair:
+        Result<birdman_game_core::TailControlProfile, crate::ControllerPreparationError>,
     difficulty: DifficultySettings,
     maximum_flight_ticks: u64,
     seed: u64,
@@ -125,17 +130,15 @@ pub struct ApplicationSession {
 
 impl Default for ApplicationSession {
     fn default() -> Self {
-        let mut application = Self::new(
-            crate::default_control_mode(),
+        Self::with_difficulty(
+            DifficultySettings::custom(
+                InformationLevel::Full,
+                crate::DEFAULT_ASSISTANCE,
+                crate::DEFAULT_WEATHER,
+            ),
             crate::DEFAULT_MAXIMUM_FLIGHT_TICKS,
             crate::DEFAULT_SESSION_SEED,
-        );
-        application.difficulty = DifficultySettings::custom(
-            InformationLevel::Full,
-            crate::DEFAULT_ASSISTANCE,
-            crate::DEFAULT_WEATHER,
-        );
-        application
+        )
     }
 }
 
@@ -152,9 +155,31 @@ impl ApplicationSession {
 
     /// Creates the existing Title state with explicit reproducible settings.
     pub fn new(control_mode: ControlMode, maximum_flight_ticks: u64, seed: u64) -> Self {
+        Self::with_difficulty(
+            crate::default_difficulty(control_mode),
+            maximum_flight_ticks,
+            seed,
+        )
+    }
+
+    fn with_difficulty(
+        difficulty: DifficultySettings,
+        maximum_flight_ticks: u64,
+        seed: u64,
+    ) -> Self {
+        let aircraft = crate::SelectedAircraft::bundled();
+        let controller = crate::SelectedController::bundled();
+        let controller_pair = match (&aircraft, &controller) {
+            (Ok(aircraft), Ok(controller)) => controller.prepare(aircraft.definition()),
+            (Err(cause), _) => Err(crate::ControllerPreparationError::Aircraft(cause.clone())),
+            (_, Err(cause)) => Err(crate::ControllerPreparationError::Document(cause.clone())),
+        };
         Self {
             session: GameSession::new(),
-            difficulty: crate::default_difficulty(control_mode),
+            aircraft,
+            controller,
+            controller_pair,
+            difficulty,
             maximum_flight_ticks,
             seed,
             keyboard_controls: crate::flight_input::KeyboardControlSettings::default(),
@@ -171,8 +196,74 @@ impl ApplicationSession {
         }
     }
 
+    /// Borrows the selected original and validated aircraft definition.
+    pub fn aircraft(
+        &self,
+    ) -> Result<&crate::SelectedAircraft, birdman_game_content::AircraftDefinitionError> {
+        self.aircraft.as_ref().map_err(Clone::clone)
+    }
+
+    /// Borrows the independently validated controller and its original source.
+    pub fn controller(
+        &self,
+    ) -> Result<&crate::SelectedController, birdman_game_format::controller::ControllerFormatError>
+    {
+        self.controller.as_ref().map_err(Clone::clone)
+    }
+
+    /// Borrows the current pair result, resolved once when either selection changes.
+    pub fn controller_pair(
+        &self,
+    ) -> Result<birdman_game_core::TailControlProfile, crate::ControllerPreparationError> {
+        self.controller_pair.clone()
+    }
+
+    fn refresh_controller_pair(&mut self) {
+        self.controller_pair = match (&self.aircraft, &self.controller) {
+            (Ok(aircraft), Ok(controller)) => controller.prepare(aircraft.definition()),
+            (Err(cause), _) => Err(crate::ControllerPreparationError::Aircraft(cause.clone())),
+            (_, Err(cause)) => Err(crate::ControllerPreparationError::Document(cause.clone())),
+        };
+    }
+
+    /// Commits an intrinsically valid controller; pair incompatibility blocks preparation.
+    pub fn select_controller(
+        &mut self,
+        controller: crate::SelectedController,
+    ) -> Result<(), GameSessionError> {
+        if !matches!(
+            self.session.snapshot().phase(),
+            SessionPhase::Title | SessionPhase::FlightSetup
+        ) {
+            return Err(GameSessionError::InvalidTransition);
+        }
+        self.controller = Ok(controller);
+        self.refresh_controller_pair();
+        self.prepared = None;
+        self.attract = None;
+        Ok(())
+    }
+
+    /// Commits one validated selection while flight configuration is editable.
+    pub fn select_aircraft(
+        &mut self,
+        aircraft: crate::SelectedAircraft,
+    ) -> Result<(), GameSessionError> {
+        if !matches!(
+            self.session.snapshot().phase(),
+            SessionPhase::Title | SessionPhase::FlightSetup
+        ) {
+            return Err(GameSessionError::InvalidTransition);
+        }
+        self.aircraft = Ok(aircraft);
+        self.refresh_controller_pair();
+        self.prepared = None;
+        self.attract = None;
+        Ok(())
+    }
+
     /// Borrows the canonical game for queries without exposing mutation.
-    pub fn core_session(&self) -> &GameSession<'static> {
+    pub fn core_session(&self) -> &GameSession {
         &self.session
     }
 
@@ -196,6 +287,33 @@ impl ApplicationSession {
             archive.settings()
         } else {
             self.difficulty
+        }
+    }
+
+    /// Returns the recorded/sealed mode, or the current editable selection's mode.
+    pub fn display_control_mode(&self) -> Option<ControlMode> {
+        match self.session.snapshot().phase() {
+            SessionPhase::FlightRunning
+            | SessionPhase::FlightPaused { .. }
+            | SessionPhase::Result
+            | SessionPhase::Replay
+            | SessionPhase::Attract => self
+                .session
+                .playback_record()
+                .and_then(|record| record.header().control_mode),
+            SessionPhase::BriefingPreparing
+            | SessionPhase::BriefingReady
+            | SessionPhase::BriefingFailed { .. }
+            | SessionPhase::Countdown { .. } => {
+                self.prepared.as_ref().map(|prepared| prepared.control_mode)
+            }
+            _ => self.controller().ok().and_then(|selected| {
+                commands::control_mode(
+                    self.difficulty.assistance(),
+                    selected.document().shared_authority,
+                )
+                .ok()
+            }),
         }
     }
 
@@ -246,6 +364,20 @@ impl ApplicationSession {
         command: SessionCommand,
         readiness: BackendReadiness,
     ) -> Result<(), ApplicationError> {
+        if matches!(
+            command,
+            SessionCommand::Prepare {}
+                | SessionCommand::StartCountdown {}
+                | SessionCommand::Retry {}
+                | SessionCommand::RetryBriefing {}
+                | SessionCommand::EnterAttract {}
+        ) {
+            self.controller_pair().map_err(|cause| {
+                ApplicationError::Preparation(crate::HybridSessionPreparationError::Controller(
+                    cause,
+                ))
+            })?;
+        }
         let previous = self.session.snapshot().phase();
         let result = self.execute_inner(command, readiness);
         self.synchronize_flight_driver(previous);
@@ -319,6 +451,18 @@ impl ApplicationSession {
             SessionCommand::Prepare {} => {
                 let mut prepared = commands::prepare_flight(
                     &mut self.session,
+                    self.aircraft.as_ref().map_err(|cause| {
+                        ApplicationError::Preparation(
+                            crate::HybridSessionPreparationError::Aircraft(cause.clone()),
+                        )
+                    })?,
+                    self.controller.as_ref().map_err(|cause| {
+                        ApplicationError::Preparation(
+                            crate::HybridSessionPreparationError::Controller(
+                                crate::ControllerPreparationError::Document(cause.clone()),
+                            ),
+                        )
+                    })?,
                     self.difficulty,
                     self.maximum_flight_ticks,
                     self.seed,
@@ -348,6 +492,9 @@ impl ApplicationSession {
                 self.session.retry().map_err(ApplicationError::Session)?;
                 self.advance_record_source();
                 Ok(())
+            }
+            SessionCommand::EnterReplay {} if !self.replay_available() => {
+                Err(GameSessionError::InvalidTransition)
             }
             SessionCommand::EnterReplay {} => self.session.enter_replay(),
             SessionCommand::LeaveReplay {} => self.session.leave_replay(),
@@ -484,17 +631,29 @@ impl ApplicationSession {
         input: TailFlightTickInput,
     ) -> Result<SessionSnapshot, GameSessionError> {
         let previous = self.session.snapshot().phase();
-        let result = self
+        let definition = self
+            .aircraft
+            .as_ref()
+            .map_err(|_| GameSessionError::InvalidTransition)?
+            .definition();
+        let surfaces = definition
+            .surfaces()
+            .map_err(|_| GameSessionError::InvalidTransition)?;
+        let prepared = self
             .prepared
             .as_mut()
-            .ok_or(GameSessionError::InvalidTransition)?
-            .advance(&mut self.session, input);
+            .ok_or(GameSessionError::InvalidTransition)?;
+        let loads = prepared.loads(definition, &surfaces)?;
+        let result = prepared.advance(&mut self.session, definition, input, &loads);
         self.synchronize_flight_driver(previous);
         result
     }
 
     /// Opens a validated external record and discards the unrelated sealed live metadata.
-    pub fn open_archived_replay(&mut self, record: FlightRecord) -> Result<(), GameSessionError> {
+    pub(crate) fn open_archived_replay(
+        &mut self,
+        record: FlightRecord,
+    ) -> Result<(), GameSessionError> {
         let previous = self.session.snapshot().phase();
         self.session.open_archived_replay(record)?;
         self.flight_failure = None;
@@ -512,6 +671,26 @@ impl ApplicationSession {
             .map_err(ArchiveError::Session)?;
         self.archived = Some(metadata);
         Ok(())
+    }
+
+    /// Authorizes recorded aircraft imagery independently of archive/analysis availability.
+    pub fn replay_available(&self) -> bool {
+        let Some(record) = self.core_session().playback_record() else {
+            return true;
+        };
+        let Some(identity) = self.display_control_identity() else {
+            return true;
+        };
+        let Ok(selected) = self.aircraft() else {
+            return false;
+        };
+        identity.aircraft_configuration_id == selected.definition().document().configuration_id
+            && record.header().scenario.aircraft_model_version
+                == selected.definition().document().model_version
+            && identity
+                .aircraft_sha256
+                .as_deref()
+                .map_or_else(|| selected.is_bundled(), |sha| sha == selected.raw_sha256())
     }
 
     /// Executes an admitted query or clock effect on the retained record source.
@@ -565,6 +744,9 @@ impl ApplicationSession {
 
     /// Changes only the core-owned playback running state.
     pub fn set_playback_playing(&mut self, playing: bool) -> Result<(), GameSessionError> {
+        if playing && !self.replay_available() {
+            return Err(GameSessionError::InvalidTransition);
+        }
         if playing && !self.presentation_available() {
             return Err(GameSessionError::PauseConditionsRemain);
         }
@@ -585,7 +767,18 @@ impl ApplicationSession {
             ));
         }
         if self.attract.is_none() {
-            let (record, metadata) = build_demo_record()?;
+            let (record, metadata) = build_demo_record(
+                self.aircraft().map_err(|cause| {
+                    ApplicationError::Preparation(crate::HybridSessionPreparationError::Aircraft(
+                        cause,
+                    ))
+                })?,
+                self.controller().map_err(|cause| {
+                    ApplicationError::Preparation(crate::HybridSessionPreparationError::Controller(
+                        crate::ControllerPreparationError::Document(cause),
+                    ))
+                })?,
+            )?;
             self.session
                 .install_attract_record(record)
                 .map_err(ApplicationError::Session)?;
@@ -598,7 +791,10 @@ impl ApplicationSession {
     }
 }
 
-fn build_demo_record() -> Result<(FlightRecord, AttractMetadata), ApplicationError> {
+fn build_demo_record(
+    aircraft: &crate::SelectedAircraft,
+    controller: &crate::SelectedController,
+) -> Result<(FlightRecord, AttractMetadata), ApplicationError> {
     use birdman_game_core::{TailPilotIntent, TailPilotPositionCommand, TailRateTarget};
     let difficulty = crate::default_difficulty(ControlMode::Automatic)
         .with_information(InformationLevel::Minimal)
@@ -607,6 +803,8 @@ fn build_demo_record() -> Result<(FlightRecord, AttractMetadata), ApplicationErr
     builder.open_setup().map_err(ApplicationError::Session)?;
     let mut prepared = commands::prepare_flight(
         &mut builder,
+        aircraft,
+        controller,
         difficulty,
         crate::DEFAULT_MAXIMUM_FLIGHT_TICKS,
         0xD3A0,
@@ -628,8 +826,14 @@ fn build_demo_record() -> Result<(FlightRecord, AttractMetadata), ApplicationErr
         TailRateTarget::try_new(0.0, 0.0).map_err(ApplicationError::Input)?,
         TailPilotPositionCommand::Hold,
     );
+    let surfaces = aircraft.definition().surfaces().map_err(|cause| {
+        ApplicationError::Preparation(crate::HybridSessionPreparationError::Aircraft(cause))
+    })?;
+    let loads = prepared
+        .loads(aircraft.definition(), &surfaces)
+        .map_err(ApplicationError::Session)?;
     for _tick in 0..crate::DEFAULT_MAXIMUM_FLIGHT_TICKS {
-        if let Err(error) = prepared.advance(&mut builder, input)
+        if let Err(error) = prepared.advance(&mut builder, aircraft.definition(), input, &loads)
             && builder.snapshot().phase() != SessionPhase::Result
         {
             return Err(ApplicationError::Session(error));

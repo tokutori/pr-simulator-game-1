@@ -31,19 +31,22 @@ pub(super) fn registered_wind(
 /// Formats registered weather from the same immutable provider used by flight preparation.
 pub fn game_ui_environment_readout(
     identity: Option<SessionScenarioIdentity>,
+    position: [f64; 3],
 ) -> Result<String, EnvironmentFormatError> {
-    format_environment_readout(identity, false)
+    format_environment_readout(identity, false, position)
 }
 
 pub(super) fn game_ui_environment_diagnostics(
     identity: Option<SessionScenarioIdentity>,
+    position: [f64; 3],
 ) -> Result<String, EnvironmentFormatError> {
-    format_environment_readout(identity, true)
+    format_environment_readout(identity, true, position)
 }
 
 fn format_environment_readout(
     identity: Option<SessionScenarioIdentity>,
     technical: bool,
+    selected_position: [f64; 3],
 ) -> Result<String, EnvironmentFormatError> {
     let Some(identity) = identity.filter(|identity| registered(*identity)) else {
         return Ok(if technical {
@@ -64,8 +67,19 @@ fn format_environment_readout(
         };
         (
             document.name.as_str(),
-            document.wind_grid.representative_position_ned_m,
-            environment.representative_wind()?.components(),
+            selected_position,
+            environment
+                .wind_field()?
+                .velocity_at(
+                    birdman_game_core::NedPoint::try_new(
+                        selected_position[0],
+                        selected_position[1],
+                        selected_position[2],
+                    )
+                    .map_err(|_| EnvironmentFormatError::InvalidWindPosition)?,
+                )
+                .map_err(EnvironmentFormatError::Wind)?
+                .components(),
             basis,
             "場所により風向・風速が変わる",
         )
@@ -74,7 +88,7 @@ fn format_environment_readout(
             .ok_or(EnvironmentFormatError::InvalidIdentity)?;
         (
             preset.name,
-            [0.0, 0.0, -10.5],
+            selected_position,
             preset.wind_velocity_ned_mps,
             "仮定した合成環境",
             "位置によらず一定の風",

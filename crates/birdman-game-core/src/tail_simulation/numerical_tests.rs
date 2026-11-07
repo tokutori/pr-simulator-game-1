@@ -1,7 +1,8 @@
 use super::*;
+use crate::tail_control::test_control as advance_tail_control;
 use crate::{
     BodyVector, FbwAuthority, HybridModel, NedPoint, NedVector, SteadyGlideTrim,
-    TailPilotPositionIntent, TestAircraft, UnitQuaternion, WindField, advance_tail_control,
+    TailPilotPositionIntent, TestAircraft, UnitQuaternion, WindField,
 };
 
 mod wind_tests;
@@ -171,6 +172,7 @@ fn initial_state(
         TailRateTarget::try_new(0.0, 0.0).unwrap(),
         perturbed.angular_velocity_body(),
         PHYSICS_DT_SECONDS,
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap()
     .incidence();
@@ -205,14 +207,23 @@ fn integrate(
     for observation_index in 0..profile.observation_intervals {
         let input = profile.input_case.sample(observation_index);
         for _control_step in 0..control_steps {
-            let control = advance_tail_control(
+            let (angles, regular) =
+                crate::scenario::flight_euler_angles(previous.flight_state.attitude_body_to_ned());
+            let control = crate::advance_tail_control(
                 previous.incidence,
+                previous.controller_state,
                 config.profile,
                 config.mode,
                 input.pilot,
                 input.desired_rate,
-                previous.flight_state.angular_velocity_body(),
+                crate::TailControlObservation {
+                    body_rate: previous.flight_state.angular_velocity_body(),
+                    euler_rad: regular.then_some(angles),
+                    airspeed_mps: 0.0,
+                    datum_alpha_rad: None,
+                },
                 control_dt,
+                aircraft.tail_actuators(),
             )
             .unwrap();
             if control.incidence() != control.mixed_target() {
@@ -257,6 +268,7 @@ fn integrate(
                 .unwrap();
             }
             loads.evaluate_hybrid(&flight_state, incidence).unwrap();
+            let controller_state = control.admitted_state(control_dt).unwrap();
             previous = TailFlightTickState::try_new(
                 aircraft,
                 observation_index as u64 + 1,
@@ -265,6 +277,7 @@ fn integrate(
                 pilot_position_target,
             )
             .unwrap();
+            previous.controller_state = controller_state;
         }
         trajectory[observation_index + 1] = previous;
     }
@@ -432,7 +445,7 @@ fn check_step_halving(cadence: Cadence) {
     ] {
         let config = TailFlightTickConfig::new(
             mode,
-            TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap(),
+            crate::tail_control::test_profile(0.2, 0.2),
             trim.pilot_mapping().unwrap(),
             Gravity::try_new(TestAircraft::TRIM_GRAVITY_MPS2).unwrap(),
         );

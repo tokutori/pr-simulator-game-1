@@ -127,7 +127,7 @@ pub(super) fn regions(
     ]
 }
 
-fn held_target(context: &GameUiContext<'_, '_>) -> Result<f64, GameUiError> {
+fn held_target(context: &GameUiContext<'_>) -> Result<f64, GameUiError> {
     let invalid = || GameUiError::Session(GameSessionError::InvalidTransition);
     let state = context
         .session
@@ -149,7 +149,7 @@ fn held_target(context: &GameUiContext<'_, '_>) -> Result<f64, GameUiError> {
 }
 
 pub(super) fn controls(
-    context: &GameUiContext<'_, '_>,
+    context: &GameUiContext<'_>,
     menu: &GameUiLayout,
 ) -> Result<[GameUiControl; 2], GameUiError> {
     let target = held_target(context)?;
@@ -195,7 +195,7 @@ pub(super) fn controls(
 }
 
 pub(super) fn frame_values(
-    context: &GameUiContext<'_, '_>,
+    context: &GameUiContext<'_>,
     retained: &GameUiView,
 ) -> Result<Vec<GameUiFlightTouchValue>, GameUiError> {
     let mut values = Vec::new();

@@ -138,6 +138,30 @@ impl ApplicationSession {
             self.flight_clock.suspend();
             self.flight_input.set_active(false);
         }
+        let definition = self
+            .aircraft
+            .as_ref()
+            .map_err(|_| FlightFrameError::Session(GameSessionError::InvalidTransition))?
+            .definition();
+        let surfaces = if self.session.snapshot().phase() == SessionPhase::FlightRunning {
+            Some(
+                definition
+                    .surfaces()
+                    .map_err(|_| FlightFrameError::Session(GameSessionError::InvalidTransition))?,
+            )
+        } else {
+            None
+        };
+        let loads = surfaces
+            .as_ref()
+            .map(|surfaces| {
+                self.prepared
+                    .as_ref()
+                    .ok_or(GameSessionError::InvalidTransition)?
+                    .loads(definition, surfaces)
+            })
+            .transpose()
+            .map_err(FlightFrameError::Session)?;
         let session = &mut self.session;
         let prepared = &mut self.prepared;
         let input = &mut self.flight_input;
@@ -166,19 +190,38 @@ impl ApplicationSession {
                     GameSessionError::InvalidTransition,
                 ))?;
                 let demand = input
-                    .tick_input(gamepads, held.value(), prepared.keyboard_controls, |step| {
-                        let position = birdman_game_core::PilotPositionTarget::try_new(
-                            &prepared.aircraft,
-                            (previous.pilot_position_demand().position_m() + step).clamp(-0.4, 0.4),
-                        )
-                        .map_err(|_| TailControlError::InvalidPilotIntent)?;
-                        mapping
-                            .normalized_target(position)
-                            .map_err(|_| TailControlError::InvalidPilotIntent)
-                    })
+                    .tick_input(
+                        prepared
+                            .controller_profile
+                            .body_rate_bounds_rad_per_second(),
+                        gamepads,
+                        held.value(),
+                        prepared.keyboard_controls,
+                        |step| {
+                            let position = birdman_game_core::PilotPositionTarget::try_new(
+                                &prepared.aircraft,
+                                (previous.pilot_position_demand().position_m() + step).clamp(
+                                    prepared.aircraft.pilot_position_bounds_m()[0],
+                                    prepared.aircraft.pilot_position_bounds_m()[1],
+                                ),
+                            )
+                            .map_err(|_| TailControlError::InvalidPilotIntent)?;
+                            mapping
+                                .normalized_target(position)
+                                .map_err(|_| TailControlError::InvalidPilotIntent)
+                        },
+                    )
                     .map_err(FlightFrameError::Input)?;
                 let result = prepared
-                    .advance(session, demand)
+                    .advance(
+                        session,
+                        definition,
+                        demand,
+                        loads
+                            .as_ref()
+                            .ok_or(GameSessionError::InvalidTransition)
+                            .map_err(FlightFrameError::Session)?,
+                    )
                     .map_err(FlightFrameError::Session);
                 let elapsed = result.as_ref().is_ok_and(|snapshot| {
                     snapshot

@@ -151,6 +151,7 @@
 - 内部不整合を注入した回帰と、利用者操作から到達する障害を区別する。
 
 - 本番`evaluated_tick_report`は、Advancedと正fraction接触のstate/control、fraction-zero分岐のprevious state・incidence・pilot target保持、新control除去を検証する。
+- controller memoryはtick stateと接触sampleが値所有し、fraction-zeroの本番分岐でpreviousのmemoryを保持する。PIDの浮動小数点計算、微分・積分の時間間隔、方向付きanti-windup、正fractionの採用は代表数値回帰で確認する。
 - 実begin/Advanced appendが最新sampleとRunning stateの対応を確立する。
 - 合成clientは実producerと同じpreviousからNoElapsed append/finalizeを呼び、sampleのinput/telemetry、整数tick、FlightState、held incidenceの保持へ接続する。
 

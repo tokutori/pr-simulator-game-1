@@ -71,9 +71,11 @@ pub use scoring::{
 pub use session_contract::{SessionEndReason, SessionScenarioIdentity};
 pub use steady_glide::{SteadyGlideConditions, SteadyGlideError, SteadyGlideTrim};
 pub use tail_control::{
-    TailAngleOfAttackGuard, TailControlCommands, TailControlError, TailControlProfile,
-    TailControlUpdate, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
-    TailPilotPositionMapping, TailRateTarget, advance_tail_control, tail_rate_feedback_incidence,
+    ControllerReference, PidConfig, PidMemory, PitchController, TailActuatorLimits,
+    TailAngleOfAttackGuard, TailControlCommands, TailControlError, TailControlObservation,
+    TailControlProfile, TailControlUpdate, TailControllerState, TailPilotIntent,
+    TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
+    YawController, advance_tail_control,
 };
 pub use tail_scenario::{
     TailFlightRunError, TailFlightRunOutcome, TailFlightScenario, TailFlightScenarioError,
@@ -112,7 +114,7 @@ pub const PHYSICS_HZ: u32 = 100;
 ///
 /// Increment when the same validated model and tick-input sequence can produce a
 /// different physical trajectory or terminal state.
-pub const PHYSICS_MODEL_VERSION: u32 = 6;
+pub const PHYSICS_MODEL_VERSION: u32 = 9;
 
 /// Fixed simulation timestep in seconds.
 pub const PHYSICS_DT_SECONDS: f64 = 1.0 / PHYSICS_HZ as f64;

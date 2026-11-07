@@ -348,9 +348,32 @@ fn tail_csv_keeps_fractional_stamps_when_acceleration_is_unrepresentable() {
 
 fn identity() -> FlightRecordTailIdentityDocument {
     FlightRecordTailIdentityDocument {
+        aircraft_sha256: None,
+        controller_sha256: None,
         aircraft_configuration_id: "bpg041-playable-hybrid-mock".into(),
         controller_profile_id: "bpg040-tail-rate-feedback".into(),
     }
+}
+
+fn current_identity() -> FlightRecordTailIdentityDocument {
+    FlightRecordTailIdentityDocument {
+        aircraft_sha256: Some("11".repeat(32)),
+        controller_sha256: Some("22".repeat(32)),
+        ..identity()
+    }
+}
+
+fn current_document() -> TailFlightRecordDocument {
+    let mut record = document();
+    record.schema_version = TAIL_FLIGHT_RECORD_SCHEMA_VERSION;
+    record.control_identity = current_identity();
+    record.header.controller_profile_version = None;
+    record.header.control_mode = Some(crate::FlightRecordControlMode::Manual);
+    for sample in &mut record.samples {
+        sample.wing_bending_factor = Some(1.0);
+        sample.tail_wrenches = Some([None; 2]);
+    }
+    record
 }
 
 #[test]
@@ -467,7 +490,8 @@ fn document() -> TailFlightRecordDocument {
             scenario_version: 1,
             aircraft_model_version: 1,
             environment_version: 1,
-            controller_profile_version: 1,
+            controller_profile_version: Some(1),
+            control_mode: None,
             difficulty: DifficultySettings::custom(
                 InformationLevel::Full,
                 AssistanceLevel::Manual,
@@ -498,7 +522,7 @@ fn document() -> TailFlightRecordDocument {
 #[test]
 fn current_codec_preserves_terminal_causes() {
     use birdman_game_core::{SessionEndReason, TailFlightTickError};
-    let source = document().to_finalized_core_record().unwrap();
+    let source = current_document().to_finalized_core_record().unwrap();
     let mut finalization = source.finalization().unwrap();
     finalization.reason = SessionEndReason::FatalSimulationError;
     finalization.disposition = birdman_game_core::FlightRecordDisposition::Failed;
@@ -516,7 +540,7 @@ fn current_codec_preserves_terminal_causes() {
             AssistanceLevel::Manual,
             WeatherClass::Calm,
         ),
-        identity(),
+        current_identity(),
     )
     .unwrap();
     let restored = TailFlightRecordDocument::decode_json(&document.encode_json().unwrap())
@@ -540,7 +564,7 @@ fn envelope_wind_and_numerical_causes_keep_last_valid_snapshot_and_query() {
         (AeroError::Wind(WindError::NonFinite), None),
         (AeroError::NonFinite, None),
     ] {
-        let source = document().to_finalized_core_record().unwrap();
+        let source = current_document().to_finalized_core_record().unwrap();
         let hybrid = HybridError::try_from_recorded(
             HybridSite::Proxy {
                 surface: HybridSurfaceRole::HorizontalTail,
@@ -571,7 +595,7 @@ fn envelope_wind_and_numerical_causes_keep_last_valid_snapshot_and_query() {
                 AssistanceLevel::Manual,
                 WeatherClass::Calm,
             ),
-            identity(),
+            current_identity(),
         )
         .unwrap();
         let restored = TailFlightRecordDocument::decode_json(&document.encode_json().unwrap())
@@ -660,17 +684,12 @@ fn v6_archive_round_trip_keeps_named_physical_controls_and_saved_outputs() {
             .unwrap(),
         document.finalization
     );
-    let rebuilt = TailFlightRecordDocument::from_record(
-        &restored,
-        DifficultySettings::custom(
-            InformationLevel::Full,
-            AssistanceLevel::Manual,
-            WeatherClass::Calm,
-        ),
-        identity(),
-    )
-    .unwrap();
-    assert_eq!(rebuilt, document);
+    assert_eq!(restored.header().scenario.controller_identity, None);
+    assert_eq!(restored.header().control_mode, None);
+    assert_eq!(
+        archive.encode_json().unwrap(),
+        document.encode_json().unwrap()
+    );
     let saved = restored.samples()[1].controls;
     let FlightRecordControls {
         incidence,
@@ -829,6 +848,50 @@ fn schema_eight_tail_wrenches_roundtrip_and_keep_recorded_times() {
     assert_eq!(csv_value(&csv, 1, "log_export_version"), "5");
     assert_eq!(csv_value(&csv, 2, "horizontal_tail_force_frd_x_n"), "7");
     assert_eq!(csv_value(&csv, 2, "vertical_tail_force_frd_x_n"), "");
+    let mut exact = archive.clone();
+    exact.schema_version = 9;
+    exact.control_identity.aircraft_sha256 = Some("0123456789abcdef".repeat(4));
+    let previous_profile = serde_json::json!({
+        "comparison_version": 4,
+        "conditions": {"control_mode": {"kind": "shared", "authority": 0.3},
+            "controller_profile": {"pitch_gain": 0.2, "slew": 1.0,
+                "angle_of_attack_guard": null}},
+        "build": {"original": "旧方式"},
+    });
+    exact.identity_metadata =
+        crate::FlightRecordIdentityMetadata::Unrecognized(previous_profile.clone());
+    let exact = TailFlightRecordDocument::decode_json(&exact.encode_json().unwrap()).unwrap();
+    let exact_record = exact.to_finalized_core_record().unwrap();
+    assert_eq!(exact_record.header().scenario.controller_identity, None);
+    assert_eq!(
+        exact_record.header().control_mode,
+        Some(birdman_game_core::ControlMode::Shared(
+            birdman_game_core::FbwAuthority::try_new(0.3).unwrap(),
+        ))
+    );
+    assert_eq!(
+        serde_json::to_value(&exact.identity_metadata).unwrap(),
+        previous_profile
+    );
+    assert_eq!(
+        exact.recorded_control_mode(),
+        Some(crate::FlightRecordControlMode::Shared { authority: 0.3 })
+    );
+    assert!(
+        crate::TailPersonalBestSelection::try_new(&exact)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        exact.encode_json().unwrap(),
+        serde_json::to_vec(&exact).unwrap()
+    );
+    let csv = tail_csv_rows(&exact);
+    assert_eq!(csv_value(&csv, 1, "log_export_version"), "6");
+    assert_eq!(
+        csv_value(&csv, 1, "aircraft_source_sha256"),
+        "0123456789abcdef".repeat(4)
+    );
     let mut downgraded = archive.clone();
     downgraded.schema_version = 7;
     assert_eq!(
@@ -923,6 +986,19 @@ fn schema_eight_boundary_retains_the_right_side_tail_wrench() {
 }
 
 #[test]
+fn previous_physics_records_remain_readable_and_current_pb_is_separate() {
+    for version in [6, 7, 8] {
+        let mut previous = document();
+        previous.header.physics_model_version = version;
+        let restored =
+            TailFlightRecordDocument::decode_json(&previous.encode_json().unwrap()).unwrap();
+        assert_eq!(restored.header.physics_model_version, version);
+        assert!(restored.to_finalized_core_record().is_ok());
+        assert!(restored.personal_best_candidate_score().unwrap().is_none());
+    }
+}
+
+#[test]
 fn schema_seven_boundary_event_roundtrips_and_exports_a_distinct_same_time_csv_row() {
     let mut document = document();
     let TailFlightRecordControlsDocument::TailIncidence {
@@ -971,26 +1047,13 @@ fn schema_seven_boundary_event_roundtrips_and_exports_a_distinct_same_time_csv_r
         csv_value(&rows, 2, "estimated_datum_acceleration_ned_n_mps2"),
         ""
     );
-    let from_record = TailFlightRecordDocument::from_record(
-        &record,
-        DifficultySettings::custom(
-            InformationLevel::Full,
-            AssistanceLevel::Manual,
-            WeatherClass::Calm,
-        ),
-        document.control_identity.clone(),
-    )
-    .unwrap();
-    assert_eq!(from_record.schema_version, 7);
-    assert_eq!(
-        from_record.finalization.boundary_event,
-        document.finalization.boundary_event
-    );
+    assert_eq!(decoded.encode_json().unwrap(), json);
+    assert_eq!(record.header().control_mode, None);
 }
 
 #[test]
 fn unknown_corrupt_or_surplus_control_schemas_are_rejected() {
-    for version in [0, 9, u32::MAX] {
+    for version in [0, 11, u32::MAX] {
         let mut value = serde_json::to_value(document()).unwrap();
         value["schema_version"] = version.into();
         assert_eq!(
@@ -1025,7 +1088,7 @@ fn unknown_corrupt_or_surplus_control_schemas_are_rejected() {
     let TailFlightRecordControlsDocument::TailIncidence {
         physical_incidence, ..
     } = &mut invalid.samples[1].controls;
-    physical_incidence.horizontal_tail_rad = 0.2_f64.next_up();
+    physical_incidence.horizontal_tail_rad = core::f64::consts::PI.next_up();
     assert_eq!(
         invalid.validate(),
         Err(FlightRecordFormatError::InvalidRecord)
@@ -1040,46 +1103,65 @@ fn unknown_corrupt_or_surplus_control_schemas_are_rejected() {
 
 #[test]
 fn model_controller_and_physics_identity_gate_reintegration() {
-    let document = document();
+    let document = current_document();
+    let mode = document.header.control_mode.unwrap().to_core().unwrap();
     let scenario = document
         .to_finalized_core_record()
         .unwrap()
         .header()
         .scenario;
     let archive = document.clone();
+    let different_mode = if mode == birdman_game_core::ControlMode::Manual {
+        birdman_game_core::ControlMode::Automatic
+    } else {
+        birdman_game_core::ControlMode::Manual
+    };
     assert_eq!(
         archive.require_tail_reintegration_compatibility(
-            &identity(),
+            &current_identity(),
             scenario,
-            birdman_game_core::PHYSICS_MODEL_VERSION
+            birdman_game_core::PHYSICS_MODEL_VERSION,
+            different_mode,
+        ),
+        Err(FlightRecordFormatError::IncompatibleReintegration)
+    );
+    assert_eq!(
+        archive.require_tail_reintegration_compatibility(
+            &current_identity(),
+            scenario,
+            birdman_game_core::PHYSICS_MODEL_VERSION,
+            document.header.control_mode.unwrap().to_core().unwrap(),
         ),
         Ok(())
     );
-    let mut other = identity();
+    let mut other = current_identity();
     other.aircraft_configuration_id = "different-aircraft-configuration".into();
     assert_eq!(
         archive.require_tail_reintegration_compatibility(
             &other,
             scenario,
-            birdman_game_core::PHYSICS_MODEL_VERSION
+            birdman_game_core::PHYSICS_MODEL_VERSION,
+            document.header.control_mode.unwrap().to_core().unwrap(),
         ),
         Err(FlightRecordFormatError::IncompatibleReintegration)
     );
     let mut other_scenario = scenario;
-    other_scenario.controller_profile_version += 1;
+    other_scenario.controller_identity = Some([9; 32]);
     assert_eq!(
         archive.require_tail_reintegration_compatibility(
-            &identity(),
+            &current_identity(),
             other_scenario,
-            birdman_game_core::PHYSICS_MODEL_VERSION
+            birdman_game_core::PHYSICS_MODEL_VERSION,
+            document.header.control_mode.unwrap().to_core().unwrap(),
         ),
         Err(FlightRecordFormatError::IncompatibleReintegration)
     );
     assert_eq!(
         archive.require_tail_reintegration_compatibility(
-            &identity(),
+            &current_identity(),
             scenario,
-            birdman_game_core::PHYSICS_MODEL_VERSION + 1
+            birdman_game_core::PHYSICS_MODEL_VERSION + 1,
+            document.header.control_mode.unwrap().to_core().unwrap(),
         ),
         Err(FlightRecordFormatError::IncompatibleReintegration)
     );
@@ -1087,7 +1169,7 @@ fn model_controller_and_physics_identity_gate_reintegration() {
 
 #[test]
 fn personal_best_does_not_mix_distinct_model_controller_identity() {
-    let candidate = keyed(document());
+    let candidate = keyed(current_document());
     let candidate_archive = candidate.clone();
     assert_eq!(
         compare_tail_personal_best_records(&candidate_archive, &candidate_archive).unwrap(),
@@ -1102,7 +1184,7 @@ fn personal_best_does_not_mix_distinct_model_controller_identity() {
             }
             1 => existing.control_identity.controller_profile_id = "other-tail-feedback".into(),
             2 => existing.header.aircraft_model_version += 1,
-            3 => existing.header.controller_profile_version += 1,
+            3 => existing.control_identity.controller_sha256 = Some("33".repeat(32)),
             _ => unreachable!(),
         }
         let existing = keyed(existing);
@@ -1114,42 +1196,43 @@ fn personal_best_does_not_mix_distinct_model_controller_identity() {
 }
 
 #[test]
-fn previous_physics_four_archive_retains_its_key_and_original_json() {
-    let mut previous = document();
-    previous.schema_version = 7;
-    previous.header.physics_model_version = 4;
-    for sample in &mut previous.samples {
-        sample.wing_bending_factor = Some(1.0);
+fn previous_physics_archives_retain_original_bytes_and_use_current_model_acceptance() {
+    for version in [4, 6] {
+        let mut previous = document();
+        previous.schema_version = 7;
+        previous.header.physics_model_version = version;
+        for sample in &mut previous.samples {
+            sample.wing_bending_factor = Some(1.0);
+        }
+        previous.identity_metadata = crate::FlightRecordIdentityMetadata::Unrecognized(
+            serde_json::json!({"comparison_version": 2, "conditions": {"saved": true}}),
+        );
+        previous.header.personal_best_key = Some([
+            99, 248, 110, 33, 196, 207, 121, 204, 161, 168, 60, 249, 24, 208, 74, 193, 71, 91, 225,
+            154, 43, 48, 99, 125, 5, 95, 126, 211, 240, 181, 147, 73,
+        ]);
+        let original = previous.encode_json().unwrap();
+        let restored = TailFlightRecordDocument::decode_json(&original).unwrap();
+        assert_eq!(restored.encode_json().unwrap(), original);
+        assert_eq!(restored, previous);
+        assert!(restored.personal_best_candidate_score().unwrap().is_none());
+        assert!(
+            crate::TailPersonalBestSelection::try_new(&restored)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            restored.require_tail_reintegration_compatibility(
+                &identity(),
+                restored.scenario_identity(),
+                birdman_game_core::PHYSICS_MODEL_VERSION,
+                birdman_game_core::ControlMode::Manual,
+            ),
+            Err(FlightRecordFormatError::IncompatibleReintegration)
+        );
     }
-    let mut previous = keyed(previous);
-    let mut metadata = serde_json::to_value(&previous.identity_metadata).unwrap();
-    metadata["comparison_version"] = serde_json::json!(2);
-    previous.identity_metadata = crate::FlightRecordIdentityMetadata::Unrecognized(metadata);
-    previous.header.personal_best_key = Some([
-        99, 248, 110, 33, 196, 207, 121, 204, 161, 168, 60, 249, 24, 208, 74, 193, 71, 91, 225,
-        154, 43, 48, 99, 125, 5, 95, 126, 211, 240, 181, 147, 73,
-    ]);
-    let original = previous.encode_json().unwrap();
-    let restored = TailFlightRecordDocument::decode_json(&original).unwrap();
-    assert_eq!(restored.encode_json().unwrap(), original);
-    assert_eq!(restored, previous);
-    assert!(restored.personal_best_candidate_score().unwrap().is_none());
-    assert!(
-        crate::TailPersonalBestSelection::try_new(&restored)
-            .unwrap()
-            .is_none()
-    );
-    assert_eq!(
-        restored.require_tail_reintegration_compatibility(
-            &identity(),
-            restored.scenario_identity(),
-            birdman_game_core::PHYSICS_MODEL_VERSION,
-        ),
-        Err(FlightRecordFormatError::IncompatibleReintegration)
-    );
     let mut fixed_shape = document();
     fixed_shape.header.physics_model_version = 4;
-    let fixed_shape = keyed(fixed_shape);
     let fixed_bytes = fixed_shape.encode_json().unwrap();
     assert_eq!(
         TailFlightRecordDocument::decode_json(&fixed_bytes)
@@ -1166,23 +1249,18 @@ fn previous_physics_four_archive_retains_its_key_and_original_json() {
 }
 
 #[test]
-fn personal_best_initial_shape_separates_schema_seven_and_preserves_schema_six_key() {
+fn personal_best_initial_shape_is_current_and_preserves_schema_six_key() {
     let mut legacy = document();
     legacy.header.physics_model_version = 3;
-    let mut legacy = keyed(legacy);
     assert_eq!(legacy.schema_version, 6);
-    let mut metadata = serde_json::to_value(&legacy.identity_metadata).unwrap();
-    metadata["comparison_version"] = serde_json::json!(2);
-    legacy.identity_metadata = crate::FlightRecordIdentityMetadata::Unrecognized(metadata);
+    legacy.identity_metadata = crate::FlightRecordIdentityMetadata::Unrecognized(
+        serde_json::json!({"comparison_version": 2, "conditions": {"saved": true}}),
+    );
     legacy.header.personal_best_key = Some([
         174, 242, 124, 128, 134, 113, 202, 217, 195, 246, 85, 74, 192, 93, 89, 122, 93, 235, 77,
         100, 244, 101, 87, 227, 166, 248, 160, 89, 62, 108, 0, 0,
     ]);
-    let mut current = document();
-    current.schema_version = 7;
-    for sample in &mut current.samples {
-        sample.wing_bending_factor = Some(1.0);
-    }
+    let current = current_document();
     let current = keyed(current);
     let mut other = current.clone();
     other.samples[0].wing_bending_factor = Some(1.5);
@@ -1220,7 +1298,6 @@ fn personal_best_initial_shape_separates_schema_seven_and_preserves_schema_six_k
 
 fn tail_key(
     record: &TailFlightRecordDocument,
-    profile: birdman_game_core::TailControlProfile,
     mode: birdman_game_core::ControlMode,
     hashes: crate::FlightRecordSourceFingerprints,
 ) -> Result<Option<PersonalBestKey>, FlightRecordFormatError> {
@@ -1231,7 +1308,6 @@ fn tail_key(
             difficulty,
             identity: &record.control_identity,
             control_mode: mode,
-            controller_profile: profile,
         },
         birdman_game_core::CourseAxis::try_new(1.0, 0.0).unwrap(),
         test_build(hashes),
@@ -1259,7 +1335,6 @@ fn keyed(record: TailFlightRecordDocument) -> TailFlightRecordDocument {
         difficulty,
         identity: &record.control_identity,
         control_mode: birdman_game_core::ControlMode::Manual,
-        controller_profile: birdman_game_core::TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap(),
     };
     record
         .clone()
@@ -1277,157 +1352,106 @@ fn keyed(record: TailFlightRecordDocument) -> TailFlightRecordDocument {
 }
 
 #[test]
-fn tail_canonical_key_tracks_two_axis_profile_content_and_initial_snapshot() {
-    use birdman_game_core::{ControlMode, TailControlProfile};
-    let source = document();
-    let profile = TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();
-    let hashes = crate::FlightRecordSourceFingerprints {
-        scenario: [1; 32],
-        aircraft: [2; 32],
-        environment: [3; 32],
-        physics_build: [4; 32],
-    };
-    let reference = tail_key(&source, profile, ControlMode::Manual, hashes)
-        .unwrap()
-        .unwrap();
+fn current_producer_seals_controller_identity_and_known_authority() {
+    let source = current_document();
+    let core = source.to_finalized_core_record().unwrap();
     assert_eq!(
-        tail_key(&source, profile, ControlMode::Manual, hashes).unwrap(),
-        Some(reference)
+        core.header().scenario.controller_identity,
+        Some(crate::controller_identity(
+            &source.control_identity.controller_profile_id,
+            source
+                .control_identity
+                .controller_sha256
+                .as_deref()
+                .unwrap(),
+        ))
     );
-    for changed in [
-        TailControlProfile::try_new(0.21, 0.2, 1.0).unwrap(),
-        TailControlProfile::try_new(0.2, 0.21, 1.0).unwrap(),
-        TailControlProfile::try_new(0.2, 0.2, 1.1).unwrap(),
-    ] {
-        assert_ne!(
-            tail_key(&source, changed, ControlMode::Manual, hashes).unwrap(),
-            Some(reference)
-        );
-    }
-    for change in 0..18 {
-        let mut record = source.clone();
-        match change {
-            0 => record
-                .control_identity
-                .aircraft_configuration_id
-                .push_str("-oracle"),
-            1 => record
-                .control_identity
-                .controller_profile_id
-                .push_str("-other"),
-            2 => record.header.aircraft_model_version += 1,
-            3 => record.header.controller_profile_version += 1,
-            4 => record.header.seed += 1,
-            5 => record.header.maximum_flight_ticks += 1,
-            6 => record.samples[0].state.datum_position_ned_m[0] += 1.0,
-            7 => record.samples[0].state.datum_velocity_ned_mps[0] += 0.1,
-            8 => record.samples[0].state.pilot_position_m += 0.01,
-            9 => {
-                let TailFlightRecordControlsDocument::TailIncidence {
-                    physical_incidence, ..
-                } = &mut record.samples[0].controls;
-                physical_incidence.horizontal_tail_rad += 0.001;
-            }
-            10 => {
-                let TailFlightRecordControlsDocument::TailIncidence {
-                    physical_incidence, ..
-                } = &mut record.samples[0].controls;
-                physical_incidence.vertical_tail_rad += 0.001;
-            }
-            11 => record.header.environment_version += 1,
-            12 => record.samples[0].state.pilot_velocity_mps += 0.01,
-            13 => record.samples[0].state.angular_velocity_body_rad_s[1] += 0.01,
-            14 => record.samples[0].state.wind_at_cg_ned_mps[0] += 0.1,
-            15 => record.samples[0].state.wind_at_cg_ned_mps[1] += 0.1,
-            16 => record.samples[0].state.wind_at_cg_ned_mps[2] += 0.1,
-            17 => {
-                record.samples[0].state.attitude_body_to_ned =
-                    [0.01_f64.cos(), 0.01_f64.sin(), 0.0, 0.0]
-            }
-            _ => unreachable!(),
-        }
-        assert_ne!(
-            tail_key(&record, profile, ControlMode::Manual, hashes).unwrap(),
-            Some(reference)
-        );
-    }
-    for component in 0..4 {
-        let mut changed = hashes;
-        match component {
-            0 => changed.scenario[0] += 1,
-            1 => changed.aircraft[0] += 1,
-            2 => changed.environment[0] += 1,
-            3 => changed.physics_build[0] += 1,
+    let rebuilt = TailFlightRecordDocument::from_record(
+        &core,
+        source.header.difficulty.resolved_settings(),
+        source.control_identity.clone(),
+    )
+    .unwrap();
+    assert_eq!(rebuilt, source);
+    let mut mismatch = current_identity();
+    mismatch.controller_sha256 = Some("33".repeat(32));
+    assert_eq!(
+        TailFlightRecordDocument::from_record(
+            &core,
+            source.header.difficulty.resolved_settings(),
+            mismatch,
+        ),
+        Err(FlightRecordFormatError::InvalidRecord)
+    );
+    for missing in 0..3 {
+        let mut invalid = source.clone();
+        match missing {
+            0 => invalid.control_identity.controller_sha256 = None,
+            1 => invalid.header.control_mode = None,
+            2 => invalid.control_identity.aircraft_sha256 = None,
             _ => unreachable!(),
         }
         assert_eq!(
-            tail_key(&source, profile, ControlMode::Manual, changed).unwrap(),
-            Some(reference)
+            invalid.validate(),
+            Err(FlightRecordFormatError::InvalidRecord)
         );
     }
-    let mut incompatible = source.clone();
-    incompatible.header.physics_model_version = birdman_game_core::PHYSICS_MODEL_VERSION + 1;
+    for missing in 0..2 {
+        let mut header = core.header();
+        if missing == 0 {
+            header.scenario.controller_identity = None;
+        } else {
+            header.control_mode = None;
+        }
+        let unknown = FlightRecord::try_from_finalized_samples(
+            header,
+            core.samples().to_vec(),
+            core.finalization().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            TailFlightRecordDocument::from_record(
+                &unknown,
+                source.header.difficulty.resolved_settings(),
+                source.control_identity.clone(),
+            ),
+            Err(FlightRecordFormatError::InvalidRecord)
+        );
+    }
+    let legacy = document().to_finalized_core_record().unwrap();
     assert_eq!(
-        tail_key(&incompatible, profile, ControlMode::Manual, hashes),
-        Err(FlightRecordFormatError::InvalidRecord)
-    );
-    assert_eq!(
-        tail_key(&source, profile, ControlMode::Automatic, hashes),
+        TailFlightRecordDocument::from_record(
+            &legacy,
+            source.header.difficulty.resolved_settings(),
+            source.control_identity,
+        ),
         Err(FlightRecordFormatError::InvalidRecord)
     );
 }
 
 #[test]
-fn tail_canonical_key_distinguishes_guard_presence_and_every_policy_value() {
-    use birdman_game_core::{ControlMode, TailAngleOfAttackGuard, TailControlProfile};
-    let source = document();
-    let profile = TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();
-    let hashes = crate::FlightRecordSourceFingerprints {
-        scenario: [1; 32],
-        aircraft: [2; 32],
-        environment: [3; 32],
-        physics_build: [4; 32],
-    };
-    let unguarded = tail_key(&source, profile, ControlMode::Manual, hashes)
+fn tail_canonical_key_separates_controller_source_and_initial_state() {
+    let source = keyed(current_document());
+    let key = crate::canonical_tail_personal_best_key(&source)
         .unwrap()
         .unwrap();
-    let guarded_profile = profile.with_angle_of_attack_guard(
-        TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.04, 1.0, 1.6).unwrap(),
-    );
-    let guarded = tail_key(&source, guarded_profile, ControlMode::Manual, hashes)
-        .unwrap()
-        .unwrap();
-    assert_ne!(guarded, unguarded);
-    assert_eq!(
-        tail_key(&source, guarded_profile, ControlMode::Manual, hashes).unwrap(),
-        Some(guarded)
-    );
-    for (interval, trim, preview, gain) in [
-        ([-0.08, 0.09], 0.04, 1.0, 1.6),
-        ([-0.09, 0.10], 0.04, 1.0, 1.6),
-        ([-0.09, 0.09], 0.03, 1.0, 1.6),
-        ([-0.09, 0.09], 0.04, 0.9, 1.6),
-        ([-0.09, 0.09], 0.04, 1.0, 1.5),
-    ] {
-        let changed = profile.with_angle_of_attack_guard(
-            TailAngleOfAttackGuard::try_new(interval, trim, preview, gain).unwrap(),
-        );
+    // Document content owns PID/guard parameters; PB hashes its exact source SHA.
+    let mut controller = source.clone();
+    controller.control_identity.controller_sha256 = Some("33".repeat(32));
+    let mut initial = source.clone();
+    initial.samples[0].state.pilot_position_m += 0.01;
+    for changed in [controller, initial] {
         assert_ne!(
-            tail_key(&source, changed, ControlMode::Manual, hashes).unwrap(),
-            Some(guarded)
-        );
-        assert_ne!(
-            tail_key(&source, changed, ControlMode::Manual, hashes).unwrap(),
-            Some(unguarded)
+            crate::canonical_tail_personal_best_key(&keyed(changed)).unwrap(),
+            Some(key)
         );
     }
 }
 
 #[test]
 fn tail_key_groups_equivalent_settings_and_selection_uses_identity() {
-    use birdman_game_core::{ControlMode, TailControlProfile};
-    let mut source = document();
-    let profile = TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();
+    use birdman_game_core::ControlMode;
+    let mut source = current_document();
     let hashes = crate::FlightRecordSourceFingerprints {
         scenario: [1; 32],
         aircraft: [2; 32],
@@ -1437,7 +1461,7 @@ fn tail_key_groups_equivalent_settings_and_selection_uses_identity() {
     source.header.difficulty = DifficultySettings::preset(crate::DifficultyPreset::Realistic)
         .unwrap()
         .into();
-    let key = tail_key(&source, profile, ControlMode::Manual, hashes)
+    let key = tail_key(&source, ControlMode::Manual, hashes)
         .unwrap()
         .unwrap();
     let mut equivalent = source.clone();
@@ -1448,13 +1472,13 @@ fn tail_key_groups_equivalent_settings_and_selection_uses_identity() {
     )
     .into();
     assert_eq!(
-        tail_key(&equivalent, profile, ControlMode::Manual, hashes).unwrap(),
+        tail_key(&equivalent, ControlMode::Manual, hashes).unwrap(),
         Some(key)
     );
     let hud_key = |settings: DifficultySettings| {
         let mut record = source.clone();
         record.header.difficulty = settings.into();
-        tail_key(&record, profile, ControlMode::Manual, hashes).unwrap()
+        tail_key(&record, ControlMode::Manual, hashes).unwrap()
     };
     let full = DifficultySettings::custom(
         InformationLevel::Full,
@@ -1494,7 +1518,7 @@ fn tail_key_groups_equivalent_settings_and_selection_uses_identity() {
     );
     let candidate = keyed(source);
     assert_eq!(
-        tail_key(&candidate, profile, ControlMode::Manual, hashes).unwrap(),
+        tail_key(&candidate, ControlMode::Manual, hashes).unwrap(),
         Some(key)
     );
     let mut selection = crate::TailPersonalBestSelection::try_new(&candidate)
@@ -1529,16 +1553,11 @@ fn tail_key_groups_equivalent_settings_and_selection_uses_identity() {
 
 #[test]
 fn comparison_metadata_preserves_unranked_archives_and_rejects_forged_current_keys() {
-    let current = keyed(document());
+    let current = keyed(current_document());
     assert_eq!(
         TailFlightRecordDocument::decode_json(&current.encode_json().unwrap()).unwrap(),
         current
     );
-    let mut missing_guard = serde_json::to_value(&current.identity_metadata).unwrap();
-    missing_guard["conditions"]["controller_profile"]
-        .as_object_mut()
-        .unwrap()
-        .remove("angle_of_attack_guard");
     let mut previous_method = serde_json::to_value(&current.identity_metadata).unwrap();
     previous_method["comparison_version"] = serde_json::json!(2);
     for metadata in [
@@ -1547,7 +1566,6 @@ fn comparison_metadata_preserves_unranked_archives_and_rejects_forged_current_ke
         serde_json::json!({"comparison_version": 999, "future": {"name": "未対応方式"}}),
         serde_json::json!({"comparison_version": crate::PERSONAL_BEST_COMPARISON_VERSION}),
         previous_method,
-        missing_guard,
         serde_json::json!({"comparison_version": "長".repeat(150_000)}),
     ] {
         let mut value = serde_json::to_value(&current).unwrap();
@@ -1628,7 +1646,7 @@ fn comparison_metadata_preserves_unranked_archives_and_rejects_forged_current_ke
 
 #[test]
 fn build_provenance_changes_do_not_split_comparisons_and_resolved_authority_does() {
-    let current = keyed(document());
+    let current = keyed(current_document());
     let mut other_build = current.clone();
     let crate::FlightRecordIdentityMetadata::Resolved(identity) =
         &mut other_build.identity_metadata
@@ -1696,27 +1714,26 @@ fn build_provenance_changes_do_not_split_comparisons_and_resolved_authority_does
         assert!(cell.starts_with('"'));
         assert_eq!(serde_json::from_str::<String>(cell).unwrap(), expected);
     }
-    let mut assisted = document();
-    assisted.header.difficulty.assistance = super::super::FlightRecordAssistanceDocument::Light;
-    let profile = birdman_game_core::TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();
+    let mut assisted = current_document();
+    assisted.header.difficulty.assistance = super::super::FlightRecordAssistanceDocument::Assisted;
     let hashes = current
         .identity_metadata
         .resolved()
         .unwrap()
         .build
         .source_fingerprints;
+    assisted.header.control_mode = Some(crate::FlightRecordControlMode::Shared { authority: 0.1 });
     let first = tail_key(
         &assisted,
-        profile,
         birdman_game_core::ControlMode::Shared(
             birdman_game_core::FbwAuthority::try_new(0.1).unwrap(),
         ),
         hashes,
     )
     .unwrap();
+    assisted.header.control_mode = Some(crate::FlightRecordControlMode::Shared { authority: 0.3 });
     let second = tail_key(
         &assisted,
-        profile,
         birdman_game_core::ControlMode::Shared(
             birdman_game_core::FbwAuthority::try_new(0.3).unwrap(),
         ),

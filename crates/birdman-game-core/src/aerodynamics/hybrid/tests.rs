@@ -8,6 +8,157 @@ use crate::{
 use alloc::vec;
 use alloc::vec::Vec;
 
+#[test]
+fn reverse_plate_load_uses_midchord_once_and_opposes_normal_motion() {
+    let fixture = Fixture::new(2);
+    let (increment, _) = proxy_increment(
+        fixture.proxies[0][0],
+        vector([-3.0, 0.0, 4.0]),
+        ProxyReference {
+            velocity: BodyVector::zero(),
+            speed: 0.0,
+            pressure: 0.0,
+        },
+        1.2,
+        4.0,
+        0.0,
+        None,
+    )
+    .unwrap();
+    // A=2, H=5, w=4 => Fn=-48 N. Midchord=(-0.25,-1,0) m.
+    assert_eq!(
+        increment.force_body_newtons().components(),
+        [0.0, 0.0, -48.0]
+    );
+    assert_eq!(
+        increment.moment_about_datum_newton_meters().components(),
+        [48.0, -12.0, 0.0]
+    );
+    let (rotated, _) = proxy_increment(
+        fixture.proxies[1][0],
+        vector([3.0, 0.0, 0.0]),
+        ProxyReference {
+            velocity: BodyVector::zero(),
+            speed: 0.0,
+            pressure: 0.0,
+        },
+        1.2,
+        4.0,
+        core::f64::consts::FRAC_PI_2,
+        None,
+    )
+    .unwrap();
+    // Tail A=0.5, quarter=(-3,-0.5,0), rotated midpoint=(-3,-0.5,0.125).
+    near(rotated.force_body_newtons().components()[0], -5.4, 1e-13);
+    near(
+        rotated.moment_about_datum_newton_meters().components()[1],
+        -0.675,
+        1e-13,
+    );
+    near(
+        rotated.moment_about_datum_newton_meters().components()[2],
+        -2.7,
+        1e-13,
+    );
+}
+
+#[test]
+fn plate_pressure_uses_representable_dynamic_area_across_opposite_scales() {
+    let fixture = Fixture::new(2);
+    let zero = StaticPolarCoefficients::try_new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0).unwrap();
+    let rows = [
+        StaticPolarRow::try_new(-0.1, zero).unwrap(),
+        StaticPolarRow::try_new(0.1, zero).unwrap(),
+    ];
+    for (density, area, component) in [(1e200, 1e200, 1e-200), (1e-200, 1e-200, 1e200)] {
+        let polar = StaticPolar::try_new(
+            &rows,
+            ElementReference::try_new(area, 1.0, 1.0).unwrap(),
+            BodyPoint::origin(),
+            PolarMomentAxes::BodyFrd,
+            fixture.polar().metadata(),
+        )
+        .unwrap();
+        let velocity = vector([0.0, 3.0 * component, component]);
+        let (wrench, _, _) = continuation::global_flow(
+            polar,
+            velocity,
+            velocity.norm().unwrap(),
+            component,
+            density,
+        )
+        .unwrap();
+        // rho*A*H*w=1, evaluated independently of the overflowing/underflowing rho*A.
+        near(wrench.force_body_newtons().components()[2], -1.0, 1e-13);
+    }
+    let (local, _) = proxy_increment(
+        fixture.proxies[0][0],
+        vector([0.0, 0.0, 1e-154]),
+        ProxyReference {
+            velocity: BodyVector::zero(),
+            speed: 0.0,
+            pressure: 0.0,
+        },
+        1e308,
+        4.0,
+        0.0,
+        None,
+    )
+    .unwrap();
+    near(local.force_body_newtons().components()[2], -2.0, 1e-13);
+}
+
+#[test]
+fn high_angle_neutral_flow_cancels_local_reference_and_pure_span_has_unique_limit() {
+    let fixture = Fixture::new(2);
+    let surfaces = fixture.surfaces();
+    let loads = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(fixture.polar(), &surfaces).unwrap(),
+        1.2,
+        WindField::uniform(NedVector::zero()),
+    )
+    .unwrap();
+    for velocity in [[-10.0, 0.0, 0.0], [0.0, 0.0, 10.0], [0.0; 3]] {
+        let value = loads
+            .evaluate_hybrid(&state(velocity, [0.0; 3]), TailIncidence::neutral())
+            .unwrap();
+        assert_eq!(value.increment, Wrench::zero());
+    }
+    let limit = loads
+        .evaluate_hybrid(&state([0.0, 10.0, 0.0], [0.0; 3]), TailIncidence::neutral())
+        .unwrap()
+        .total_wrench();
+    for alpha in [-2.0, 0.4, 2.5] {
+        let epsilon = 1e-7;
+        let actual = loads
+            .evaluate_hybrid(
+                &state(
+                    [epsilon * libm::cos(alpha), 10.0, epsilon * libm::sin(alpha)],
+                    [0.0; 3],
+                ),
+                TailIncidence::neutral(),
+            )
+            .unwrap()
+            .total_wrench();
+        for (a, b) in actual
+            .force_body_newtons()
+            .components()
+            .into_iter()
+            .zip(limit.force_body_newtons().components())
+        {
+            near(a, b, 1e-4);
+        }
+        for (a, b) in actual
+            .moment_about_datum_newton_meters()
+            .components()
+            .into_iter()
+            .zip(limit.moment_about_datum_newton_meters().components())
+        {
+            near(a, b, 1e-4);
+        }
+    }
+}
+
 fn point(values: [f64; 3]) -> BodyPoint {
     BodyPoint::try_new(values[0], values[1], values[2]).unwrap()
 }
@@ -243,11 +394,18 @@ fn dihedral_uses_surface_weights_and_projected_whole_surface_ar_once() {
         HybridProxy::try_new(geometry, [0.0, 2.0], frame_x(-dihedral), anchor).unwrap(),
     ];
     assert!(HybridSurface::try_new(geometry, &proxies, test_tail(geometry)).is_ok());
+    let (sin, cos) = libm::sincos(0.17);
+    let rotated_frame = ElementOrientation::try_new(
+        vector([cos, sin, 0.0]),
+        vector([-sin, cos, 0.0]),
+        vector([0.0, 0.0, 1.0]),
+    )
+    .unwrap();
     assert_eq!(
-        HybridProxy::try_new(geometry, [-2.0, 0.0], ElementOrientation::IDENTITY, anchor)
-            .unwrap_err()
-            .cause(),
-        AeroError::InvalidOrientation
+        HybridProxy::try_new(geometry, [-2.0, 0.0], rotated_frame, anchor)
+            .unwrap()
+            .orientation(),
+        rotated_frame
     );
 }
 
@@ -420,22 +578,8 @@ fn neutral_increments_match_static_at_current_knots_interiors_and_tiny_speeds() 
 }
 
 #[test]
-fn physical_tail_incidence_bounds_and_missing_tail_adapter_are_explicit() {
-    for sign in [-1.0, 1.0] {
-        assert!(TailIncidence::try_new(sign * 0.2, sign * 0.2).is_ok());
-        assert_eq!(
-            TailIncidence::try_new(sign * 0.20000000000000004, 0.0)
-                .unwrap_err()
-                .limit(),
-            Some(HybridLimit::ElevatorIncidence)
-        );
-        assert_eq!(
-            TailIncidence::try_new(0.0, sign * 0.20000000000000004)
-                .unwrap_err()
-                .limit(),
-            Some(HybridLimit::RudderIncidence)
-        );
-    }
+fn finite_tail_values_and_missing_tail_adapter_are_explicit() {
+    assert!(TailIncidence::try_new(0.3, -0.4).is_ok());
     assert_eq!(
         TailIncidence::try_new(f64::NAN, 0.0).unwrap_err().cause(),
         AeroError::NonFinite
@@ -639,12 +783,21 @@ fn slope_has_explicit_analytic_values_and_asymptotic_limits() {
 #[test]
 fn two_axis_manual_intent_and_feedback_reach_hybrid_tail_arm_moments() {
     let fixture = Fixture::new(2);
-    let profile = crate::TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();
+    let profile = crate::tail_control::test_profile(0.2, 0.2);
     for sign in [-1.0, 1.0] {
-        let manual = crate::TailPilotIntent::try_new(sign * 0.25, sign * 0.25)
-            .unwrap()
-            .incidence()
-            .unwrap();
+        let limits = [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2];
+        let manual = crate::tail_control::test_control(
+            TailIncidence::neutral(),
+            profile,
+            crate::ControlMode::Manual,
+            crate::TailPilotIntent::try_new(sign * 0.25, sign * 0.25).unwrap(),
+            crate::TailRateTarget::try_new(0.0, 0.0).unwrap(),
+            BodyVector::zero(),
+            1.0,
+            limits,
+        )
+        .unwrap()
+        .incidence();
         let elevator = isolated_increment(
             &fixture,
             1,
@@ -679,12 +832,18 @@ fn two_axis_manual_intent_and_feedback_reach_hybrid_tail_arm_moments() {
             sign * 2.5 * 60.0 * 0.5 * core::f64::consts::PI * 0.05,
             1.0e-12,
         );
-        let feedback = crate::tail_rate_feedback_incidence(
+        let feedback = crate::tail_control::test_control(
+            TailIncidence::neutral(),
             profile,
+            crate::ControlMode::Automatic,
+            crate::TailPilotIntent::try_new(0.0, 0.0).unwrap(),
             crate::TailRateTarget::try_new(0.0, 0.0).unwrap(),
             vector([0.0, sign * 0.1, sign * 0.1]),
+            1.0,
+            limits,
         )
-        .unwrap();
+        .unwrap()
+        .incidence();
         let pitch = isolated_increment(
             &fixture,
             1,
@@ -1052,27 +1211,19 @@ fn zero_datum_requires_all_actual_proxy_velocities_and_wind_samples_to_succeed()
     );
     let rotation = load
         .evaluate_hybrid(&state([0.0; 3], [0.01, 0.0, 0.0]), TailIncidence::neutral())
-        .unwrap_err();
-    assert_eq!(rotation.limit(), Some(HybridLimit::UndefinedReference));
-    assert_eq!(
-        rotation.site(),
-        HybridSite::Proxy {
-            surface: HybridSurfaceRole::MainWing,
-            index: 0
-        }
-    );
+        .unwrap();
+    assert_ne!(rotation.total_wrench(), Wrench::zero());
     let gradient = WindField::linear_gradient(
         NedPoint::origin(),
         NedVector::zero(),
         [[0.0; 3], [0.0; 3], [0.0, 0.1, 0.0]],
     )
     .unwrap();
-    let load = HybridAerodynamicLoad::try_new(model, 1.2, gradient).unwrap();
-    assert_eq!(
-        load.evaluate_hybrid(&state([0.0; 3], [0.0; 3]), TailIncidence::neutral())
-            .unwrap_err()
-            .limit(),
-        Some(HybridLimit::UndefinedReference)
+    assert!(
+        HybridAerodynamicLoad::try_new(model, 1.2, gradient)
+            .unwrap()
+            .evaluate_hybrid(&state([0.0; 3], [0.0; 3]), TailIncidence::neutral())
+            .is_ok()
     );
     let samples = [NedVector::zero(); 8];
     let grid = WindField::grid(

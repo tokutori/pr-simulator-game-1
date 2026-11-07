@@ -2,7 +2,7 @@
 
 use birdman_game_app::{
     DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, DEFAULT_WEATHER, HybridSessionPreparation,
-    bundled_environment, initialize_bundled_environment,
+    SelectedAircraft, bundled_environment, initialize_bundled_environment,
 };
 use birdman_game_core::{
     ControlMode, FbwAuthority, FlightRecordSample, FlightState, GameSession, SessionPhase,
@@ -28,7 +28,7 @@ enum InputSequence {
 }
 
 impl InputSequence {
-    fn input(self, tick: u64) -> TailFlightTickInput {
+    fn input(self, tick: u64, rate_bounds: [[f64; 2]; 2]) -> TailFlightTickInput {
         let pitch = match self {
             Self::SmallNoseUp => 0.05,
             Self::SmallNoseDown => -0.05,
@@ -79,10 +79,14 @@ impl InputSequence {
             }
             _ => TailPilotPositionCommand::Hold,
         };
-        let limits = TailRateTarget::limits_rad_per_second();
+        let pitch_rate = if pitch < 0.0 {
+            -pitch * rate_bounds[0][0]
+        } else {
+            pitch * rate_bounds[0][1]
+        };
         TailFlightTickInput::new(
             TailPilotIntent::try_new(pitch, 0.0).unwrap(),
-            TailRateTarget::try_new(pitch * limits[0], 0.0).unwrap(),
+            TailRateTarget::try_new(pitch_rate, 0.0).unwrap(),
             position,
         )
     }
@@ -127,6 +131,20 @@ fn print_sample(
 fn main() {
     initialize_bundled_environment().unwrap();
     let wind = bundled_environment().unwrap().wind_field().unwrap();
+    let selected = SelectedAircraft::bundled().unwrap();
+    let controller = birdman_game_app::SelectedController::bundled().unwrap();
+    let definition = selected.definition();
+    let rate_bounds = controller
+        .prepare(definition)
+        .unwrap()
+        .body_rate_bounds_rad_per_second();
+    let surfaces = definition.surfaces().unwrap();
+    let loads = birdman_game_core::HybridAerodynamicLoad::try_new(
+        birdman_game_core::HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
+        definition.document().trim.air_density_kg_m3,
+        wind,
+    )
+    .unwrap();
     println!(
         "kind,mode,sequence,tick,fraction,datum_alpha_rad,cg_alpha_rad,q_rad_per_second,cg_airspeed_mps,cg_altitude_m,elevator_rad,rudder_rad,pilot_position_m,held_target_m"
     );
@@ -154,6 +172,8 @@ fn main() {
             InputSequence::ContinuousPilotBackwardEndpoint,
         ] {
             let (configuration, _) = HybridSessionPreparation::try_new_for_weather(
+                &selected,
+                &controller,
                 mode,
                 DEFAULT_MAXIMUM_FLIGHT_TICKS,
                 DEFAULT_SESSION_SEED,
@@ -161,6 +181,14 @@ fn main() {
             )
             .unwrap()
             .into_parts();
+            let mut contact = birdman_game_content::AircraftContactBuffer::try_new(
+                definition,
+                definition.contact_points().to_vec(),
+            )
+            .unwrap();
+            let configuration = configuration
+                .with_contact_shape(&mut contact.bind(definition))
+                .unwrap();
             let identity = configuration.identity();
             assert_eq!(identity.environment_version, 6);
             let mut session = GameSession::new();
@@ -175,12 +203,18 @@ fn main() {
             let initial_alpha = datum_alpha(initial.flight_state(), wind);
             println!(
                 "initial,{label},{sequence:?},identity={identity:?},datum_alpha={initial_alpha:?},cg_alpha={:?}",
-                session.telemetry().unwrap().unwrap().angle_of_attack_rad
+                session.telemetry().unwrap().angle_of_attack_rad
             );
             let mut last_valid = initial;
             let mut returned_error = None;
             for tick in 1..=DEFAULT_MAXIMUM_FLIGHT_TICKS {
-                returned_error = session.advance_tail_flight_tick(sequence.input(tick)).err();
+                returned_error = session
+                    .advance_tail_flight_tick_with_shape_provider(
+                        sequence.input(tick, rate_bounds),
+                        &mut contact.bind(definition),
+                        &loads,
+                    )
+                    .err();
                 if session.snapshot().phase() == SessionPhase::Result {
                     break;
                 }

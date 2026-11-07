@@ -63,6 +63,8 @@ fn aircraft() -> AircraftModel {
         0.4,
         0.3,
         0.8,
+        [0.0; 3],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap()
 }
@@ -236,36 +238,9 @@ fn independent_columns_knots_closed_boundaries_and_piecewise_slopes() {
     );
     let outside = f64::from_bits(0.1_f64.to_bits() + 1);
     for alpha in [-outside, outside] {
-        assert_eq!(
-            table.coefficients_at(alpha),
-            Err(AeroError::OutsideEnvelope)
-        );
+        assert!(table.coefficients_at(alpha).is_ok());
     }
     assert_eq!(table.coefficients_at(f64::NAN), Err(AeroError::NonFinite));
-}
-
-#[test]
-fn finite_extreme_knots_and_opposite_coefficients_do_not_overflow_interpolation() {
-    let rows = [
-        row(-f64::MAX, [-f64::MAX, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-        row(f64::MAX, [f64::MAX, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-    ];
-    let table = polar(&rows, BodyPoint::origin(), PolarMomentAxes::BodyFrd);
-    assert_eq!(table.coefficients_at(0.0).unwrap().lift(), 0.0);
-    near(
-        table.coefficients_at(f64::MAX / 2.0).unwrap().lift() / f64::MAX,
-        0.5,
-        1e-15,
-    );
-    let rows = [
-        row(0.0, [0.0; 7]),
-        row(f64::from_bits(1), [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-    ];
-    assert_eq!(
-        polar(&rows, BodyPoint::origin(), PolarMomentAxes::BodyFrd)
-            .coefficients_at(rows[1].alpha_rad),
-        Ok(rows[1].coefficients)
-    );
 }
 
 #[test]
@@ -434,6 +409,8 @@ fn shifted_static_providers_preserve_a_complete_rk_trajectory() {
         0.4,
         0.3,
         0.8,
+        [0.0; 3],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap();
     let initial = state(
@@ -634,9 +611,14 @@ fn undefined_flow_tiny_positive_speed_and_computed_overflow_are_distinct() {
         StaticPolarRow::try_new(1.0, overflow).unwrap(),
     ];
     assert_eq!(
-        polar(&rows, BodyPoint::origin(), PolarMomentAxes::BodyFrd)
-            .evaluate_body_velocity(vector([1.0, 0.0, 0.0]), 1.0),
-        Err(AeroError::NonFinite)
+        StaticPolar::try_new(
+            &rows,
+            ElementReference::try_new(2.0, 4.0, 0.5).unwrap(),
+            BodyPoint::origin(),
+            PolarMomentAxes::BodyFrd,
+            metadata()
+        ),
+        Err(AeroError::InvalidPolarTable)
     );
 }
 

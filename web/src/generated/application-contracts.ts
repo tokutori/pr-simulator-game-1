@@ -8,6 +8,34 @@ export type MenuFontStyle = "normal" | "italic";
  */
 export type ApplicationInput = {
     /**
+     * Unmodified I/O result.
+     */
+    readonly completion: ApplicationConfigurationLoad;
+    /**
+     * Independently selected original document kind.
+     */
+    readonly document: ConfigurationDocumentKind;
+    readonly kind: "configuration_loaded";
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+} | {
+    /**
+     * Independently selected original document kind.
+     */
+    readonly document: ConfigurationDocumentKind;
+    /**
+     * Original I/O failure, absent after success.
+     */
+    readonly failure?: string | null;
+    readonly kind: "configuration_saved";
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+} | {
+    /**
      * Unmodified storage result.
      */
     readonly completion: ApplicationKeyboardControlsLoad;
@@ -471,6 +499,30 @@ export type ApplicationInput = {
      */
     readonly request_id: number;
 };
+/**
+ * Original configuration bytes produced by a requested storage or file-picker operation.
+ */
+export type ApplicationConfigurationLoad = {
+    readonly kind: "missing";
+} | {
+    readonly kind: "cancelled";
+} | {
+    /**
+     * Unmodified source document, including its encoding bytes.
+     */
+    readonly bytes: readonly number[];
+    readonly kind: "found";
+} | {
+    /**
+     * Diagnostic from the platform API.
+     */
+    readonly cause: string;
+    readonly kind: "failed";
+};
+/**
+ * Independent original JSON sources selectable by the application.
+ */
+export type ConfigurationDocumentKind = "aircraft" | "controller";
 /**
  * Raw completion of the requested user keyboard-settings read.
  */
@@ -1278,6 +1330,18 @@ export type HudCue = "telemetry" | "attitude" | "wind" | "flight_path" | "angle_
  * Platform-owned operation requested by common UI.
  */
 export type GameUiPlatformCommand = {
+    /**
+     * Independently selected original document.
+     */
+    readonly document: ConfigurationDocumentKind;
+    readonly kind: "load_configuration";
+} | {
+    /**
+     * Independently selected original document.
+     */
+    readonly document: ConfigurationDocumentKind;
+    readonly kind: "delete_configuration";
+} | {
     readonly kind: "reload_application";
 } | {
     readonly kind: "set_screen_render_scale";
@@ -1764,6 +1828,62 @@ export type ApplicationLifecycle = "running" | "closing" | "drained";
  * Ordered platform operations produced by the application owner.
  */
 export type ApplicationRequest = {
+    /**
+     * Independently selected original document kind.
+     */
+    readonly document: ConfigurationDocumentKind;
+    readonly kind: "read_configuration";
+    /**
+     * Source-byte read budget.
+     */
+    readonly maximum_bytes: number;
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    /**
+     * Independently selected original document kind.
+     */
+    readonly document: ConfigurationDocumentKind;
+    readonly kind: "pick_configuration";
+    /**
+     * Source-byte read budget.
+     */
+    readonly maximum_bytes: number;
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    /**
+     * Original validated source bytes.
+     */
+    readonly bytes: readonly number[];
+    /**
+     * Independently selected original document kind.
+     */
+    readonly document: ConfigurationDocumentKind;
+    readonly kind: "write_configuration";
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    /**
+     * Independently selected original document kind.
+     */
+    readonly document: ConfigurationDocumentKind;
+    readonly kind: "delete_configuration";
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
     readonly kind: "read_keyboard_controls";
     /**
      * Maximum accepted UTF-8 document size.
@@ -4817,9 +4937,9 @@ export interface ApplicationEnvironmentAssets {
      */
     readonly revision: number;
     /**
-     * First immutable scene manifest; later preparations reuse the same owner-issued identities.
+     * Complete descriptor batch for this candidate; raw buffers upload on cache misses.
      */
-    readonly scene?: ApplicationGeometryAssets | null;
+    readonly scene: ApplicationGeometryAssets;
     /**
      * Equirectangular sRGB panorama.
      */
@@ -5564,17 +5684,9 @@ export interface LakeMeshSpacingDomain {
  */
 export interface EnvironmentIdentity {
     /**
-     * Aircraft model version.
-     */
-    readonly aircraft_model_version: number;
-    /**
      * Registered catalog version.
      */
     readonly catalog_version: number;
-    /**
-     * Controller profile version.
-     */
-    readonly controller_profile_version: number;
     /**
      * Environment content version.
      */

@@ -3,13 +3,170 @@ use crate::{AircraftDefinition, playable_aircraft};
 use birdman_game_core::TailContactShapeProvider;
 
 #[test]
+fn section_twist_rotates_the_skin_contact_and_aerodynamic_axes_about_quarter_chord() {
+    let baseline = playable_aircraft().unwrap();
+    let role = HybridSurfaceRole::HorizontalTail;
+    let mut document = baseline.document().clone();
+    let source = document
+        .surfaces
+        .iter_mut()
+        .find(|s| s.role.core_role() == role)
+        .unwrap();
+    let angle = 0.12;
+    for section in &mut source.sections {
+        section.twist_rad = angle;
+    }
+    let span = source.sections[0].quarter_chord_frd_m[1];
+    let twisted = AircraftDefinition::from_document(document).unwrap();
+    let quarter = baseline
+        .shape()
+        .surface(role)
+        .section(span)
+        .unwrap()
+        .quarter_chord_frd_m;
+    let neutral = baseline
+        .shape()
+        .surface(role)
+        .point(span, 0.0, AirfoilFace::Upper)
+        .unwrap()
+        .components();
+    let (sin, cos) = libm::sincos(angle);
+    let dx = neutral[0] - quarter[0];
+    let dz = neutral[2] - quarter[2];
+    let expected = [
+        quarter[0] + cos * dx + sin * dz,
+        neutral[1],
+        quarter[2] - sin * dx + cos * dz,
+    ];
+    let skin = twisted
+        .shape()
+        .surface(role)
+        .point(span, 0.0, AirfoilFace::Upper)
+        .unwrap();
+    for (actual, expected) in skin.components().into_iter().zip(expected) {
+        assert!((actual - expected).abs() < 1.0e-13);
+    }
+    assert!(twisted.contact_points().iter().any(|point| {
+        point
+            .components()
+            .into_iter()
+            .zip(skin.components())
+            .all(|(a, b)| (a - b).abs() < 1.0e-13)
+    }));
+    let expected_orientation = birdman_game_core::ElementOrientation::try_new(
+        BodyVector::try_new(cos, 0.0, -sin).unwrap(),
+        BodyVector::try_new(0.0, 1.0, 0.0).unwrap(),
+        BodyVector::try_new(sin, 0.0, cos).unwrap(),
+    )
+    .unwrap();
+    for proxy in twisted.surfaces().unwrap()[1].proxies() {
+        assert_eq!(proxy.orientation(), expected_orientation);
+    }
+
+    // The same transform remains continuous at a swept, broken-dihedral station.
+    let mut swept = baseline.document().clone();
+    let source = &mut swept.surfaces[0];
+    for section in &mut source.sections {
+        section.quarter_chord_frd_m[0] += 0.04 * section.quarter_chord_frd_m[1].abs();
+        section.twist_rad = angle;
+    }
+    let index = source
+        .sections
+        .windows(3)
+        .position(|p| {
+            let slope = |a: &AircraftSectionDocument, b: &AircraftSectionDocument| {
+                (b.quarter_chord_frd_m[2] - a.quarter_chord_frd_m[2])
+                    / (b.quarter_chord_frd_m[1] - a.quarter_chord_frd_m[1])
+            };
+            (slope(&p[0], &p[1]) - slope(&p[1], &p[2])).abs() > 0.01
+        })
+        .unwrap()
+        + 1;
+    let station = source.sections[index].quarter_chord_frd_m[1];
+    let direction: [f64; 3] = core::array::from_fn(|i| {
+        source.sections[index + 1].quarter_chord_frd_m[i]
+            - source.sections[index - 1].quarter_chord_frd_m[i]
+    });
+    let length = libm::sqrt(direction.into_iter().map(|v| v * v).sum::<f64>());
+    let axis = direction.map(|v| v / length);
+    let swept_definition = AircraftDefinition::from_document(swept.clone()).unwrap();
+    let swept_shape = swept_definition
+        .shape()
+        .surface(HybridSurfaceRole::MainWing);
+    assert!(
+        swept_definition.surfaces().unwrap()[0]
+            .proxies()
+            .iter()
+            .zip(baseline.surfaces().unwrap()[0].proxies())
+            .any(|(twisted, neutral)| twisted.orientation() != neutral.orientation())
+    );
+    let contact_skin = swept_shape.point(station, 0.5, AirfoilFace::Upper).unwrap();
+    assert!(swept_definition.contact_points().iter().any(|point| {
+        point
+            .components()
+            .into_iter()
+            .zip(contact_skin.components())
+            .all(|(a, b)| (a - b).abs() < 1.0e-12)
+    }));
+    let rotated_axis = swept_shape.twist_vector(station, axis).unwrap();
+    for (actual, expected) in rotated_axis.into_iter().zip(axis) {
+        assert!((actual - expected).abs() < 1.0e-13);
+    }
+    let sample = [0.8, -0.2, 0.5];
+    let rotated = swept_shape.twist_vector(station, sample).unwrap();
+    assert!(
+        (sample.into_iter().map(|v| v * v).sum::<f64>()
+            - rotated.into_iter().map(|v| v * v).sum::<f64>())
+        .abs()
+            < 1.0e-13
+    );
+    let left = swept_shape
+        .point(station - 1.0e-8, 0.6, AirfoilFace::Upper)
+        .unwrap()
+        .components();
+    let right = swept_shape
+        .point(station + 1.0e-8, 0.6, AirfoilFace::Upper)
+        .unwrap()
+        .components();
+    assert!(
+        left.into_iter()
+            .zip(right)
+            .all(|(a, b)| (a - b).abs() < 1.0e-6)
+    );
+    let at = swept_shape
+        .point(station, 0.6, AirfoilFace::Upper)
+        .unwrap()
+        .components();
+    let mirror = swept_shape
+        .point(-station, 0.6, AirfoilFace::Upper)
+        .unwrap()
+        .components();
+    assert!(
+        (at[0] - mirror[0]).abs() < 1.0e-12
+            && (at[1] + mirror[1]).abs() < 1.0e-12
+            && (at[2] - mirror[2]).abs() < 1.0e-12
+    );
+    for section in &mut swept.surfaces[0].sections {
+        section.twist_rad = 0.0;
+    }
+    assert_eq!(
+        AircraftShape::new(&swept)
+            .surface(HybridSurfaceRole::MainWing)
+            .twist_vector(station, sample)
+            .unwrap(),
+        sample
+    );
+}
+
+#[test]
 fn contact_provider_projects_the_registered_shape_into_its_borrowed_storage() {
     let aircraft = playable_aircraft().unwrap();
-    let mut output = aircraft.contact_points().to_vec();
+    let output = aircraft.contact_points().to_vec();
     let pointer = output.as_ptr();
     let mut expected = output.clone();
     let incidence = TailIncidence::try_new(0.04, -0.03).unwrap();
-    let mut provider = crate::AircraftContactShape::try_new(&aircraft, &mut output).unwrap();
+    let mut storage = crate::AircraftContactBuffer::try_new(&aircraft, output).unwrap();
+    let mut provider = storage.bind(&aircraft);
     let factor = provider
         .wing_bending_factor(aircraft.document().trim.airspeed_mps)
         .unwrap();
@@ -25,12 +182,13 @@ fn contact_provider_projects_the_registered_shape_into_its_borrowed_storage() {
 #[test]
 fn contact_provider_rejects_mismatched_storage_and_invalid_load_law_inputs() {
     let aircraft = playable_aircraft().unwrap();
-    let mut output = aircraft.contact_points().to_vec();
+    let output = aircraft.contact_points().to_vec();
     assert!(matches!(
-        crate::AircraftContactShape::try_new(&aircraft, &mut output[..1]),
+        crate::AircraftContactBuffer::try_new(&aircraft, output[..1].to_vec()),
         Err(ShapeError::MismatchedContactPointCount)
     ));
-    let provider = crate::AircraftContactShape::try_new(&aircraft, &mut output).unwrap();
+    let mut storage = crate::AircraftContactBuffer::try_new(&aircraft, output).unwrap();
+    let provider = storage.bind(&aircraft);
     assert_eq!(
         provider.wing_bending_factor(-0.1),
         Err(birdman_game_core::ContactError::ShapeProjection)
@@ -47,7 +205,8 @@ fn retained_contact_projection_reuses_storage_and_recovers_after_a_failed_update
     let output = aircraft.contact_points().to_vec();
     let pointer = output.as_ptr();
     let mut expected = output.clone();
-    let mut provider = crate::AircraftContactShape::try_from_owned(&aircraft, output).unwrap();
+    let mut storage = crate::AircraftContactBuffer::try_new(&aircraft, output).unwrap();
+    let mut provider = storage.bind(&aircraft);
     let factor = WingBendingFactor::try_new(0.7).unwrap();
     for incidence in [
         TailIncidence::neutral(),
@@ -226,6 +385,7 @@ fn deformation_preserves_prepared_point_identity_and_reuses_the_callers_buffer()
             .map(|quarter_chord_frd_m| AircraftSectionDocument {
                 quarter_chord_frd_m,
                 chord_m: 1.0,
+                twist_rad: 0.0,
             })
             .collect();
     }

@@ -3,7 +3,7 @@ use crate::aerodynamics_contract::HybridError;
 use crate::contact::{ContactError, TailContactShapeProvider, WaterContactGeometry};
 use crate::dynamics::{AircraftModel, FlightState, Gravity, Wrench};
 use crate::flight_control::ControlMode;
-use crate::math::{BodyPoint, NedPoint, NedVector};
+use crate::math::BodyPoint;
 use crate::scenario::{
     CompositeCgLaunchConditions, FlightScenarioError, FlightTelemetry, FlightTelemetryError,
     derive_flight_telemetry, prepare_scenario_contact, prepare_scenario_launch,
@@ -15,7 +15,6 @@ use crate::tail_simulation::{
     TailFlightTickReport, TailFlightTickState, TailWaterContactSample,
     advance_tail_flight_tick_with_contact_report, advance_tail_flight_tick_with_shape_provider,
 };
-use crate::wind_field::WindError;
 #[cfg(verus_only)]
 use vstd::prelude::*;
 
@@ -61,23 +60,23 @@ impl core::error::Error for TailFlightScenarioError {
 /// Sealed physical launch, initial tail incidence, trim mapping and contact conditions.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
-pub struct TailFlightScenarioParameters<'a> {
+pub struct TailFlightScenarioParameters {
     aircraft: AircraftModel,
     initial_state: TailFlightTickState,
     pilot_mapping: TailPilotPositionMapping,
     gravity: Gravity,
-    contact_geometry: WaterContactGeometry<'a>,
+    contact_point_count: usize,
     course_axis: CourseAxis,
 }
 
-impl<'a> TailFlightScenarioParameters<'a> {
+impl TailFlightScenarioParameters {
     /// Uses the shared composite-CG launch conversion and contact validation.
     pub fn try_new(
         aircraft: AircraftModel,
         launch: CompositeCgLaunchConditions,
         initial_incidence: TailIncidence,
         gravity: Gravity,
-        contact_points_body: &'a [BodyPoint],
+        contact_points_body: &[BodyPoint],
         course_axis: CourseAxis,
     ) -> Result<Self, TailFlightScenarioError> {
         let flight_state = prepare_scenario_launch(&aircraft, launch)
@@ -101,30 +100,28 @@ impl<'a> TailFlightScenarioParameters<'a> {
             initial_state,
             pilot_mapping,
             gravity,
-            contact_geometry,
+            contact_point_count: contact_geometry.points_body().len(),
             course_axis,
         })
     }
 }
 
-/// Borrowed hybrid loads with immutable two-axis launch and independent software control.
-///
-/// The caller owns polar rows, surfaces, wind samples and contact points. This Copy view
-/// introduces neither self-references nor a second wind or physical-state owner.
+/// Value-owned physical launch and control configuration.
+/// Aerodynamic and contact data are borrowed only during each execution batch.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
-pub struct TailFlightScenario<'a> {
-    parameters: TailFlightScenarioParameters<'a>,
-    loads: HybridAerodynamicLoad<'a>,
+pub struct TailFlightScenario {
+    parameters: TailFlightScenarioParameters,
+    initial_telemetry: FlightTelemetry,
     profile: TailControlProfile,
     initial_tail_wrenches: [Option<Wrench>; 2],
 }
 
-impl<'a> TailFlightScenario<'a> {
+impl TailFlightScenario {
     /// Validates the initial hybrid evaluation and composite-center telemetry without allocation.
     pub fn try_new(
-        parameters: TailFlightScenarioParameters<'a>,
-        loads: HybridAerodynamicLoad<'a>,
+        parameters: TailFlightScenarioParameters,
+        loads: HybridAerodynamicLoad<'_>,
         profile: TailControlProfile,
     ) -> Result<Self, TailFlightScenarioError> {
         let initial_loads = loads
@@ -135,13 +132,15 @@ impl<'a> TailFlightScenario<'a> {
             .map_err(TailFlightScenarioError::Aerodynamics)?;
         let scenario = Self {
             parameters,
-            loads,
+            initial_telemetry: derive_flight_telemetry(
+                &parameters.aircraft,
+                parameters.initial_state.flight_state(),
+                |position| loads.wind_velocity_at(position),
+            )
+            .map_err(TailFlightScenarioError::Telemetry)?,
             profile,
             initial_tail_wrenches: initial_loads.tail_wrenches(),
         };
-        scenario
-            .telemetry(scenario.initial_state().flight_state())
-            .map_err(TailFlightScenarioError::Telemetry)?;
         Ok(scenario)
     }
 
@@ -151,16 +150,14 @@ impl<'a> TailFlightScenario<'a> {
         provider: &mut dyn TailContactShapeProvider,
     ) -> Result<Self, TailFlightScenarioError> {
         let initial = self.initial_state();
-        let telemetry = self
-            .telemetry(initial.flight_state())
-            .map_err(TailFlightScenarioError::Telemetry)?;
+        let telemetry = self.initial_telemetry;
         let factor = provider
             .wing_bending_factor(telemetry.airspeed_mps)
             .map_err(TailFlightScenarioError::Contact)?;
         let points = provider
             .points(factor, initial.incidence())
             .map_err(TailFlightScenarioError::Contact)?;
-        if points.len() != self.parameters.contact_geometry.points_body().len() {
+        if points.len() != self.parameters.contact_point_count {
             return Err(TailFlightScenarioError::Contact(
                 ContactError::MismatchedGeometry,
             ));
@@ -197,16 +194,25 @@ impl<'a> TailFlightScenario<'a> {
         self.parameters.pilot_mapping
     }
 
-    /// Returns stationary wind from the same provider used by every load stage.
-    pub fn wind_velocity_at(&self, position_ned: NedPoint) -> Result<NedVector, WindError> {
-        self.loads.wind_velocity_at(position_ned)
+    /// Returns the telemetry validated at the sealed launch state.
+    pub const fn initial_telemetry(&self) -> FlightTelemetry {
+        self.initial_telemetry
     }
 
-    /// Uses the shared composite-center telemetry equations and the sealed wind provider.
-    pub fn telemetry(&self, state: FlightState) -> Result<FlightTelemetry, FlightTelemetryError> {
+    /// Derives telemetry from the load view borrowed for this execution batch.
+    pub fn telemetry(
+        &self,
+        state: FlightState,
+        loads: &HybridAerodynamicLoad<'_>,
+    ) -> Result<FlightTelemetry, FlightTelemetryError> {
         derive_flight_telemetry(&self.parameters.aircraft, state, |position| {
-            self.loads.wind_velocity_at(position)
+            loads.wind_velocity_at(position)
         })
+    }
+
+    /// Selects surface authority without changing the aircraft, polar or environment.
+    pub(crate) const fn resolve_control_mode(&self, mode: ControlMode) -> ControlMode {
+        self.profile.resolve_mode(mode)
     }
 
     /// Selects surface authority without changing the aircraft, polar or environment.
@@ -225,6 +231,8 @@ impl<'a> TailFlightScenario<'a> {
         previous: TailFlightTickState,
         mode: ControlMode,
         input: TailFlightTickInput,
+        loads: &HybridAerodynamicLoad<'_>,
+        contact_geometry: WaterContactGeometry<'_>,
     ) -> Result<TailFlightTickReport, TailFlightTickError> {
         if self.initial_state().wing_bending_factor().is_some() {
             return Err(TailFlightTickError::Contact(ContactError::ShapeProjection));
@@ -234,8 +242,8 @@ impl<'a> TailFlightScenario<'a> {
             previous,
             self.tick_config(mode),
             input,
-            &self.loads,
-            self.parameters.contact_geometry,
+            loads,
+            contact_geometry,
         )
     }
 
@@ -246,13 +254,14 @@ impl<'a> TailFlightScenario<'a> {
         mode: ControlMode,
         input: TailFlightTickInput,
         provider: &mut dyn TailContactShapeProvider,
+        loads: &HybridAerodynamicLoad<'_>,
     ) -> Result<TailFlightTickReport, TailFlightTickError> {
         advance_tail_flight_tick_with_shape_provider(
             &self.parameters.aircraft,
             previous,
             self.tick_config(mode),
             input,
-            &self.loads,
+            loads,
             provider,
         )
     }
@@ -266,6 +275,8 @@ impl<'a> TailFlightScenario<'a> {
         &self,
         mode: ControlMode,
         inputs: &[TailFlightTickInput],
+        loads: &HybridAerodynamicLoad<'_>,
+        contact_geometry: WaterContactGeometry<'_>,
     ) -> Result<TailFlightRunOutcome, TailFlightRunError> {
         if inputs.is_empty() {
             return Err(TailFlightRunError::EmptyInput);
@@ -274,7 +285,7 @@ impl<'a> TailFlightScenario<'a> {
         let mut state = self.initial_state();
         for input in inputs.iter().copied() {
             let report = self
-                .advance_tick_with_contact_report(state, mode, input)
+                .advance_tick_with_contact_report(state, mode, input, loads, contact_geometry)
                 .map_err(|cause| TailFlightRunError::Tick {
                     last_valid_state: state,
                     cause,

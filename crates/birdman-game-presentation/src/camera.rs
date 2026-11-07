@@ -479,14 +479,12 @@ pub fn pilot_eye_pose(
     })
 }
 
-/// Resolves the registered eye location from the shared aircraft definition.
-pub fn registered_pilot_eye() -> Result<FrdPose, CameraError> {
-    let aircraft =
-        birdman_game_app::registered_aircraft().map_err(|_| CameraError::AircraftUnavailable)?;
-    Ok(FrdPose {
-        position_frd_m: aircraft.document().structure.pilot_eye_offset_frd_m,
+/// Uses the validated selected-aircraft eye offset in body FRD coordinates.
+pub fn pilot_eye(offset_frd_m: [f64; 3]) -> FrdPose {
+    FrdPose {
+        position_frd_m: offset_frd_m,
         orientation_frd_wxyz: [1.0, 0.0, 0.0, 0.0],
-    })
+    }
 }
 
 /// Shared Chase camera in aircraft FRD coordinates.
@@ -558,9 +556,10 @@ pub fn flight_camera_pose(
     flight: &crate::render_pose::FlightRenderPose,
     chase: bool,
     look_radians: [f64; 2],
+    eye: FrdPose,
 ) -> Result<Pose, CameraError> {
     let local = camera_local_pose(
-        registered_pilot_eye()?,
+        eye,
         flight.pilot_position_meters,
         flight.initial_pilot_position_meters,
         chase,

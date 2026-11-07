@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { IDBFactory } from "fake-indexeddb";
 import { Window } from "happy-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -338,7 +339,7 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
     vi.spyOn(ThreeApplicationRenderer.prototype, "prepare").mockImplementation(function (this: InstanceType<typeof ThreeApplicationRenderer>, request) {
       waveCount = request.assets.water.projection.waveCount;
       detailSamples = request.assets.water.projection.detailQuadratureSamples;
-      const asset = request.assets.scene?.meshes[0];
+      const asset = request.assets.scene.meshes[0];
       const source = asset?.materials[0];
       if (materialProbe === undefined && asset !== undefined && source !== undefined) {
         Object.assign(source, { transparent: !source.transparent, depth_write: !source.depth_write });
@@ -679,4 +680,49 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       else if (fault === "cancelled cleanup") expect(state.updates.mock.calls.some(([json]) => json.includes("physical target release failed"))).toBe(true);
     } finally { state.dispose(); await flush(); await state.browser.happyDOM.abort(); }
   });
+});
+
+
+it("passes original configuration bytes to Rust and persists each exact UTF-8 source", async () => {
+  const state = await fixture();
+  const prototype = state.browser.HTMLInputElement.prototype;
+  const original = Object.getOwnPropertyDescriptor(prototype, "showPicker");
+  let bytes = new Uint8Array();
+  Object.defineProperty(prototype, "showPicker", { configurable: true, value(this: HTMLInputElement) {
+    Object.defineProperty(this, "files", { configurable: true, value: [new state.browser.File([bytes], "configuration.json")] });
+    this.dispatchEvent(new state.browser.Event("change") as unknown as Event);
+  } });
+  try {
+    await state.ready();
+    state.click("game-title-start");
+    for (const [kind, path, id] of [
+      ["aircraft", "../../assets/aircraft/playable-glider-v7.json", "configuration_id"],
+      ["controller", "../../assets/controllers/default-rate-v1.json", "controller_id"]
+    ] as const) {
+      const document = JSON.parse(readFileSync(new URL(path, import.meta.url), "utf8")) as Record<string, unknown>;
+      document[id] = `custom-${kind}-a`;
+      const source = ` \n${JSON.stringify(document)}\n\t`;
+      const valid = new TextEncoder().encode(source);
+      bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...valid]);
+      state.click(`game-setup-load-${kind}`);
+      await flush();
+      const key = `tokutori.pr-simulator-game-1.${kind}`;
+      expect(state.browser.localStorage.getItem(key)).toBeNull();
+      const observed = state.updates.mock.calls.map(([json]) => JSON.parse(json) as ApplicationObservation)
+        .find(observation => observation.input.kind === "configuration_loaded" && observation.input.document === kind && observation.input.completion.kind === "found");
+      expect(observed?.input).toMatchObject({ kind: "configuration_loaded", document: kind, completion: { kind: "found", bytes: [...bytes] } });
+      bytes = valid;
+      state.click(`game-setup-load-${kind}`);
+      await flush();
+      expect(state.browser.localStorage.getItem(key)).toBe(source);
+      state.click(`game-setup-delete-${kind}`);
+      await flush();
+      expect(state.browser.localStorage.getItem(key)).toBeNull();
+    }
+  } finally {
+    state.dispose();
+    await flush();
+    if (original === undefined) Reflect.deleteProperty(prototype, "showPicker");
+    else Object.defineProperty(prototype, "showPicker", original);
+  }
 });

@@ -1,6 +1,6 @@
 import { Box3, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, DataTexture, EquirectangularReflectionMapping,
   LinearFilter, LinearMipmapLinearFilter, NoColorSpace, RepeatWrapping, RGBAFormat, Sphere, SRGBColorSpace, UnsignedByteType, Vector3 } from "three";
-import type { ApplicationBufferDescriptor, ApplicationGeometryTexture, ApplicationImageAsset, ApplicationMeshAsset,
+import type { ApplicationBufferDescriptor, ApplicationGeometryAssets, ApplicationGeometryTexture, ApplicationImageAsset, ApplicationMeshAsset,
   ApplicationMeshUpdate, ApplicationWaterChunkAsset } from "../../../generated/application-contracts.js";
 
 export type ImageLease = readonly [bufferId: number, anisotropy: number];
@@ -158,6 +158,27 @@ export class ThreeApplicationBuffers {
     texture.needsUpdate = true;
     this.textures.set(key, texture);
     return texture;
+  }
+
+  pruneScene(manifests: readonly ApplicationGeometryAssets[], water: readonly BufferGeometry[]): void {
+    const indices = new Set(manifests.flatMap(manifest => manifest.meshes.map(mesh => mesh.index.buffer_id)));
+    const textures = new Set(manifests.flatMap(manifest => manifest.wing_textures.map(texture => String(texture.buffer.buffer_id))));
+    const failures: unknown[] = [];
+    for (const [id, geometry] of this.geometries) if (!indices.has(id)) {
+      try { geometry.dispose(); } catch (cause) { failures.push(cause); }
+      this.geometries.delete(id);
+    }
+    const attributes = new Set<unknown>();
+    for (const geometry of [...this.geometries.values(), ...water]) {
+      attributes.add(geometry.getIndex());
+      for (const attribute of Object.values(geometry.attributes)) attributes.add(attribute);
+    }
+    for (const [id, attribute] of this.attributes) if (!attributes.has(attribute)) this.attributes.delete(id);
+    for (const [id, texture] of this.textures) if (!id.includes(":") && !textures.has(id)) {
+      try { texture.dispose(); } catch (cause) { failures.push(cause); }
+      this.textures.delete(id);
+    }
+    if (failures.length > 0) throw new AggregateError(failures, "Scene buffer retirement failed");
   }
 
   dispose(): void {

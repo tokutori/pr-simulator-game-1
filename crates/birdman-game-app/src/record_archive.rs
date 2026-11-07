@@ -79,7 +79,7 @@ impl core::error::Error for RecordExportError {
 
 /// Produces the current two-tail document and key from the retained physical outputs.
 pub fn export_record_document(
-    session: &GameSession<'_>,
+    session: &GameSession,
     metadata: RecordExportMetadata<'_>,
 ) -> Result<TailFlightRecordDocument, RecordExportError> {
     let record = session
@@ -126,7 +126,6 @@ impl ApplicationSession {
                     difficulty: self.difficulty(),
                     identity: &prepared.record_identity,
                     control_mode: prepared.control_mode,
-                    controller_profile: prepared.controller_profile,
                 },
                 course_axis: prepared.course_axis,
                 build_provenance: record_build_provenance(),
@@ -204,7 +203,6 @@ mod tests {
                     difficulty: application.difficulty(),
                     identity: &prepared.record_identity,
                     control_mode: prepared.control_mode,
-                    controller_profile: prepared.controller_profile,
                 },
                 course_axis: prepared.course_axis,
                 build_provenance: record_build_provenance(),

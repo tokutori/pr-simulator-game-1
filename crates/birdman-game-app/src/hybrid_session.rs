@@ -1,13 +1,10 @@
-use std::sync::OnceLock;
-
-use birdman_game_content::{AircraftDefinition, AircraftDefinitionError, playable_aircraft};
+use birdman_game_content::{AircraftDefinition, AircraftDefinitionError};
 use birdman_game_core::{
     ActuatorError, BodyVector, CompositeCgLaunchConditions, ControlMode, CourseAxis,
     DistanceScoreError, DynamicsError, GameSessionConfiguration, GameSessionError, Gravity,
-    HybridAerodynamicLoad, HybridError, HybridModel, HybridSurface, MathError, NedPoint, NedVector,
-    SessionScenarioIdentity, SteadyGlideTrim, TailAngleOfAttackGuard, TailControlProfile,
-    TailFlightScenario, TailFlightScenarioError, TailFlightScenarioParameters, TailIncidence,
-    WindField,
+    HybridAerodynamicLoad, HybridError, HybridModel, MathError, NedPoint, NedVector,
+    SessionScenarioIdentity, SteadyGlideTrim, TailControlProfile, TailFlightScenario,
+    TailFlightScenarioError, TailFlightScenarioParameters, TailIncidence, WindField,
 };
 use birdman_game_format::{
     ConfigurationError, EnvironmentFormatError, FlightRecordTailIdentityDocument, ScenarioCatalog,
@@ -22,8 +19,6 @@ use crate::{
     launch_venue,
 };
 
-const CONTROLLER_PROFILE_ID: &str = "bpg040-tail-rate-feedback";
-const CONTROLLER_PROFILE_VERSION: u32 = 4;
 const CATALOG_VERSION: u32 = 10;
 const SCENARIO_VERSION: u32 = 11;
 const SCENARIOS: [(u32, WeatherClass); 5] = [
@@ -33,15 +28,8 @@ const SCENARIOS: [(u32, WeatherClass); 5] = [
     (5, WeatherClass::NearLimit),
     (6, WeatherClass::Typical),
 ];
-static LAUNCH_CG_POSITION: OnceLock<Result<NedPoint, HybridSessionPreparationError>> =
-    OnceLock::new();
-static AIRCRAFT_DEFINITION: OnceLock<Result<AircraftDefinition, AircraftDefinitionError>> =
-    OnceLock::new();
-static HYBRID_SURFACES: OnceLock<Result<[HybridSurface<'static>; 3], AircraftDefinitionError>> =
-    OnceLock::new();
-
 /// Typed preparation failures before any hybrid session state or record is published.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HybridSessionPreparationError {
     /// The specified operating point cannot be converted to a launch state.
     Trim(birdman_game_core::SteadyGlideError),
@@ -63,6 +51,8 @@ pub enum HybridSessionPreparationError {
     Hybrid(HybridError),
     /// The software control profile failed validation.
     Control(ActuatorError),
+    /// Controller source or the current aircraft/controller pair was rejected.
+    Controller(crate::ControllerPreparationError),
     /// The sealed scenario rejected its initial physical or load state.
     Scenario(TailFlightScenarioError),
     /// The session tick limit or versioned identity failed validation.
@@ -84,6 +74,7 @@ impl core::fmt::Display for HybridSessionPreparationError {
             Self::Course(_) => f.write_str("Scoring course validation failed"),
             Self::Hybrid(_) => f.write_str("Hybrid load model preparation failed"),
             Self::Control(_) => f.write_str("Software controller preparation failed"),
+            Self::Controller(cause) => write!(f, "{cause}"),
             Self::Scenario(_) => f.write_str("Sealed flight scenario validation failed"),
             Self::Session(_) => f.write_str("Versioned session configuration failed"),
             Self::AllocationFailed => f.write_str("Flight structural storage allocation failed"),
@@ -114,117 +105,96 @@ impl core::error::Error for HybridSessionPreparationError {
 
 /// Platform-independent preparation with stable owned model and environment resources.
 ///
-/// The configuration borrows immutable cached model and environment storage. It
-/// can be moved into the existing GameSession without retaining a self-reference.
+/// The numerical configuration owns its launch values. Aerodynamics borrow the
+/// selected definition only during preparation and execution batches.
 pub struct HybridSessionPreparation {
-    configuration: GameSessionConfiguration<'static>,
+    configuration: GameSessionConfiguration,
     record_identity: FlightRecordTailIdentityDocument,
     controller_profile: TailControlProfile,
     course_axis: CourseAxis,
+    wind: WindField<'static>,
 }
 
 impl HybridSessionPreparation {
     /// Builds the same default configuration selected by the public Web application.
     pub fn try_default() -> Result<Self, HybridSessionPreparationError> {
+        let aircraft =
+            crate::SelectedAircraft::bundled().map_err(HybridSessionPreparationError::Aircraft)?;
+        let controller = crate::SelectedController::bundled().map_err(|cause| {
+            HybridSessionPreparationError::Controller(crate::ControllerPreparationError::Document(
+                cause,
+            ))
+        })?;
+        let mode = crate::application::commands::control_mode(
+            crate::DEFAULT_ASSISTANCE,
+            controller.document().shared_authority,
+        )
+        .map_err(HybridSessionPreparationError::Control)?;
         Self::try_new(
-            crate::default_control_mode(),
+            &aircraft,
+            &controller,
+            mode,
             DEFAULT_MAXIMUM_FLIGHT_TICKS,
             DEFAULT_SESSION_SEED,
         )
     }
 
-    /// Builds the fictional hybrid definition in the registered offline Typical environment.
-    ///
-    /// Initial air-relative speed and attitude follow the mock trim. The selected
-    /// wind at the composite CG is added once to obtain launch ground velocity.
-    ///
-    /// # Examples
-    ///
-    /// Prepare the registered aircraft and environment, enter flight through the
-    /// public lifecycle, and advance two neutral ticks. Result follows the configured
-    /// two-tick time limit. Larger limits permit continued FlightRunning until an end
-    /// event. A finalized record can then be encoded and restored without another
-    /// physics integration. Preparation, lifecycle, and format errors remain
-    /// separate `Result` values at their respective calls.
+    /// Seals an explicitly selected aircraft into an owned numerical configuration.
     ///
     /// ```
-    /// use birdman_game_app::{HybridSessionPreparation, initialize_bundled_environment};
-    /// use birdman_game_core::{
-    ///     ControlMode, GameSession, SessionPhase, TailFlightTickInput, TailPilotIntent,
-    ///     TailPilotPositionCommand, TailRateTarget,
-    /// };
-    /// use birdman_game_format::{
-    ///     AssistanceLevel, DifficultySettings, InformationLevel, TailFlightRecordDocument,
-    ///     WeatherClass,
-    /// };
-    ///
-    /// initialize_bundled_environment().unwrap();
-    /// let (configuration, identity) =
-    ///     HybridSessionPreparation::try_new(ControlMode::Manual, 2, 42)
-    ///         .unwrap().into_parts();
+    /// use birdman_game_app::{HybridSessionPreparation, SelectedAircraft, SelectedController};
+    /// use birdman_game_core::{ControlMode, GameSession, SessionPhase};
+    /// let selected = SelectedAircraft::bundled().unwrap();
+    /// let controller = SelectedController::bundled().unwrap();
+    /// let (configuration, identity) = HybridSessionPreparation::try_new(
+    ///     &selected, &controller, ControlMode::Manual, 2, 42,
+    /// ).unwrap().into_parts();
+    /// assert_eq!(identity.aircraft_sha256.as_deref(), Some(selected.raw_sha256()));
+    /// drop(selected);
     /// let mut session = GameSession::new();
     /// session.open_setup().unwrap();
     /// session.prepare_flight(configuration).unwrap();
     /// session.mark_briefing_ready().unwrap();
     /// session.start_countdown(1).unwrap();
     /// session.observe_countdown(session.countdown_token().unwrap(), 1.0, true).unwrap();
-    ///
-    /// let input = TailFlightTickInput::new(
-    ///     TailPilotIntent::try_new(0.0, 0.0).unwrap(),
-    ///     TailRateTarget::try_new(0.0, 0.0).unwrap(),
-    ///     TailPilotPositionCommand::Hold,
-    /// );
-    /// for _ in 0..2 {
-    ///     session.advance_tail_flight_tick(input).unwrap();
-    /// }
-    /// assert_eq!(session.snapshot().phase(), SessionPhase::Result);
-    /// let settings = DifficultySettings::custom(
-    ///     InformationLevel::Full, AssistanceLevel::Manual, WeatherClass::Typical,
-    /// );
-    /// let archive = TailFlightRecordDocument::from_record(
-    ///     session.flight_record().unwrap(), settings, identity,
-    /// ).unwrap();
-    /// let bytes = archive.encode_json().unwrap();
-    /// assert_eq!(TailFlightRecordDocument::decode_json(&bytes).unwrap(), archive);
+    /// assert_eq!(session.snapshot().phase(), SessionPhase::FlightRunning);
     /// ```
     pub fn try_new(
+        aircraft: &crate::SelectedAircraft,
+        controller: &crate::SelectedController,
         control_mode: ControlMode,
         maximum_flight_ticks: u64,
         seed: u64,
     ) -> Result<Self, HybridSessionPreparationError> {
-        Self::try_new_for_weather(control_mode, maximum_flight_ticks, seed, DEFAULT_WEATHER)
+        Self::try_new_for_weather(
+            aircraft,
+            controller,
+            control_mode,
+            maximum_flight_ticks,
+            seed,
+            DEFAULT_WEATHER,
+        )
     }
 
     /// Resolves Weather against the current catalog and its registered wind provider.
     pub fn try_new_for_weather(
+        aircraft: &crate::SelectedAircraft,
+        controller: &crate::SelectedController,
         control_mode: ControlMode,
         maximum_flight_ticks: u64,
         seed: u64,
         weather: WeatherClass,
     ) -> Result<Self, HybridSessionPreparationError> {
-        let selection = Self::select_scenario(weather, seed)?;
-        let definition = registered_aircraft().map_err(HybridSessionPreparationError::Aircraft)?;
-        let surfaces = cached_surfaces()?;
-        let wind = if selection.environment_version == 6 {
-            bundled_environment()
-                .map_err(HybridSessionPreparationError::Environment)?
-                .wind_field()
-                .map_err(HybridSessionPreparationError::Environment)?
-        } else {
-            let velocity = preset_wind_for_version(selection.environment_version).ok_or(
-                HybridSessionPreparationError::Configuration(
-                    ConfigurationError::ScenarioUnavailable,
-                ),
-            )?;
-            WindField::uniform(
-                NedVector::try_new(velocity[0], velocity[1], velocity[2])
-                    .map_err(HybridSessionPreparationError::Math)?,
-            )
-        };
+        let definition = aircraft.definition();
+        let selection = Self::select_scenario(weather, seed, definition.document().model_version)?;
+        let surfaces = definition
+            .surfaces()
+            .map_err(HybridSessionPreparationError::Aircraft)?;
+        let wind = wind_for_version(selection.environment_version)?;
         let trim = definition
             .trim()
             .map_err(HybridSessionPreparationError::Aircraft)?;
-        let cg_position = registered_launch_cg_position()?;
+        let cg_position = aircraft.launch_position()?;
         let platform = launch_venue()
             .map_err(HybridSessionPreparationError::Venue)?
             .platform;
@@ -271,22 +241,21 @@ impl HybridSessionPreparation {
                 definition
                     .polar()
                     .map_err(HybridSessionPreparationError::Aircraft)?,
-                surfaces,
+                &surfaces,
             )
             .map_err(HybridSessionPreparationError::Hybrid)?,
             definition.document().trim.air_density_kg_m3,
             wind,
         )
         .map_err(HybridSessionPreparationError::Hybrid)?;
-        let angle_guard =
-            TailAngleOfAttackGuard::try_new([-0.09, 0.09], trim.alpha_rad(), 1.0, 1.6)
-                .map_err(HybridSessionPreparationError::Control)?;
-        let controller_profile = TailControlProfile::try_new(0.2, 0.2, 1.0)
-            .map_err(HybridSessionPreparationError::Control)?
-            .with_angle_of_attack_guard(angle_guard);
+        let controller_profile = controller
+            .prepare(definition)
+            .map_err(HybridSessionPreparationError::Controller)?;
         let scenario = TailFlightScenario::try_new(parameters, load, controller_profile)
             .map_err(HybridSessionPreparationError::Scenario)?;
-        let identity = identity_for_selection(selection);
+        let mut identity = identity_for_selection(selection);
+        identity.aircraft_identity = aircraft.identity();
+        identity.controller_identity = Some(controller.identity());
         let configuration = GameSessionConfiguration::try_new_tail(
             scenario,
             control_mode,
@@ -295,14 +264,17 @@ impl HybridSessionPreparation {
         )
         .map_err(HybridSessionPreparationError::Session)?;
         let record_identity = FlightRecordTailIdentityDocument {
+            aircraft_sha256: Some(aircraft.raw_sha256().to_owned()),
             aircraft_configuration_id: definition.document().configuration_id.clone(),
-            controller_profile_id: CONTROLLER_PROFILE_ID.to_owned(),
+            controller_profile_id: controller.document().controller_id.clone(),
+            controller_sha256: Some(controller.raw_sha256().to_owned()),
         };
         Ok(Self {
             configuration,
             record_identity,
             controller_profile,
             course_axis,
+            wind,
         })
     }
 
@@ -310,8 +282,9 @@ impl HybridSessionPreparation {
     pub fn select_scenario(
         weather: WeatherClass,
         seed: u64,
+        aircraft_model_version: u32,
     ) -> Result<ScenarioSelection, HybridSessionPreparationError> {
-        let entries = scenario_entries()?;
+        let entries = scenario_entries(aircraft_model_version);
         ScenarioCatalog::try_new(CATALOG_VERSION, &entries)
             .and_then(|catalog| catalog.select(weather, seed))
             .map_err(HybridSessionPreparationError::Configuration)
@@ -323,17 +296,43 @@ impl HybridSessionPreparation {
     ) -> Result<Option<WeatherClass>, HybridSessionPreparationError> {
         let seed = u64::from(identity.seed_low) | (u64::from(identity.seed_high) << 32);
         for (_, weather) in SCENARIOS {
-            let selection = Self::select_scenario(weather, seed)?;
-            if EnvironmentIdentity::from(identity_for_selection(selection)) == identity {
+            if Self::environment_identity(weather, seed)? == identity {
                 return Ok(Some(weather));
             }
         }
         Ok(None)
     }
 
+    /// Selects environmental resources independently of aircraft and controller identity.
+    pub fn environment_identity(
+        weather: WeatherClass,
+        seed: u64,
+    ) -> Result<EnvironmentIdentity, HybridSessionPreparationError> {
+        let version = SCENARIOS
+            .iter()
+            .find(|(_, candidate)| *candidate == weather)
+            .map(|(version, _)| *version)
+            .ok_or(HybridSessionPreparationError::Configuration(
+                ConfigurationError::ScenarioUnavailable,
+            ))?;
+        Ok(EnvironmentIdentity {
+            catalog_version: CATALOG_VERSION,
+            scenario_id: version,
+            scenario_version: SCENARIO_VERSION,
+            environment_version: version,
+            seed_low: seed as u32,
+            seed_high: (seed >> 32) as u32,
+        })
+    }
+
     /// Returns the exact software profile used to seal this scenario.
     pub const fn controller_profile(&self) -> TailControlProfile {
         self.controller_profile
+    }
+
+    /// Returns the sealed environmental load resource.
+    pub const fn wind(&self) -> WindField<'static> {
+        self.wind
     }
 
     /// Returns the exact course axis used to seal the distance-scoring contract.
@@ -342,28 +341,19 @@ impl HybridSessionPreparation {
     }
 
     /// Moves the sealed core configuration and its definition-derived archive identity to adapters.
-    pub fn into_parts(
-        self,
-    ) -> (
-        GameSessionConfiguration<'static>,
-        FlightRecordTailIdentityDocument,
-    ) {
+    pub fn into_parts(self) -> (GameSessionConfiguration, FlightRecordTailIdentityDocument) {
         (self.configuration, self.record_identity)
     }
 }
 
-fn scenario_entries() -> Result<[ScenarioCatalogEntry; 5], HybridSessionPreparationError> {
-    let model_version = registered_aircraft()
-        .map_err(HybridSessionPreparationError::Aircraft)?
-        .document()
-        .model_version;
-    Ok(SCENARIOS.map(|(version, weather)| ScenarioCatalogEntry {
+fn scenario_entries(model_version: u32) -> [ScenarioCatalogEntry; 5] {
+    SCENARIOS.map(|(version, weather)| ScenarioCatalogEntry {
         scenario_id: version,
         scenario_version: SCENARIO_VERSION,
         aircraft_model_version: model_version,
         environment_version: version,
         weather,
-    }))
+    })
 }
 
 /// Returns the sealed core identity corresponding to a registered catalog selection.
@@ -373,32 +363,43 @@ pub fn identity_for_selection(selection: ScenarioSelection) -> SessionScenarioId
         scenario_id: selection.scenario_id,
         scenario_version: selection.scenario_version,
         aircraft_model_version: selection.aircraft_model_version,
+        aircraft_identity: [0; 32],
         environment_version: selection.environment_version,
-        controller_profile_version: CONTROLLER_PROFILE_VERSION,
+        controller_identity: None,
         seed: selection.seed,
     }
 }
 
-/// Returns the single cached owner decoded and validated from the registered aircraft JSON.
-pub fn registered_aircraft() -> Result<&'static AircraftDefinition, AircraftDefinitionError> {
-    AIRCRAFT_DEFINITION
-        .get_or_init(playable_aircraft)
-        .as_ref()
-        .map_err(|error| *error)
+/// Derives the launch support position from the selected physical hull.
+pub fn launch_position(
+    definition: &AircraftDefinition,
+) -> Result<NedPoint, HybridSessionPreparationError> {
+    let trim = definition
+        .trim()
+        .map_err(HybridSessionPreparationError::Aircraft)?;
+    let platform = launch_venue()
+        .map_err(HybridSessionPreparationError::Venue)?
+        .platform;
+    launch_cg_position(definition, trim, platform)
 }
 
-/// Immutable registered launch geometry, shared by preparation and preset metadata.
-pub(crate) fn registered_launch_cg_position() -> Result<NedPoint, HybridSessionPreparationError> {
-    *LAUNCH_CG_POSITION.get_or_init(|| {
-        let definition = registered_aircraft().map_err(HybridSessionPreparationError::Aircraft)?;
-        let trim = definition
-            .trim()
-            .map_err(HybridSessionPreparationError::Aircraft)?;
-        let platform = launch_venue()
-            .map_err(HybridSessionPreparationError::Venue)?
-            .platform;
-        launch_cg_position(definition, trim, platform)
-    })
+/// Borrows the environment resource independently of aircraft selection.
+pub(crate) fn wind_for_version(
+    version: u32,
+) -> Result<WindField<'static>, HybridSessionPreparationError> {
+    if version == 6 {
+        return bundled_environment()
+            .map_err(HybridSessionPreparationError::Environment)?
+            .wind_field()
+            .map_err(HybridSessionPreparationError::Environment);
+    }
+    let velocity = preset_wind_for_version(version).ok_or(
+        HybridSessionPreparationError::Configuration(ConfigurationError::ScenarioUnavailable),
+    )?;
+    Ok(WindField::uniform(
+        NedVector::try_new(velocity[0], velocity[1], velocity[2])
+            .map_err(HybridSessionPreparationError::Math)?,
+    ))
 }
 
 /// Clears the complete validated aircraft hull from the deck's supporting plane.
@@ -447,15 +448,6 @@ fn launch_cg_position(
         altitude = altitude.max(required);
     }
     NedPoint::try_new(0.0, 0.0, -altitude).map_err(HybridSessionPreparationError::Math)
-}
-
-fn cached_surfaces() -> Result<&'static [HybridSurface<'static>; 3], HybridSessionPreparationError>
-{
-    let definition = registered_aircraft().map_err(HybridSessionPreparationError::Aircraft)?;
-    HYBRID_SURFACES
-        .get_or_init(|| definition.surfaces())
-        .as_ref()
-        .map_err(|error| HybridSessionPreparationError::Aircraft(*error))
 }
 
 #[cfg(test)]

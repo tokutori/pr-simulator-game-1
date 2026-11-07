@@ -6,8 +6,19 @@ use crate::{
 };
 
 fn model(pilot_mass: f64, inertia: InertiaTensor) -> AircraftModel {
-    AircraftModel::try_new(4.0, inertia, pilot_mass, -0.2, -0.5, 0.5, 1.0, 2.0)
-        .expect("valid aircraft model")
+    AircraftModel::try_new(
+        4.0,
+        inertia,
+        pilot_mass,
+        -0.2,
+        -0.5,
+        0.5,
+        1.0,
+        2.0,
+        [0.0; 3],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
+    )
+    .expect("valid aircraft model")
 }
 
 fn diagonal_inertia(ixx: f64, iyy: f64, izz: f64) -> InertiaTensor {
@@ -385,6 +396,8 @@ fn pilot_target_tracking_follows_key_rate_ramps_without_overshoot_or_hunting() {
         0.4,
         0.3,
         0.8,
+        [0.0; 3],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .expect("valid aircraft model");
     let timestep = 1.0 / PHYSICS_HZ as f64;
@@ -571,6 +584,8 @@ fn pilot_policy_distinguishes_its_domain_from_continuous_unrecoverability() {
         1.0e-6,
         1.0,
         2.0,
+        [0.0; 3],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap();
     let initial = state(
@@ -604,6 +619,8 @@ fn resting_pilot_tracks_targets_in_a_narrow_travel_range() {
         1.0e-5,
         1.0,
         2.0,
+        [0.0; 3],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap();
     let mut current = state(
@@ -654,6 +671,8 @@ fn seeded_pilot_target_sequences_preserve_policy_closure() {
             half_range,
             maximum_speed,
             maximum_acceleration,
+            [0.0; 3],
+            [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
         )
         .unwrap();
         for position_fraction in [-1.0, -0.99, -0.2, 0.0, 0.7, 0.999, 1.0] {
@@ -711,6 +730,8 @@ fn slow_braking_sequences_remain_closed_until_target_convergence() {
                 half_range,
                 1.0,
                 maximum_acceleration,
+                [0.0; 3],
+                [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
             )
             .unwrap();
             let target = PilotPositionTarget::try_new(&aircraft, direction * half_range).unwrap();
@@ -759,6 +780,8 @@ fn pilot_stopping_certificate_has_a_bounded_numerical_domain() {
             half_range,
             1.0,
             maximum_acceleration,
+            [0.0; 3],
+            [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
         )
         .unwrap();
         let current = state(
@@ -865,6 +888,46 @@ fn gravity_produces_analytical_free_fall() {
 }
 
 #[test]
+fn offset_airframe_free_fall_and_force_through_cg_have_no_spurious_rotation() {
+    let cg = [0.15, 0.05, -0.1];
+    let aircraft = AircraftModel::try_new(
+        4.0,
+        diagonal_inertia(1.0, 1.5, 2.0),
+        0.0,
+        0.0,
+        -0.5,
+        0.5,
+        1.0,
+        2.0,
+        cg,
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
+    )
+    .unwrap();
+    let initial = state(
+        [0.0; 3],
+        [0.0; 3],
+        UnitQuaternion::IDENTITY,
+        [0.0; 3],
+        0.0,
+        0.0,
+    );
+    let force = BodyVector::try_new(2.0, 0.0, 0.0).unwrap();
+    let offset = BodyVector::try_new(cg[0], cg[1], cg[2]).unwrap();
+    let applied = Wrench::try_new(force, offset.cross(force).unwrap()).unwrap();
+    let next = step(&aircraft, &initial, 0.0, 9.81, applied, 0.1).unwrap();
+    for rate in next.angular_velocity_body().components() {
+        close(rate, 0.0, 1.0e-13);
+    }
+    let velocity = next.datum_velocity_ned().components();
+    close(velocity[0], 2.0 / 4.0 * 0.1, 1.0e-13);
+    close(velocity[2], 9.81 * 0.1, 1.0e-13);
+    assert_eq!(
+        aircraft.composite_center_of_mass(0.0).unwrap().components(),
+        cg
+    );
+}
+
+#[test]
 fn constant_force_matches_analytical_translation() {
     let model = model(0.0, diagonal_inertia(1.0, 1.5, 2.0));
     let initial = state(
@@ -927,7 +990,19 @@ fn principal_axis_torque_matches_analytical_rotation() {
 fn moving_internal_mass_conserves_total_linear_and_angular_momentum() {
     let inertia =
         InertiaTensor::try_new([[2.0, 0.1, -0.2], [0.1, 3.0, 0.15], [-0.2, 0.15, 4.0]]).unwrap();
-    let model = model(1.0, inertia);
+    let model = AircraftModel::try_new(
+        4.0,
+        inertia,
+        1.0,
+        -0.2,
+        -0.5,
+        0.5,
+        1.0,
+        2.0,
+        [0.15, 0.05, -0.1],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
+    )
+    .unwrap();
     let initial = state(
         [3.0, -2.0, 1.0],
         [1.0, -0.5, 0.3],
@@ -983,6 +1058,8 @@ fn longitudinal_mass_motion_matches_closed_form_momentum_reference() {
         0.5,
         1.0,
         2.0,
+        [0.0; 3],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap();
     let initial = state(
@@ -1223,7 +1300,21 @@ fn inertia_accepts_triangle_equality_and_exactly_represented_rotations() {
     ] {
         let tensor = InertiaTensor::try_new(matrix).expect("realizable planar mass distribution");
         assert_eq!(tensor.matrix(), matrix);
-        assert!(AircraftModel::try_new(4.0, tensor, 0.0, 0.0, -0.5, 0.5, 1.0, 2.0).is_ok());
+        assert!(
+            AircraftModel::try_new(
+                4.0,
+                tensor,
+                0.0,
+                0.0,
+                -0.5,
+                0.5,
+                1.0,
+                2.0,
+                [0.0; 3],
+                [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
+            )
+            .is_ok()
+        );
     }
 }
 

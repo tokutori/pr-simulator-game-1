@@ -47,11 +47,22 @@ pub(super) fn difficulty() -> DifficultySettings {
     birdman_game_app::default_difficulty(ControlMode::Manual)
 }
 pub(super) fn context<'view>(
-    session: &'view GameSession<'static>,
+    session: &'view GameSession,
     difficulty: DifficultySettings,
     platform: &'view GameUiPlatformInput,
-) -> GameUiContext<'view, 'static> {
+) -> GameUiContext<'view> {
     GameUiContext {
+        aircraft_replay_available: true,
+        representative_position_ned_m: [0.0, 0.0, -10.5],
+        controller_name: "既定の制御設定",
+        controller_notification: "",
+        controller_can_delete: false,
+        controller_pair_diagnostic: None,
+        controller_shared_authority: Some(0.5),
+        controller_effective_authority: Some(0.0),
+        aircraft_name: "既定の機体",
+        aircraft_notification: "",
+        aircraft_can_delete: false,
         record_notification: None,
         archived_identity: None,
         session,
@@ -120,7 +131,7 @@ fn hud_node<'view>(hud: &'view GameUiHud, id: &str) -> &'view GameUiHudNode {
         .unwrap()
 }
 
-fn assert_touch_hud_lower_band(session: &GameSession<'static>, protected_cue: Option<&str>) {
+fn assert_touch_hud_lower_band(session: &GameSession, protected_cue: Option<&str>) {
     let snapshot = session.snapshot();
     for (width, height, font) in [
         (390.0, 844.0, 16.0),
@@ -249,6 +260,39 @@ fn portrait_touch_instruments_avoid_the_center_band() {
             node.id,
             band.0,
             band.1
+        );
+    }
+}
+
+#[test]
+fn portrait_touch_instruments_clear_the_frame_rate_badge() {
+    let session = launched();
+    let mut platform = platform();
+    platform.touch_available = true;
+    platform.viewport = GameUiViewport {
+        width: 390.0,
+        height: 844.0,
+        root_font_size: 16.0,
+    };
+    let full = difficulty().with_information(InformationLevel::Full);
+    let state = GameUiState::default();
+    let view = game_ui_view(&state, &context(&session, full, &platform)).unwrap();
+    let badge_bottom = view.theme.frame_rate_badge_bottom_px();
+    let hud = view.hud.as_ref().unwrap();
+    let rail_top = 844.0 - hud.layout.offset_px[1] - hud.layout.height_px;
+    let instruments: Vec<_> = hud
+        .groups
+        .iter()
+        .filter(|group| group.placement == GameUiHudPlacement::Instruments)
+        .flat_map(|group| &group.nodes)
+        .collect();
+    assert!(!instruments.is_empty());
+    for node in instruments {
+        let top = rail_top + node.bounds.y * hud.layout.height_px;
+        assert!(
+            top >= badge_bottom,
+            "{}: top {top} overlaps the frame-rate badge ending at {badge_bottom}",
+            node.id
         );
     }
 }
@@ -741,7 +785,7 @@ fn stored_record_preview_bounds_the_rows_projected_by_the_shared_owner() {
         GAME_UI_SAVED_AT_CHARACTERS
     );
 }
-fn launched() -> GameSession<'static> {
+fn launched() -> GameSession {
     let mut session = GameSession::new();
     session.open_setup().unwrap();
     prepare_manual_flight(&mut session, WeatherClass::Calm, 3, 42).unwrap();
@@ -752,13 +796,28 @@ fn launched() -> GameSession<'static> {
         .unwrap();
     session
 }
+fn aircraft_fixture() -> (
+    birdman_game_app::SelectedAircraft,
+    birdman_game_content::AircraftContactBuffer,
+) {
+    let selected = birdman_game_app::SelectedAircraft::bundled().unwrap();
+    let contact = birdman_game_content::AircraftContactBuffer::try_new(
+        selected.definition(),
+        selected.definition().contact_points().to_vec(),
+    )
+    .unwrap();
+    (selected, contact)
+}
 fn prepare_manual_flight(
-    session: &mut GameSession<'static>,
+    session: &mut GameSession,
     weather: WeatherClass,
     maximum_ticks: u64,
     seed: u64,
 ) -> Result<(), birdman_game_core::GameSessionError> {
+    let (fixture_aircraft, mut contact) = aircraft_fixture();
     let (configuration, _) = HybridSessionPreparation::try_new_for_weather(
+        &fixture_aircraft,
+        &birdman_game_app::SelectedController::bundled().unwrap(),
         ControlMode::Manual,
         maximum_ticks,
         seed,
@@ -766,9 +825,53 @@ fn prepare_manual_flight(
     )
     .unwrap()
     .into_parts();
+
+    let configuration = configuration
+        .with_contact_shape(&mut contact.bind(fixture_aircraft.definition()))
+        .unwrap();
     session.prepare_flight(configuration)
 }
-fn finalized() -> GameSession<'static> {
+fn advance_fixture(
+    session: &mut GameSession,
+    selected: &birdman_game_app::SelectedAircraft,
+    contact: &mut birdman_game_content::AircraftContactBuffer,
+    input: TailFlightTickInput,
+) -> Result<SessionSnapshot, birdman_game_core::GameSessionError> {
+    let definition = selected.definition();
+    let surfaces = definition.surfaces().unwrap();
+    let version = session
+        .playback_record()
+        .unwrap()
+        .header()
+        .scenario
+        .environment_version;
+    let wind = if version == 6 {
+        birdman_game_app::bundled_environment()
+            .unwrap()
+            .wind_field()
+            .unwrap()
+    } else {
+        let [n, e, d] = birdman_game_app::preset_wind_for_version(version).unwrap();
+        birdman_game_core::WindField::uniform(
+            birdman_game_core::NedVector::try_new(n, e, d).unwrap(),
+        )
+    };
+    let loads = birdman_game_core::HybridAerodynamicLoad::try_new(
+        birdman_game_core::HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
+        definition.document().trim.air_density_kg_m3,
+        wind,
+    )
+    .unwrap();
+    session.advance_tail_flight_tick_with_shape_provider(
+        input,
+        &mut contact.bind(definition),
+        &loads,
+    )
+}
+
+fn finalized() -> GameSession {
+    let (fixture_aircraft, mut fixture_contact) = aircraft_fixture();
+
     let mut session = launched();
     let input = TailFlightTickInput::new(
         TailPilotIntent::try_new(0.0, 0.0).unwrap(),
@@ -776,7 +879,7 @@ fn finalized() -> GameSession<'static> {
         TailPilotPositionCommand::Hold,
     );
     for _tick in 0..3 {
-        session.advance_tail_flight_tick(input).unwrap();
+        advance_fixture(&mut session, &fixture_aircraft, &mut fixture_contact, input).unwrap();
     }
     session
 }
@@ -799,6 +902,7 @@ fn revision(
 
 #[test]
 fn shared_revision_covers_view_inputs_and_retains_dynamic_analysis_time() {
+    let fixture_aircraft = birdman_game_app::SelectedAircraft::bundled().unwrap();
     let application = birdman_game_app::application::ApplicationSession::default();
     let mut cache = GameUiStructureCache::default();
     let mut state = GameUiState::default();
@@ -831,8 +935,12 @@ fn shared_revision_covers_view_inputs_and_retains_dynamic_analysis_time() {
     assert_ne!(GameUiStructureKey::new(&state, &context), original);
     context.environment_readout = "気象試験値";
     context.identity = Some(birdman_game_app::identity_for_selection(
-        birdman_game_app::HybridSessionPreparation::select_scenario(WeatherClass::Calm, 42)
-            .unwrap(),
+        birdman_game_app::HybridSessionPreparation::select_scenario(
+            WeatherClass::Calm,
+            42,
+            fixture_aircraft.definition().document().model_version,
+        )
+        .unwrap(),
     ));
     assert_ne!(GameUiStructureKey::new(&state, &context), original);
 }
@@ -1120,17 +1228,23 @@ fn flight_setup_keeps_progress_and_feedback_lines() {
 
 #[test]
 fn record_replacement_changes_structure_while_rejected_commands_retain_it() {
+    let (fixture_aircraft, mut fixture_contact) = aircraft_fixture();
+
     use birdman_game_app::application::{ApplicationSession, BackendReadiness};
-    let record = |nose_up| {
+    let mut record = |nose_up| {
         let mut session = launched();
         for _ in 0..3 {
-            session
-                .advance_tail_flight_tick(TailFlightTickInput::new(
+            advance_fixture(
+                &mut session,
+                &fixture_aircraft,
+                &mut fixture_contact,
+                TailFlightTickInput::new(
                     TailPilotIntent::try_new(nose_up, 0.0).unwrap(),
                     TailRateTarget::try_new(0.0, 0.0).unwrap(),
                     TailPilotPositionCommand::Hold,
-                ))
-                .unwrap();
+                ),
+            )
+            .unwrap();
         }
         let record = session.playback_record().unwrap();
         birdman_game_core::FlightRecord::try_from_finalized_samples(
@@ -1148,7 +1262,32 @@ fn record_replacement_changes_structure_while_rejected_commands_retain_it() {
     let second = record(0.1);
     assert_eq!(first.header(), second.header());
     assert_ne!(first.samples(), second.samples());
-    application.open_archived_replay(first).unwrap();
+    let archive_json = |record: &birdman_game_core::FlightRecord| {
+        let (_, identity) = HybridSessionPreparation::try_new_for_weather(
+            &fixture_aircraft,
+            &birdman_game_app::SelectedController::bundled().unwrap(),
+            ControlMode::Manual,
+            3,
+            42,
+            WeatherClass::Calm,
+        )
+        .unwrap()
+        .into_parts();
+        let document = birdman_game_format::TailFlightRecordDocument::from_record(
+            record,
+            birdman_game_format::DifficultySettings::custom(
+                birdman_game_format::InformationLevel::Full,
+                birdman_game_format::AssistanceLevel::Manual,
+                WeatherClass::Calm,
+            ),
+            identity,
+        )
+        .unwrap();
+        String::from_utf8(document.encode_json().unwrap()).unwrap()
+    };
+    application
+        .open_archived_record_json(&archive_json(&first))
+        .unwrap();
     let original = revision(&mut cache, &application, &state, &platform);
     application
         .execute_record(RecordCommand::SeekAnalysis {
@@ -1174,7 +1313,9 @@ fn record_replacement_changes_structure_while_rejected_commands_retain_it() {
     application
         .execute(SessionCommand::LeaveReplay {}, BackendReadiness::Ready)
         .unwrap();
-    application.open_archived_replay(second).unwrap();
+    application
+        .open_archived_record_json(&archive_json(&second))
+        .unwrap();
     let replaced = revision(&mut cache, &application, &state, &platform);
     assert!(replaced > original);
     assert!(
@@ -1219,7 +1360,7 @@ fn web_setup_candidates_groups_order_and_primary_action_are_shared() {
     for (group, count) in [
         ("preset", 4),
         ("information", 5),
-        ("assistance", 4),
+        ("assistance", 3),
         ("weather", 5),
     ] {
         assert_eq!(controls.iter().filter(|control| matches!(&control.content, GameUiControlContent::Button { presentation: GameUiButtonPresentation::Choice { group: value, .. }, .. } if value == group)).count(), count);
@@ -2820,6 +2961,8 @@ fn lightweight_frame_matches_fresh_full_view_without_record_series() {
 
 #[test]
 fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries() {
+    let (fixture_aircraft, mut fixture_contact) = aircraft_fixture();
+
     let range = GameUiControlContent::Range {
         target: GameUiRangeTarget::Replay,
         value: 0.0,
@@ -2866,7 +3009,7 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
         TailPilotPositionCommand::Hold,
     );
     for _ in 0..30 {
-        session.advance_tail_flight_tick(input).unwrap();
+        advance_fixture(&mut session, &fixture_aircraft, &mut fixture_contact, input).unwrap();
     }
     session.abort_flight().unwrap();
     {
@@ -3236,7 +3379,7 @@ fn renderer_failure_preserves_last_valid_hud_and_exposes_reload_across_scenes() 
         platform.renderer_failure = Some("renderer submission failed".to_owned());
         let state = GameUiState::default();
         let settings = difficulty().with_information(InformationLevel::Minimal);
-        let assert_recovery = |session: &GameSession<'static>, state: &GameUiState| {
+        let assert_recovery = |session: &GameSession, state: &GameUiState| {
             let context = context(session, settings, &platform);
             let before = session.snapshot();
             let view = game_ui_view(state, &context).unwrap();
@@ -3373,10 +3516,7 @@ fn renderer_failure_preserves_last_valid_hud_and_exposes_reload_across_scenes() 
         let primary = hud_node(&hud, "hud-primary-readouts");
         assert_eq!(
             primary.content.value(),
-            format!(
-                "{:.1} m/s",
-                session.telemetry().unwrap().unwrap().airspeed_mps
-            )
+            format!("{:.1} m/s", session.telemetry().unwrap().airspeed_mps)
         );
         assert!(matches!(&hud_node(&hud, "hud-renderer-failure").content,
             GameUiHudNodeContent::Text { value, tone: GameUiHudTone::Warning } if value == "停止理由: renderer submission failed"));
@@ -3882,18 +4022,24 @@ fn replay_sections_keep_typed_controls_and_readout_sources_across_targets() {
 
 #[test]
 fn registered_weather_briefing_is_shared_and_unknown_identity_has_explicit_absence() {
-    let selected =
-        birdman_game_app::HybridSessionPreparation::select_scenario(WeatherClass::Calm, 42)
-            .unwrap();
+    let fixture_aircraft = birdman_game_app::SelectedAircraft::bundled().unwrap();
+    let selected = birdman_game_app::HybridSessionPreparation::select_scenario(
+        WeatherClass::Calm,
+        42,
+        fixture_aircraft.definition().document().model_version,
+    )
+    .unwrap();
     let mut identity = birdman_game_app::identity_for_selection(selected);
-    let readout = game_ui_environment_readout(Some(identity)).unwrap();
+    let readout = game_ui_environment_readout(Some(identity), [0.0, 0.0, -10.5]).unwrap();
     assert!(readout.contains("0.00 m/s") && readout.contains("10.5 m"));
     assert!(!readout.contains("N/E/D") && !readout.contains("未定義"));
-    let technical = super::environment::game_ui_environment_diagnostics(Some(identity)).unwrap();
+    let technical =
+        super::environment::game_ui_environment_diagnostics(Some(identity), [0.0, 0.0, -10.5])
+            .unwrap();
     assert!(technical.contains("N/E/D") && technical.contains("仮定した合成環境"));
-    identity.aircraft_model_version = 99;
+    identity.environment_version = 99;
     assert!(
-        game_ui_environment_readout(Some(identity))
+        game_ui_environment_readout(Some(identity), [0.0, 0.0, -10.5])
             .unwrap()
             .contains("準備完了後")
     );
@@ -3994,6 +4140,8 @@ fn screen_pause_sections_and_scroll_regions_keep_hud_and_navigation_disjoint() {
 
 #[test]
 fn hud_scene_policy_is_shared_by_full_and_frame_projection_in_screen_and_vr() {
+    let (fixture_aircraft, mut fixture_contact) = aircraft_fixture();
+
     for mode in [
         GameUiPresentationMode::Screen,
         GameUiPresentationMode::PhoneVr,
@@ -4001,7 +4149,7 @@ fn hud_scene_policy_is_shared_by_full_and_frame_projection_in_screen_and_vr() {
     ] {
         let mut platform = platform();
         platform.presentation_mode = mode;
-        let assert_presence = |session: &GameSession<'static>, state: &GameUiState, expected| {
+        let assert_presence = |session: &GameSession, state: &GameUiState, expected| {
             let snapshot = session.snapshot();
             let clock = session.playback_clock();
             let context = context(session, difficulty(), &platform);
@@ -4015,13 +4163,17 @@ fn hud_scene_policy_is_shared_by_full_and_frame_projection_in_screen_and_vr() {
         let mut session = launched();
         let mut state = GameUiState::default();
         assert_presence(&session, &state, true);
-        session
-            .advance_tail_flight_tick(TailFlightTickInput::new(
+        advance_fixture(
+            &mut session,
+            &fixture_aircraft,
+            &mut fixture_contact,
+            TailFlightTickInput::new(
                 TailPilotIntent::try_new(0.0, 0.0).unwrap(),
                 TailRateTarget::try_new(0.0, 0.0).unwrap(),
                 TailPilotPositionCommand::Hold,
-            ))
-            .unwrap();
+            ),
+        )
+        .unwrap();
         session.pause(PauseReason::Manual).unwrap();
         assert_presence(&session, &state, true);
         session.abort_flight().unwrap();
@@ -4122,6 +4274,8 @@ fn legacy_replay_hud_uses_the_recorded_pilot_target_and_marks_unrecorded_loads()
 
 #[test]
 fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
+    let (fixture_aircraft, mut fixture_contact) = aircraft_fixture();
+
     let session = launched();
     let platform = platform();
     let full = game_ui_view(
@@ -4129,7 +4283,7 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
         &context(&session, difficulty(), &platform),
     )
     .unwrap();
-    let telemetry = session.telemetry().unwrap().unwrap();
+    let telemetry = session.telemetry().unwrap();
     let hud = full.hud.unwrap();
     assert_eq!(
         hud_node(&hud, "hud-tail-incidence-rate").content.value(),
@@ -4313,15 +4467,19 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
         &context(&moving, difficulty(), &platform),
     )
     .unwrap();
-    moving
-        .advance_tail_flight_tick(TailFlightTickInput::new(
+    advance_fixture(
+        &mut moving,
+        &fixture_aircraft,
+        &mut fixture_contact,
+        TailFlightTickInput::new(
             TailPilotIntent::try_new(0.5, -0.25).unwrap(),
             TailRateTarget::try_new(0.0, 0.0).unwrap(),
             TailPilotPositionCommand::Set(
                 birdman_game_core::TailPilotPositionIntent::try_new(0.5).unwrap(),
             ),
-        ))
-        .unwrap();
+        ),
+    )
+    .unwrap();
     let physical = moving.snapshot().tail_flight_state().unwrap();
     assert!(physical.flight_state().pilot_velocity_mps() > 0.0);
     let observed = game_ui_frame(
@@ -4353,7 +4511,7 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
         hud_node(&paused, "hud-tail-incidence-rate").content.value(),
         rates
     );
-    let assert_pickup_indicator = |session: &GameSession<'static>, expected| {
+    let assert_pickup_indicator = |session: &GameSession, expected| {
         let mut touch_platform = platform.clone();
         touch_platform.touch_available = true;
         let context = context(session, difficulty(), &touch_platform);
@@ -4396,15 +4554,19 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
         );
     };
     moving.resume().unwrap();
-    moving
-        .advance_tail_flight_tick(TailFlightTickInput::new(
+    advance_fixture(
+        &mut moving,
+        &fixture_aircraft,
+        &mut fixture_contact,
+        TailFlightTickInput::new(
             TailPilotIntent::try_new(0.0, 0.0).unwrap(),
             TailRateTarget::try_new(0.0, 0.0).unwrap(),
             TailPilotPositionCommand::Set(
                 birdman_game_core::TailPilotPositionIntent::try_new(-0.5).unwrap(),
             ),
-        ))
-        .unwrap();
+        ),
+    )
+    .unwrap();
     let reversing = moving.snapshot().tail_flight_state().unwrap();
     assert!(!reversing.pilot_motion_limited());
     assert_ne!(
@@ -4433,7 +4595,13 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     );
     let mut braking_layout_checked = false;
     for _ in 0..250 {
-        stopped.advance_tail_flight_tick(command).unwrap();
+        advance_fixture(
+            &mut stopped,
+            &fixture_aircraft,
+            &mut fixture_contact,
+            command,
+        )
+        .unwrap();
         let body = stopped.snapshot().tail_flight_state().unwrap();
         if !braking_layout_checked
             && body.pilot_motion_limited()

@@ -37,6 +37,31 @@
 extern crate alloc;
 
 pub mod aircraft;
+pub mod controller;
+
+/// Independent original JSON sources selectable by the application.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigurationDocumentKind {
+    /// Physical aircraft definition.
+    Aircraft,
+    /// Software flight-controller definition.
+    Controller,
+}
+
+impl ConfigurationDocumentKind {
+    /// Original byte budget for the requested document kind.
+    pub const fn maximum_json_bytes(self) -> usize {
+        match self {
+            Self::Aircraft => aircraft::MAX_AIRCRAFT_JSON_BYTES,
+            Self::Controller => controller::MAX_CONTROLLER_JSON_BYTES,
+        }
+    }
+}
+
 mod environment;
 mod flight_record;
 mod personal_best;
@@ -78,9 +103,9 @@ pub use personal_best::{
     TailPersonalBestConfiguration, TailPersonalBestSelection, canonical_tail_personal_best_key,
 };
 pub use personal_best_metadata::{
-    FlightRecordAlphaGuard, FlightRecordBuildProvenance, FlightRecordControlMode,
-    FlightRecordControllerProfile, FlightRecordIdentityMetadata, FlightRecordSourceFingerprints,
-    PERSONAL_BEST_COMPARISON_VERSION, TailPersonalBestConditions, TailPersonalBestIdentity,
+    FlightRecordBuildProvenance, FlightRecordControlMode, FlightRecordIdentityMetadata,
+    FlightRecordSourceFingerprints, PERSONAL_BEST_COMPARISON_VERSION, TailPersonalBestConditions,
+    TailPersonalBestIdentity,
 };
 
 /// Information presentation selected for a session.
@@ -281,7 +306,7 @@ impl DifficultySettings {
             ),
             DifficultyPreset::Expert => (
                 InformationLevel::Minimal,
-                AssistanceLevel::Light,
+                AssistanceLevel::Assisted,
                 WeatherClass::Challenging,
             ),
             DifficultyPreset::Realistic => (
@@ -756,3 +781,5 @@ impl WaterQuality {
         }
     }
 }
+
+pub use personal_best::{aircraft_identity, controller_identity};

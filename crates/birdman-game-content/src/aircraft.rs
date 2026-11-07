@@ -36,7 +36,7 @@ pub fn playable_aircraft() -> Result<AircraftDefinition, AircraftDefinitionError
 }
 
 /// Original admission or preparation failure for an aircraft definition.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AircraftDefinitionError {
     /// External document or physical parameter validation failed.
     Format(AircraftFormatError),
@@ -307,64 +307,43 @@ impl SurfaceStorage {
     }
 }
 
-/// Registered geometry and retained caller storage for candidate contact shapes.
-pub struct AircraftContactShape<'definition, 'storage> {
-    definition: &'definition AircraftDefinition,
-    points: ContactPointStorage<'storage>,
+/// Retained contact projection storage owned independently of an aircraft borrow.
+pub struct AircraftContactBuffer {
+    points: Vec<BodyPoint>,
     projected: Option<(WingBendingFactor, TailIncidence)>,
 }
 
-enum ContactPointStorage<'storage> {
-    Borrowed(&'storage mut [BodyPoint]),
-    Owned(Vec<BodyPoint>),
-}
-
-impl ContactPointStorage<'_> {
-    fn points(&self) -> &[BodyPoint] {
-        match self {
-            Self::Borrowed(points) => points,
-            Self::Owned(points) => points,
-        }
-    }
-
-    fn points_mut(&mut self) -> &mut [BodyPoint] {
-        match self {
-            Self::Borrowed(points) => points,
-            Self::Owned(points) => points,
-        }
-    }
-}
-
-impl<'definition, 'storage> AircraftContactShape<'definition, 'storage> {
-    /// Binds storage with exactly the prepared number of corresponding structural points.
+impl AircraftContactBuffer {
+    /// Admits owned scratch with the selected definition's exact support-point count.
     pub fn try_new(
-        definition: &'definition AircraftDefinition,
-        points: &'storage mut [BodyPoint],
-    ) -> Result<Self, crate::ShapeError> {
-        if points.len() != definition.contact_points().len() {
-            return Err(crate::ShapeError::MismatchedContactPointCount);
-        }
-        Ok(Self {
-            definition,
-            points: ContactPointStorage::Borrowed(points),
-            projected: None,
-        })
-    }
-
-    /// Retains a prepared allocation and its last successful structural projection.
-    pub fn try_from_owned(
-        definition: &'definition AircraftDefinition,
+        definition: &AircraftDefinition,
         points: Vec<BodyPoint>,
     ) -> Result<Self, crate::ShapeError> {
         if points.len() != definition.contact_points().len() {
             return Err(crate::ShapeError::MismatchedContactPointCount);
         }
         Ok(Self {
-            definition,
-            points: ContactPointStorage::Owned(points),
+            points,
             projected: None,
         })
     }
+
+    /// Borrows this selection's scratch only for a physical execution batch.
+    pub fn bind<'definition, 'storage>(
+        &'storage mut self,
+        definition: &'definition AircraftDefinition,
+    ) -> AircraftContactShape<'definition, 'storage> {
+        AircraftContactShape {
+            definition,
+            storage: self,
+        }
+    }
+}
+
+/// Short-lived physical contact capability bound to the selected definition.
+pub struct AircraftContactShape<'definition, 'storage> {
+    definition: &'definition AircraftDefinition,
+    storage: &'storage mut AircraftContactBuffer,
 }
 
 impl birdman_game_core::TailContactShapeProvider for AircraftContactShape<'_, '_> {
@@ -383,18 +362,21 @@ impl birdman_game_core::TailContactShapeProvider for AircraftContactShape<'_, '_
         factor: WingBendingFactor,
         incidence: TailIncidence,
     ) -> Result<&[BodyPoint], birdman_game_core::ContactError> {
-        if self.projected != Some((factor, incidence)) {
-            self.projected = None;
+        if self.storage.points.len() != self.definition.contact_points().len() {
+            return Err(birdman_game_core::ContactError::MismatchedGeometry);
+        }
+        if self.storage.projected != Some((factor, incidence)) {
+            self.storage.projected = None;
             self.definition
                 .write_deformed_contact_points_with_factor(
                     factor,
                     incidence,
-                    self.points.points_mut(),
+                    &mut self.storage.points,
                 )
                 .map_err(contact_shape_error)?;
-            self.projected = Some((factor, incidence));
+            self.storage.projected = Some((factor, incidence));
         }
-        Ok(self.points.points())
+        Ok(&self.storage.points)
     }
 }
 
@@ -460,14 +442,6 @@ fn prepare_surface(
         let direction_y = second[1] - first[1];
         let direction_z = second[2] - first[2];
         let length = libm::hypot(direction_y, direction_z);
-        let orientation = ElementOrientation::try_new(
-            BodyVector::try_new(1.0, 0.0, 0.0).map_err(AircraftDefinitionError::Math)?,
-            BodyVector::try_new(0.0, direction_y / length, direction_z / length)
-                .map_err(AircraftDefinitionError::Math)?,
-            BodyVector::try_new(0.0, -direction_z / length, direction_y / length)
-                .map_err(AircraftDefinitionError::Math)?,
-        )
-        .map_err(AircraftDefinitionError::Aerodynamics)?;
         let mut start = first[axis];
         for end in source
             .strip_fractions
@@ -480,6 +454,21 @@ fn prepare_surface(
             .filter(|boundary| *boundary > first[axis] && *boundary < second[axis])
             .chain(core::iter::once(second[axis]))
         {
+            let shape = crate::shape::SurfaceShape::from_document(source);
+            let sample_span = start + 0.5 * (end - start);
+            let rotate = |vector| {
+                let rotated = shape
+                    .twist_vector(sample_span, vector)
+                    .map_err(AircraftDefinitionError::Shape)?;
+                BodyVector::try_new(rotated[0], rotated[1], rotated[2])
+                    .map_err(AircraftDefinitionError::Math)
+            };
+            let orientation = ElementOrientation::try_new(
+                rotate([1.0, 0.0, 0.0])?,
+                rotate([0.0, direction_y / length, direction_z / length])?,
+                rotate([0.0, -direction_z / length, direction_y / length])?,
+            )
+            .map_err(AircraftDefinitionError::Aerodynamics)?;
             proxies.push(
                 HybridProxy::try_new(geometry, [start, end], orientation, anchor)
                     .map_err(AircraftDefinitionError::Hybrid)?,
