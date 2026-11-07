@@ -2931,6 +2931,109 @@ fn phone_start_deadline_requests_screen_recovery_without_an_adapter_timer_policy
 
 #[test]
 fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_state() {
+    {
+        use birdman_game_app::{
+            ControllerIoObservation, ControllerIoRequest, SelectedControllerExecution,
+        };
+        use birdman_game_format::external_controller::{
+            ControllerFrame, NativeControllerConnection, NativeControllerDocument,
+        };
+        let mut application = ApplicationSession::default();
+        let source = serde_json::to_vec(&NativeControllerDocument {
+            schema_version: 1,
+            connection: NativeControllerConnection::Sitl {
+                program: "controller-sample-stdio".to_owned(),
+                arguments: Vec::new(),
+                program_id: "readiness".to_owned(),
+                version: "1".to_owned(),
+                binary_sha256: "a".repeat(64),
+            },
+        })
+        .unwrap();
+        application
+            .select_controller_execution(SelectedControllerExecution::decode(source).unwrap())
+            .unwrap();
+        let platform = screen_platform();
+        let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+        let initial = runtime
+            .observe_test(ApplicationInput::Platform {
+                observation: platform,
+            })
+            .unwrap();
+        let title = structure(finish_boot(&mut runtime, initial));
+        let setup = structure(activate(&mut runtime, &title, SessionCommand::OpenSetup {}));
+        let preparing = activate(&mut runtime, &setup, SessionCommand::Prepare {});
+        let generation = preparing
+            .requests
+            .iter()
+            .find_map(|request| match request {
+                ApplicationRequest::ControllerIo {
+                    request: ControllerIoRequest::Open { generation, .. },
+                } => Some(*generation),
+                _ => None,
+            })
+            .unwrap();
+        if let Some(id) = preparing.requests.iter().find_map(|request| match request {
+            ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
+            _ => None,
+        }) {
+            resources_ready(&mut runtime, id).unwrap();
+        }
+        assert!(matches!(
+            runtime.resource_readiness,
+            BackendReadiness::Ready
+        ));
+        assert_eq!(
+            runtime.application().core_session().snapshot().phase(),
+            SessionPhase::BriefingPreparing
+        );
+        let opened = runtime
+            .observe_test(ApplicationInput::ControllerIo {
+                observation: ControllerIoObservation::Opened {
+                    generation,
+                    failure: None,
+                },
+            })
+            .unwrap();
+        let (write_id, init) = opened
+            .requests
+            .iter()
+            .find_map(|request| match request {
+                ApplicationRequest::ControllerIo {
+                    request:
+                        ControllerIoRequest::Write {
+                            write_id, bytes, ..
+                        },
+                } => Some((*write_id, ControllerFrame::decode(bytes).unwrap())),
+                _ => None,
+            })
+            .unwrap();
+        runtime
+            .observe_test(ApplicationInput::ControllerIo {
+                observation: ControllerIoObservation::Written {
+                    generation,
+                    write_id,
+                    sent_ms: runtime.observed_ms,
+                },
+            })
+            .unwrap();
+        runtime
+            .observe_test(ApplicationInput::ControllerIo {
+                observation: ControllerIoObservation::Received {
+                    generation,
+                    bytes: ControllerFrame::acknowledgement(init.header())
+                        .unwrap()
+                        .as_bytes()
+                        .to_vec(),
+                    received_ms: runtime.observed_ms,
+                },
+            })
+            .unwrap();
+        assert_eq!(
+            runtime.application().core_session().snapshot().phase(),
+            SessionPhase::BriefingReady
+        );
+    }
     use birdman_game_presentation::camera::{Pose, Vector3, compose_pose};
     let platform = ApplicationPlatformObservation {
         gpu_timing_requested: true,

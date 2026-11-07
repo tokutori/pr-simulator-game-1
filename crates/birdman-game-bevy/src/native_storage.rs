@@ -23,6 +23,18 @@ fn configuration_stem(document: birdman_game_format::ConfigurationDocumentKind) 
     match document {
         birdman_game_format::ConfigurationDocumentKind::Aircraft => "aircraft",
         birdman_game_format::ConfigurationDocumentKind::Controller => "controller",
+        birdman_game_format::ConfigurationDocumentKind::ControllerExecution => {
+            "controller-execution"
+        }
+    }
+}
+
+fn configuration_extension(
+    document: birdman_game_format::ConfigurationDocumentKind,
+) -> &'static str {
+    match document {
+        birdman_game_format::ConfigurationDocumentKind::ControllerExecution => "bin",
+        _ => "json",
     }
 }
 
@@ -101,12 +113,21 @@ impl NativeStorage {
                 let completion = match rfd::FileDialog::new()
                     .add_filter(
                         match document {
+                            birdman_game_format::ConfigurationDocumentKind::ControllerExecution => {
+                                "制御プログラム・接続設定"
+                            }
                             birdman_game_format::ConfigurationDocumentKind::Aircraft => "機体JSON",
                             birdman_game_format::ConfigurationDocumentKind::Controller => {
                                 "制御設定JSON"
                             }
                         },
-                        &["json"],
+                        if *document
+                            == birdman_game_format::ConfigurationDocumentKind::ControllerExecution
+                        {
+                            &["wasm", "json"]
+                        } else {
+                            &["json"]
+                        },
                     )
                     .pick_file()
                 {
@@ -129,11 +150,13 @@ impl NativeStorage {
                 request_id,
                 bytes,
             } => {
-                let failure = std::str::from_utf8(bytes)
-                    .map_err(io::Error::other)
-                    .and_then(|json| {
-                        self.write_settings(configuration_stem(*document), *request_id, json)
-                    })
+                let failure = self
+                    .write_settings(
+                        configuration_stem(*document),
+                        *request_id,
+                        bytes,
+                        configuration_extension(*document),
+                    )
                     .err()
                     .map(|cause| cause.to_string());
                 Some(vec![ApplicationInput::ConfigurationSaved {
@@ -479,7 +502,11 @@ impl NativeStorage {
             .as_ref()
             .map_err(|cause| io::Error::other(cause.clone()))?;
         match Self::read_configuration_file(
-            &directory.join(format!("{}.json", configuration_stem(document))),
+            &directory.join(format!(
+                "{}.{}",
+                configuration_stem(document),
+                configuration_extension(document)
+            )),
             maximum_bytes,
         ) {
             Ok(bytes) => Ok(Some(bytes)),
@@ -504,7 +531,11 @@ impl NativeStorage {
             .write(true)
             .open(directory.join(format!("{}.lock", configuration_stem(document))))?;
         lock.try_lock().map_err(io::Error::other)?;
-        match fs::remove_file(directory.join(format!("{}.json", configuration_stem(document)))) {
+        match fs::remove_file(directory.join(format!(
+            "{}.{}",
+            configuration_stem(document),
+            configuration_extension(document)
+        ))) {
             Err(cause) if cause.kind() == io::ErrorKind::NotFound => Ok(()),
             result => result,
         }
@@ -515,7 +546,7 @@ impl NativeStorage {
     }
 
     fn write_keyboard(&self, request_id: u32, json: &str) -> io::Result<()> {
-        self.write_settings("keyboard-controls", request_id, json)
+        self.write_settings("keyboard-controls", request_id, json.as_bytes(), "json")
     }
 
     fn read_display(&self, maximum_bytes: u32) -> io::Result<Option<String>> {
@@ -523,7 +554,7 @@ impl NativeStorage {
     }
 
     fn write_display(&self, request_id: u32, json: &str) -> io::Result<()> {
-        self.write_settings("display-settings", request_id, json)
+        self.write_settings("display-settings", request_id, json.as_bytes(), "json")
     }
 
     fn read_settings(
@@ -552,7 +583,13 @@ impl NativeStorage {
         Ok(Some(json))
     }
 
-    fn write_settings(&self, stem: &str, request_id: u32, json: &str) -> io::Result<()> {
+    fn write_settings(
+        &self,
+        stem: &str,
+        request_id: u32,
+        bytes: &[u8],
+        extension: &str,
+    ) -> io::Result<()> {
         let directory = self
             .keyboard_directory
             .as_ref()
@@ -571,10 +608,10 @@ impl NativeStorage {
             .write(true)
             .open(&temporary)?;
         let result = (|| {
-            file.write_all(json.as_bytes())?;
+            file.write_all(bytes)?;
             file.sync_all()?;
             drop(file);
-            fs::rename(&temporary, directory.join(format!("{stem}.json")))
+            fs::rename(&temporary, directory.join(format!("{stem}.{extension}")))
         })();
         if result.is_err() {
             let _ = fs::remove_file(&temporary);

@@ -193,23 +193,49 @@ class NativePackagingTests(unittest.TestCase):
     def test_licenses_use_locked_native_package_and_all_target_union(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root, _, licenses, _ = self.fixture(directory)
-            command = []
-
+            registry = "registry+https://github.com/rust-lang/crates.io-index"
+            (root / "Cargo.lock").write_text(
+                f'[[package]]\nname="serialport"\nversion="4.10.1"\nsource="{registry}"\nchecksum="abc"\n', encoding="utf-8")
+            (licenses / "THIRD-PARTY-LICENSES.html").write_text('<html></html>', encoding="utf-8")
+            packages = [
+                {"id": "root", "name": "birdman-game-bevy", "version": "0.1.0", "license": "MIT",
+                 "manifest_path": str(root / "crates/birdman-game-bevy/Cargo.toml"), "source": None},
+                {"id": "serial", "name": "serialport", "version": "4.10.1", "license": "MPL-2.0", "source": registry},
+                {"id": "patched", "name": "patched", "version": "1.0", "license": "MPL-2.0",
+                 "manifest_path": str(root / "vendor/patched/Cargo.toml"), "source": None},
+                {"id": "dev", "name": "dev-only", "version": "1.0", "license": "MPL-2.0", "source": "invalid"},
+            ]
+            metadata = {"packages": packages, "resolve": {"nodes": [{"id": "root", "deps": [
+                {"pkg": "serial", "dep_kinds": [{"kind": None}]},
+                {"pkg": "patched", "dep_kinds": [{"kind": "build"}]},
+                {"pkg": "dev", "dep_kinds": [{"kind": "dev"}]},
+            ]}]}}
+            command, targets = [], []
+            def checked_output(arguments, **_options):
+                if "--version" in arguments:
+                    return "cargo-about 0.9.2\n"
+                targets.append(arguments[arguments.index("--filter-platform") + 1])
+                return json.dumps(metadata)
             def run(arguments, **_options):
                 command.extend(arguments)
-
             with patch("package_native.require_source"), \
-                    patch("package_native.subprocess.check_output", return_value="cargo-about 0.9.2\n"), \
+                    patch("package_native.subprocess.check_output", side_effect=checked_output), \
                     patch("package_native.subprocess.run", side_effect=run):
                 packaging.generate_licenses(root, Path("cargo-about"), SOURCE_SHA, licenses)
             self.assertIn("--locked", command)
             self.assertIn("--fail", command)
             self.assertNotIn("--workspace", command)
             self.assertEqual(command.count("--target"), 6)
+            self.assertEqual(set(targets), set(packaging.TARGETS))
             self.assertTrue(set(packaging.TARGETS).issubset(command))
             self.assertEqual(command[command.index("--features") + 1], "openxr")
-            self.assertEqual(json.loads((licenses / "LICENSE-INFO.json").read_text(encoding="utf-8"))["features"],
-                             ["openxr"])
+            info = json.loads((licenses / "LICENSE-INFO.json").read_text(encoding="utf-8"))
+            self.assertEqual(info["features"], ["openxr"])
+            self.assertEqual(len(info["source_forms"]), 2)
+            notice = (licenses / "THIRD-PARTY-LICENSES.html").read_text(encoding="utf-8")
+            self.assertIn("https://crates.io/api/v1/crates/serialport/4.10.1/download", notice)
+            self.assertIn(f"{SOURCE_SHA}/vendor/patched", notice)
+            self.assertNotIn("dev-only", notice)
 
     def test_registered_assets_font_and_full_notices_are_copied_and_verified(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

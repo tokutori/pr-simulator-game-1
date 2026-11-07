@@ -59,6 +59,25 @@ function isNativeEngineDependency(crate: string, dependency: Record<string, unkn
     && dependency.features.every((feature) => typeof feature === "string" && !excludedNativeFeatures.has(feature));
 }
 
+function isControllerExecutionDependency(crate: string, dependency: Record<string, unknown>): boolean {
+  const shared = crate === "birdman-game-app" && dependency.target === null;
+  const native = crate === "birdman-game-bevy" && dependency.target === NATIVE_SCREEN_TARGET;
+  const name = dependency.name;
+  const version = shared && (name === "wasmi" || name === "wasmi_core") ? "=2.0.0"
+    : shared && name === "wasmparser" ? "=0.228.0"
+    : native && name === "serialport" ? "=4.10.1"
+    : native && name === "tokio" ? "=1.53.2"
+    : native && name === "sha2" ? "=0.11.0" : undefined;
+  const features = name === "wasmi" ? ["stable", "validate", "deterministic", "portable-dispatch", "prefer-btree-collections"]
+    : name === "tokio" ? ["rt", "process", "io-util", "sync", "time", "macros"] : [];
+  const enabled = dependency.features;
+  return version !== undefined && dependency.req === version && dependency.kind === null
+    && isDefaultRegistrySource(dependency) && dependency.path === undefined && dependency.rename === null
+    && dependency.optional === false && dependency.uses_default_features === false
+    && Array.isArray(enabled) && enabled.length === features.length
+    && features.every(feature => enabled.includes(feature));
+}
+
 function isNativeGpuIoDependency(crate: string, dependency: Record<string, unknown>): boolean {
   return crate === "birdman-game-bevy"
     && dependency.name === "wgpu"
@@ -313,6 +332,7 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
         throw new Error(`Forbidden normal proof activation in ${name}: ${dependencyName}`);
       }
       if (!permitted.includes(dependencyName)
+        && !isControllerExecutionDependency(name, dependency)
         && !isNativeGpuIoDependency(name, dependency)
         && !isNativeFileDialogDependency(name, dependency)
         && !isNativeTextDependency(name, dependency)

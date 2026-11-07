@@ -40,7 +40,7 @@ async function canonicalPath(path: string): Promise<string> {
   }
 }
 
-export function parseCargoWasmBuildOutput(stdout: string, manifestPath: string): CargoWasmBuildOutput {
+export function parseCargoWasmBuildOutput(stdout: string, manifestPath: string, targetName = "birdman_game_wasm"): CargoWasmBuildOutput {
   const diagnostics: string[] = [];
   const artifacts: string[] = [];
   let succeeded = false;
@@ -60,7 +60,7 @@ export function parseCargoWasmBuildOutput(stdout: string, manifestPath: string):
       case "compiler-artifact": {
         if (typeof message.manifest_path !== "string" || normalize(message.manifest_path) !== normalize(manifestPath)) break;
         const target = record(message.target);
-        if (target.name !== "birdman_game_wasm" || !strings(target.crate_types).includes("cdylib")) break;
+        if (target.name !== targetName || !strings(target.crate_types).includes("cdylib")) break;
         artifacts.push(...strings(message.filenames).filter((filename) => filename.endsWith(".wasm")));
         break;
       }
@@ -77,6 +77,6 @@ export function selectWasmBuildArtifact(output: CargoWasmBuildOutput, exitStatus
   if (exitStatus !== 0) throw new Error(`cargo exited with status ${String(exitStatus)}`);
   if (!output.succeeded) throw new Error("Cargo did not report a successful WASM build");
   const [artifact] = output.artifactFilenames;
-  if (output.artifactFilenames.length !== 1 || artifact === undefined) throw new Error("Cargo must report exactly one birdman-game-wasm artifact");
+  if (output.artifactFilenames.length !== 1 || artifact === undefined) throw new Error("Cargo must report exactly one requested Wasm artifact");
   return artifact;
 }

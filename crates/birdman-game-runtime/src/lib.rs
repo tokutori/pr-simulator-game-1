@@ -593,6 +593,14 @@ impl ApplicationRuntime {
                     .observe_controller_io(observation)
                     .map_err(ApplicationRuntimeError::Application)?;
                 if !self.shutdown.closed()
+                    && self.application.core_session().snapshot().phase()
+                        == SessionPhase::BriefingPreparing
+                {
+                    self.application
+                        .observe_readiness(self.resource_readiness)
+                        .map_err(ApplicationRuntimeError::Session)?;
+                }
+                if !self.shutdown.closed()
                     && self.application.controller_realtime()
                     && self.application.controller_has_candidate()
                     && self.application.core_session().snapshot().phase()
@@ -2066,6 +2074,17 @@ impl ApplicationRuntime {
                     command: GameUiPlatformCommand::RetryStoredRecords {},
                 } => self.storage.retry_preview(&self.application),
                 GameUiEffect::Platform {
+                    command: GameUiPlatformCommand::DownloadSoftwareLicenses {},
+                } => {
+                    let request_id = self.allocate_request()?;
+                    requests.push(ApplicationRequest::DownloadFile {
+                        request_id,
+                        file_name: "SHARED-RUST-LICENSES.html".to_owned(),
+                        mime_type: "text/html;charset=utf-8".to_owned(),
+                        bytes: include_bytes!("../../../assets/wasm-runtime.LICENSE.html").to_vec(),
+                    });
+                }
+                GameUiEffect::Platform {
                     command: GameUiPlatformCommand::DownloadRecordJson {},
                 } => {
                     let request_id = self.allocate_request()?;
@@ -2641,9 +2660,11 @@ impl ApplicationRuntime {
             controller_execution_can_delete: self
                 .storage
                 .configuration_can_delete(ConfigurationDocumentKind::ControllerExecution),
+            controller_fault: self.application.display_controller_fault(),
+            controller_fault_terminal: self.application.display_controller_fault_is_terminal(),
             controller_execution_status: self
                 .application
-                .controller_fault()
+                .display_controller_fault()
                 .map(|fault| format!("制御器の異常（tick {}）: {}", fault.tick, fault.cause))
                 .or_else(|| {
                     self.application

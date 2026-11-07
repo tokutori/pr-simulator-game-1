@@ -180,6 +180,20 @@ impl ApplicationSession {
             .and_then(|p| p.controller_fault.as_ref())
             .or_else(|| self.controller_execution.fault())
     }
+    /// Fault of the displayed archive or current flight, without consulting another selection.
+    pub fn display_controller_fault(&self) -> Option<&ControllerExecutionFault> {
+        match self.archive() {
+            Some(archive) => archive.controller_fault(),
+            None => self.controller_fault(),
+        }
+    }
+    /// Whether the displayed execution terminates a flight on its recorded first fault.
+    pub fn display_controller_fault_is_terminal(&self) -> bool {
+        match self.archive() {
+            Some(archive) => archive.controller_fault_is_terminal(),
+            None => self.controller_execution.hitl() && self.controller_fault().is_some(),
+        }
+    }
     pub(super) fn synchronize_controller_fault(&mut self) {
         if let Some(fault) = self.controller_execution.fault().cloned()
             && let Some(prepared) = self.prepared.as_mut()

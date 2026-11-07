@@ -952,6 +952,18 @@ fn init_payload(
     use birdman_game_format::controller::{
         PidDocument, PitchControllerDocument, YawControllerDocument,
     };
+    let trim = aircraft.trim().map_err(|cause| cause.to_string())?;
+    let heading = heading
+        .map(|heading| {
+            let initial = trim
+                .initial_state_for_ground_launch(birdman_game_core::NedPoint::origin(), heading)
+                .map_err(|cause| cause.to_string())?;
+            let (angles, regular) =
+                birdman_game_core::flight_euler_angles(initial.attitude_body_to_ned());
+            Ok::<_, String>(regular.then_some(angles[2]))
+        })
+        .transpose()?
+        .flatten();
     let mut p = InitPayload {
         pitch_template: 0,
         yaw_template: 0,
@@ -1032,7 +1044,6 @@ fn init_payload(
         document.incidence_bounds_rad[1][0],
         document.incidence_bounds_rad[1][1],
     ]);
-    let trim = aircraft.trim().map_err(|cause| cause.to_string())?;
     let authority = match mode {
         ControlMode::Manual => {
             p.requested_mode = 0;
@@ -1197,5 +1208,104 @@ mod guest_acceptance {
                 .unwrap(),
             )
             .expect("production Finish fuel budget");
+
+        // At trim with neutral pilot demand, the pilot guard does not intervene.
+        // The cooperative guest must then produce the same physical flight as BuiltIn.
+        use crate::application::{
+            ApplicationSession, BackendReadiness, PresentationObservation, SessionCommand,
+        };
+        let fly = |external: bool| {
+            let mut application = ApplicationSession::default();
+            if external {
+                application
+                    .select_controller_execution(
+                        SelectedControllerExecution::decode(bytes.clone()).unwrap(),
+                    )
+                    .unwrap();
+            }
+            application
+                .observe_presentation(PresentationObservation::Backend { ready: true })
+                .unwrap();
+            for command in [
+                SessionCommand::OpenSetup {},
+                SessionCommand::SelectWeather {
+                    weather: birdman_game_format::WeatherClass::Calm,
+                },
+                SessionCommand::Prepare {},
+                SessionCommand::StartCountdown {},
+            ] {
+                application
+                    .execute(command, BackendReadiness::Ready)
+                    .unwrap();
+            }
+            let token = application.core_session().countdown_token().unwrap();
+            application.observe_countdown(token, 3.0, true).unwrap();
+            for index in 0..=crate::DEFAULT_MAXIMUM_FLIGHT_TICKS + 1 {
+                application
+                    .advance_flight_frame(index as f64 * 10.0, &[], true)
+                    .unwrap();
+                if application.core_session().snapshot().phase()
+                    == birdman_game_core::SessionPhase::Result
+                {
+                    break;
+                }
+            }
+            assert_eq!(
+                application.core_session().snapshot().phase(),
+                birdman_game_core::SessionPhase::Result
+            );
+            assert!(
+                application.controller_fault().is_none(),
+                "production guest must remain accepted"
+            );
+            application
+        };
+        let builtin = fly(false);
+        let external = fly(true);
+        let reference = builtin.core_session().flight_record().unwrap();
+        let actual = external.core_session().flight_record().unwrap();
+        assert_eq!(actual.samples().len(), reference.samples().len());
+        assert!(actual.samples().len() >= 20);
+        assert_eq!(
+            actual.finalization().unwrap().reason,
+            reference.finalization().unwrap().reason
+        );
+        assert_eq!(
+            actual.finalization().unwrap().terminal_tick,
+            reference.finalization().unwrap().terminal_tick
+        );
+        assert_eq!(
+            actual.finalization().unwrap().terminal_fraction,
+            reference.finalization().unwrap().terminal_fraction
+        );
+        for (actual, reference) in actual.samples().iter().zip(reference.samples()) {
+            assert_eq!(actual.tick_index, reference.tick_index);
+            assert_eq!(actual.flight_state, reference.flight_state);
+            assert_eq!(actual.controls.incidence, reference.controls.incidence);
+            assert_eq!(
+                actual.controls.pilot_position_target_m(),
+                reference.controls.pilot_position_target_m()
+            );
+            assert_eq!(actual.tail_wrenches, reference.tail_wrenches);
+        }
+        let terminal = actual.terminal_sample().unwrap();
+        let reference_terminal = reference.terminal_sample().unwrap();
+        assert_eq!(terminal.flight_state, reference_terminal.flight_state);
+        assert_eq!(
+            terminal.controls.incidence,
+            reference_terminal.controls.incidence
+        );
+        assert_eq!(terminal.tail_wrenches, reference_terminal.tail_wrenches);
+        assert_eq!(
+            actual.finalization().unwrap().boundary_event.is_some(),
+            reference.finalization().unwrap().boundary_event.is_some()
+        );
+        let reference_path = std::env::var_os("BIRDMAN_CONTROLLER_REFERENCE_PATH")
+            .expect("explicit current-run Native reference output path is required");
+        std::fs::write(
+            reference_path,
+            serde_json::to_vec(&external.flight_record_document().unwrap()).unwrap(),
+        )
+        .unwrap();
     }
 }

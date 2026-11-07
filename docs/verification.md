@@ -61,6 +61,9 @@ python -m unittest discover -s tools/native-release -v
 - 生成契約はRustの集約入出力からのfreshness、compilerによるreadonly型とtuple制約、実WASMと描画・I/Oアダプタの代表接続を確認する。
 - 表示テストは必要な操作・相対順・到達可能性・非重複・表示先の意味を検査する。説明文や無関係なsectionの全列挙を仕様として固定しない。
 
+- 外部controller: 既存`npm run verify`の`external-controller.test.ts`が独立sampleのfmt/Clippyと実sourceからのWasm生成を一度行い、明示artifact pathをNative Wasmi・実stdio transport/App・Web Runtimeへ渡す。同じCalm・中立pilotの自然終端について、採用状態・実尾翼角・pilot目標・尾翼荷重と部分終端を比較し、各実行が1件実施されたことを確認する。
+- 実行証跡: guest・Native runner・main Wasm・Native referenceのSHAとpathを同じ受入receiptへ保持する。通常のdev/buildは検証sampleへ依存しない。HITLの実通信帯域・周期・期限適合は対象hardware/firmwareで受け入れる。
+
 ## 3. 物理・空力・制御の基礎検査
 
 ### 解析解と不変量

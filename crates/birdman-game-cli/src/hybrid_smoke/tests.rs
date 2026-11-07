@@ -35,7 +35,12 @@ fn three_authorities_preserve_two_axis_intent_and_independent_pilot_target() {
                 raw_sha,
             ))
         );
-        assert_eq!(core.header().control_mode, Some(mode));
+        assert_eq!(
+            core.header()
+                .execution
+                .and_then(|execution| execution.builtin_mode()),
+            Some(mode)
+        );
         assert_eq!(first.samples.len(), TICK_LIMIT as usize + 1);
         for sample in first.samples.iter().skip(1) {
             let TailFlightRecordControlsDocument::TailIncidence {
