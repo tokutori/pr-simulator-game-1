@@ -336,6 +336,7 @@ fn default_configuration_matches_public_web_selection() {
 #[test]
 fn registered_weather_keeps_catalog_identity_and_provider_values() {
     let selected = crate::SelectedAircraft::bundled().unwrap();
+    let controller = crate::SelectedController::bundled().unwrap();
     for weather in [
         WeatherClass::Calm,
         WeatherClass::Mild,
@@ -351,7 +352,7 @@ fn registered_weather_keeps_catalog_identity_and_provider_values() {
         .unwrap();
         let preparation = HybridSessionPreparation::try_new_for_weather(
             &selected,
-            &crate::SelectedController::bundled().unwrap(),
+            &controller,
             ControlMode::Manual,
             2,
             42,
@@ -361,6 +362,7 @@ fn registered_weather_keeps_catalog_identity_and_provider_values() {
         let session = launch(&selected, preparation.into_parts().0);
         let mut expected_identity = identity_for_selection(selection);
         expected_identity.aircraft_identity = selected.identity();
+        expected_identity.controller_identity = Some(controller.identity());
         assert_eq!(session.configuration_identity(), Some(expected_identity));
         let telemetry = session.telemetry().unwrap();
         let expected = if selection.environment_version == 6 {
