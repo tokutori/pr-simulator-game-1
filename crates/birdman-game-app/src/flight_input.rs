@@ -580,10 +580,19 @@ impl FlightInputState {
                 (nose_up, turn_right, pilot_position) = demand;
             }
         }
-        let target = |value: f64, bounds: [f64; 2]| if value < 0.0 { -value * bounds[0] } else { value * bounds[1] };
+        let target = |value: f64, bounds: [f64; 2]| {
+            if value < 0.0 {
+                -value * bounds[0]
+            } else {
+                value * bounds[1]
+            }
+        };
         Ok(TailFlightTickInput::new(
             TailPilotIntent::try_new(nose_up, turn_right)?,
-            TailRateTarget::try_new(target(nose_up, body_rate_bounds[0]), target(turn_right, body_rate_bounds[1]))?,
+            TailRateTarget::try_new(
+                target(nose_up, body_rate_bounds[0]),
+                target(turn_right, body_rate_bounds[1]),
+            )?,
             pilot_position,
         )
         .with_pilot_motion_admission(

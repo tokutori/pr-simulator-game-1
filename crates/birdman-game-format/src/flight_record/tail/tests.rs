@@ -1104,17 +1104,33 @@ fn unknown_corrupt_or_surplus_control_schemas_are_rejected() {
 #[test]
 fn model_controller_and_physics_identity_gate_reintegration() {
     let document = current_document();
+    let mode = document.header.control_mode.unwrap().to_core().unwrap();
     let scenario = document
         .to_finalized_core_record()
         .unwrap()
         .header()
         .scenario;
     let archive = document.clone();
+    let different_mode = if mode == birdman_game_core::ControlMode::Manual {
+        birdman_game_core::ControlMode::Automatic
+    } else {
+        birdman_game_core::ControlMode::Manual
+    };
     assert_eq!(
         archive.require_tail_reintegration_compatibility(
             &current_identity(),
             scenario,
-            birdman_game_core::PHYSICS_MODEL_VERSION
+            birdman_game_core::PHYSICS_MODEL_VERSION,
+            different_mode,
+        ),
+        Err(FlightRecordFormatError::IncompatibleReintegration)
+    );
+    assert_eq!(
+        archive.require_tail_reintegration_compatibility(
+            &current_identity(),
+            scenario,
+            birdman_game_core::PHYSICS_MODEL_VERSION,
+            document.header.control_mode.unwrap().to_core().unwrap(),
         ),
         Ok(())
     );
@@ -1124,7 +1140,8 @@ fn model_controller_and_physics_identity_gate_reintegration() {
         archive.require_tail_reintegration_compatibility(
             &other,
             scenario,
-            birdman_game_core::PHYSICS_MODEL_VERSION
+            birdman_game_core::PHYSICS_MODEL_VERSION,
+            document.header.control_mode.unwrap().to_core().unwrap(),
         ),
         Err(FlightRecordFormatError::IncompatibleReintegration)
     );
@@ -1134,7 +1151,8 @@ fn model_controller_and_physics_identity_gate_reintegration() {
         archive.require_tail_reintegration_compatibility(
             &current_identity(),
             other_scenario,
-            birdman_game_core::PHYSICS_MODEL_VERSION
+            birdman_game_core::PHYSICS_MODEL_VERSION,
+            document.header.control_mode.unwrap().to_core().unwrap(),
         ),
         Err(FlightRecordFormatError::IncompatibleReintegration)
     );
@@ -1142,7 +1160,8 @@ fn model_controller_and_physics_identity_gate_reintegration() {
         archive.require_tail_reintegration_compatibility(
             &current_identity(),
             scenario,
-            birdman_game_core::PHYSICS_MODEL_VERSION + 1
+            birdman_game_core::PHYSICS_MODEL_VERSION + 1,
+            document.header.control_mode.unwrap().to_core().unwrap(),
         ),
         Err(FlightRecordFormatError::IncompatibleReintegration)
     );
@@ -1207,6 +1226,7 @@ fn previous_physics_archives_retain_original_bytes_and_use_current_model_accepta
                 &identity(),
                 restored.scenario_identity(),
                 birdman_game_core::PHYSICS_MODEL_VERSION,
+                birdman_game_core::ControlMode::Manual,
             ),
             Err(FlightRecordFormatError::IncompatibleReintegration)
         );

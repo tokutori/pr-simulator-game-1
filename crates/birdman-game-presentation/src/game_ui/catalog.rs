@@ -4,7 +4,7 @@ pub(super) fn preset(preset: DifficultyPreset) -> (&'static str, u32, &'static s
     match preset {
         DifficultyPreset::Beginner => ("初心者", 0, "情報と支援を充実"),
         DifficultyPreset::Standard => ("標準", 1, "標準の飛行条件"),
-        DifficultyPreset::Expert => ("上級", 2, "支援を抑えた条件"),
+        DifficultyPreset::Expert => ("上級", 2, "最小限の計器で操縦"),
         DifficultyPreset::Realistic => ("実機寄り", 3, "手動で操縦"),
         DifficultyPreset::Custom => ("カスタム", 4, "プリセットから変更済み"),
     }
@@ -22,10 +22,10 @@ pub(super) fn information(level: InformationLevel) -> (&'static str, u32, &'stat
 
 pub(super) fn assistance(level: AssistanceLevel) -> (&'static str, u32, &'static str) {
     match level {
-        AssistanceLevel::Strong => ("自動操縦（Automatic FBW）", 0, "姿勢を自動安定"),
-        AssistanceLevel::Assisted => ("強い支援（Assisted FBW）", 1, "強い姿勢安定支援"),
-        AssistanceLevel::Light => ("軽い支援（Light Assisted FBW）", 2, "軽い姿勢安定支援"),
-        AssistanceLevel::Manual => ("手動（Manual）", 3, "操縦支援なし"),
+        AssistanceLevel::Strong => ("自動", 0, "制御器の指令を尾翼へ反映"),
+        AssistanceLevel::Assisted => ("混合", 1, "入力と制御器の指令を混合"),
+        AssistanceLevel::Light => ("軽い支援（旧設定）", 2, "記録時の支援区分"),
+        AssistanceLevel::Manual => ("手動", 3, "入力を尾翼へ反映"),
     }
 }
 

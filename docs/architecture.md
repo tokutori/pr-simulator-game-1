@@ -81,13 +81,14 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 - 独立したphaseと多数の任意fieldの組合せで不変条件を管理しない。
 - Title用demoのようにphaseをまたいで存続する資源は独立した所有領域に置く。
 
-- `ApplicationSession`はprivateなGameSessionと、選択機体の検証済み定義・原文・SHA、難易度、seed、tick上限、準備metadata、archive原文、記録の制御identityを所有する。
+- `ApplicationSession`はprivateなGameSessionと、選択機体・controllerの検証済み定義・原文・SHA、最新pair診断、難易度、seed、tick上限、準備metadata、archive原文、記録の制御identityを所有する。
+- 制御設定: formatが文書単独の検査と機体との整合診断を提供し、appが実trimを使ってcoreの固定長PID設定へ解決する。有効な各文書は独立に選択・保存し、最新pairの診断で準備・開始・Retryを認可する。
 - 機体の借用: `GameSession`の封印configurationは数値と固定長identityを所有する。appはframe batch中だけ選択定義から空力viewとcontact providerを借用し、既存の評価・telemetry・score callbackで進行する。
 - 描画資源: sceneの機体templateと変形scratchを所有し、更新時だけ定義を借用する。runtimeはactive・pending資源が参照する機体世代のCPU bufferを保持し、完了・取消に合わせて回収する。camera・mesh・尾翼metadataは同じ選択世代で交換する。
 - 候補資源: Prepareは毎回その候補のscene descriptorを渡し、adapterは候補自身のmanifestで構築・commit・解放する。mesh・material・buffer IDはrenderer寿命内で単調発行し、raw bufferはcache miss時にuploadする。
 - appは記録cursorの時間範囲を認可し、presentationはcoreの記録補間から描画poseとReplay cameraを導出する。
 - 準備・Retry・Briefing再準備・archive交換・初回demo登録はapplication単位の記録source識別子を更新する。tick・seek・再生速度の変更は同じsourceを保持する。
-- `HybridSessionPreparation`は機体・環境の共有storageを組み立て、Webとnativeへ同じconfigurationを渡す。
+- `HybridSessionPreparation`は機体・controller・環境の共有storageを組み立て、Webとnativeへ同じconfigurationを渡す。
 - `PreparedFlight`は登録機体と準備時に確保した固定長の接触点bufferを所有する。通常飛行とAttractは同じprovider入口で、封印済み機体・荷重・接触設定を評価し、同じ係数・尾翼角の成功投影を再利用する。
 - 初期状態へ実際の合成重心対気速度から求めた主翼係数を封印し、Retryはその初期値と準備済みbufferを再利用する。
 - 準備をWASM専有処理やUI表示処理にしない。

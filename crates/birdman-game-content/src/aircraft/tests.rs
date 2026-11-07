@@ -5,8 +5,8 @@ use crate::{PLAYABLE_AIRCRAFT_JSON, playable_aircraft};
 fn registered_aircraft_integrates_post_stall_reverse_and_low_speed_flow() {
     use birdman_game_core::{
         ControlMode, FlightState, HybridAerodynamicLoad, NedPoint, NedVector, PilotPositionTarget,
-        TailControlProfile, TailFlightTickConfig, TailFlightTickInput, TailFlightTickState,
-        TailPilotIntent, TailPilotPositionCommand, TailRateTarget, UnitQuaternion, WindField,
+        TailFlightTickConfig, TailFlightTickInput, TailFlightTickState, TailPilotIntent,
+        TailPilotPositionCommand, TailRateTarget, UnitQuaternion, WindField,
         advance_tail_flight_tick,
     };
     let definition = playable_aircraft().unwrap();
@@ -22,7 +22,19 @@ fn registered_aircraft_integrates_post_stall_reverse_and_low_speed_flow() {
     .unwrap();
     let config = TailFlightTickConfig::new(
         ControlMode::Manual,
-        TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap(),
+        birdman_game_format::controller::ControllerDocument::decode_json(
+            crate::DEFAULT_CONTROLLER_JSON,
+        )
+        .unwrap()
+        .core_profile(
+            birdman_game_core::ControllerReference::try_new(
+                trim.theta_rad(),
+                conditions.airspeed_mps(),
+            )
+            .unwrap(),
+            trim.alpha_rad(),
+        )
+        .unwrap(),
         trim.pilot_mapping().unwrap(),
         conditions.gravity(),
     );

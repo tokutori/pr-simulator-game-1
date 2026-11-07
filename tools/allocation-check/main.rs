@@ -348,7 +348,7 @@ fn wind_boundary_contact(aircraft: &AircraftModel, fixture: &Fixture) {
     .unwrap();
     let config = TailFlightTickConfig::new(
         ControlMode::Manual,
-        TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap(),
+        probe_profile(),
         TailPilotPositionMapping::try_new(aircraft, 0.0).unwrap(),
         Gravity::try_new(9.80665).unwrap(),
     );
@@ -386,6 +386,14 @@ fn wind_boundary_contact(aircraft: &AircraftModel, fixture: &Fixture) {
             assert_eq!(result, Err(original));
         }
     }
+}
+
+fn probe_profile() -> TailControlProfile {
+    let aircraft = birdman_game_app::SelectedAircraft::bundled().unwrap();
+    birdman_game_app::SelectedController::bundled()
+        .unwrap()
+        .prepare(aircraft.definition())
+        .unwrap()
 }
 
 fn main() {
@@ -451,7 +459,7 @@ fn main() {
     let gravity = Gravity::try_new(9.80665).unwrap();
     let pilot_acceleration = PilotAcceleration::try_new(0.1).unwrap();
     let pilot_target = PilotPositionTarget::try_new(&aircraft, 0.0).unwrap();
-    let profile = TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();
+    let profile = probe_profile();
     let mapping = TailPilotPositionMapping::try_new(&aircraft, 0.0).unwrap();
     let tick_config = TailFlightTickConfig::new(ControlMode::Manual, profile, mapping, gravity);
     let input = TailFlightTickInput::new(

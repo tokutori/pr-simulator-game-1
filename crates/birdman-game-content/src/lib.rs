@@ -21,4 +21,5 @@ pub const VENUE_FEATURES_JSON: &[u8] = include_bytes!("../../../assets/biwa-venu
 pub const VENUE_ANALYSIS_JSON: &[u8] = include_bytes!("../../../assets/biwa-analysis-map.json");
 
 /// Original default controller, decoded through the same contract as selected files.
-pub const DEFAULT_CONTROLLER_JSON: &[u8] = include_bytes!("../../../assets/controllers/default-rate-v1.json");
+pub const DEFAULT_CONTROLLER_JSON: &[u8] =
+    include_bytes!("../../../assets/controllers/default-rate-v1.json");

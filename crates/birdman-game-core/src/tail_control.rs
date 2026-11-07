@@ -338,7 +338,9 @@ impl core::fmt::Display for TailControlError {
             Self::InvalidController => {
                 f.write_str("controller setting or observation is outside its valid domain")
             }
-            Self::InvalidRateTarget => f.write_str("recorded rate target violated its original controller limits"),
+            Self::InvalidRateTarget => {
+                f.write_str("recorded rate target violated its original controller limits")
+            }
             Self::Actuator(_) => f.write_str("tail actuator"),
             Self::Incidence(_) => f.write_str("physical tail incidence"),
         }
@@ -350,7 +352,10 @@ impl core::error::Error for TailControlError {
         match self {
             Self::Actuator(cause) => Some(cause),
             Self::Incidence(cause) => Some(cause),
-            Self::NonFinite | Self::InvalidPilotIntent | Self::InvalidController | Self::InvalidRateTarget => None,
+            Self::NonFinite
+            | Self::InvalidPilotIntent
+            | Self::InvalidController
+            | Self::InvalidRateTarget => None,
         }
     }
 }

@@ -142,11 +142,12 @@ impl HybridSessionPreparation {
     /// Seals an explicitly selected aircraft into an owned numerical configuration.
     ///
     /// ```
-    /// use birdman_game_app::{HybridSessionPreparation, SelectedAircraft};
+    /// use birdman_game_app::{HybridSessionPreparation, SelectedAircraft, SelectedController};
     /// use birdman_game_core::{ControlMode, GameSession, SessionPhase};
     /// let selected = SelectedAircraft::bundled().unwrap();
+    /// let controller = SelectedController::bundled().unwrap();
     /// let (configuration, identity) = HybridSessionPreparation::try_new(
-    ///     &selected, ControlMode::Manual, 2, 42,
+    ///     &selected, &controller, ControlMode::Manual, 2, 42,
     /// ).unwrap().into_parts();
     /// assert_eq!(identity.aircraft_sha256.as_deref(), Some(selected.raw_sha256()));
     /// drop(selected);

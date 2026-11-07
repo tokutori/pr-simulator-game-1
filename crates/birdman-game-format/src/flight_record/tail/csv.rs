@@ -457,7 +457,14 @@ pub(super) fn encode(
                 }
                 .to_string(),
             );
-            row.push(match mode.to_core()? { birdman_game_core::ControlMode::Manual => 0.0, birdman_game_core::ControlMode::Shared(authority) => authority.value(), birdman_game_core::ControlMode::Automatic => 1.0 }.to_string());
+            row.push(
+                match mode.to_core()? {
+                    birdman_game_core::ControlMode::Manual => 0.0,
+                    birdman_game_core::ControlMode::Shared(authority) => authority.value(),
+                    birdman_game_core::ControlMode::Automatic => 1.0,
+                }
+                .to_string(),
+            );
         }
         if row.len() != columns.len() {
             return Err(FlightRecordFormatError::EncodingFailed);

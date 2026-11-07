@@ -887,15 +887,25 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_>) {
     for assistance in [
         AssistanceLevel::Strong,
         AssistanceLevel::Assisted,
-        AssistanceLevel::Light,
         AssistanceLevel::Manual,
     ] {
+        let (base, code, description) = catalog::assistance(assistance);
+        let label = if assistance == AssistanceLevel::Assisted {
+            context.controller_shared_authority.map_or_else(
+                || base.to_owned(),
+                |authority| format!("混合（FBW {:.0}%）", authority * 100.0),
+            )
+        } else {
+            base.to_owned()
+        };
         menu.choice(
             "assistance",
             "操縦支援",
-            catalog::assistance(assistance),
+            (&label, code, description),
             SessionCommand::SelectAssistance { assistance },
-            difficulty.assistance() == assistance,
+            difficulty.assistance() == assistance
+                || assistance == AssistanceLevel::Assisted
+                    && difficulty.assistance() == AssistanceLevel::Light,
         );
     }
     for weather in [
@@ -1038,7 +1048,7 @@ fn briefing(menu: &mut Menu, context: &GameUiContext<'_>, phase: SessionPhase) {
             "プリセット: {}\n表示情報: {}\n操縦支援: {}\n気象: {}",
             catalog::preset(context.preset).0,
             catalog::information(context.difficulty.information()).0,
-            catalog::assistance(context.difficulty.assistance()).0,
+            assistance_description(context),
             catalog::weather(context.difficulty.weather()).0
         ),
     );
@@ -1529,12 +1539,24 @@ fn digest_hex(digest: [u8; 32]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+fn assistance_description(context: &GameUiContext<'_>) -> String {
+    let label = catalog::assistance(context.difficulty.assistance()).0;
+    let mut description = context.controller_effective_authority.map_or_else(
+        || label.to_owned(),
+        |authority| format!("{label}（FBW {:.0}%）", authority * 100.0),
+    );
+    if context.archived_identity.is_none() {
+        description.push_str("・迎角保護: 有効");
+    }
+    description
+}
+
 fn configuration(context: &GameUiContext<'_>) -> String {
     format!(
         "{} / {} / {} / {}",
         catalog::preset(context.preset).0,
         catalog::information(context.difficulty.information()).0,
-        catalog::assistance(context.difficulty.assistance()).0,
+        assistance_description(context),
         catalog::weather(context.difficulty.weather()).0
     )
 }

@@ -6,10 +6,10 @@ use std::cell::Cell;
 use birdman_game_core::{
     AerodynamicEvaluationError, AircraftModel, BodyVector, ControlMode, ExternalLoadProvider,
     FlightState, Gravity, HybridAerodynamicLoad, HybridModel, LoadError, NedPoint, NedVector,
-    PHYSICS_DT_SECONDS, PilotAcceleration, TailControlProfile, TailFlightTickConfig,
-    TailFlightTickInput, TailFlightTickOutcome, TailFlightTickState, TailIncidence,
-    TailPilotIntent, TailPilotPositionCommand, TailRateTarget, UnitQuaternion,
-    WaterContactGeometry, WindField, Wrench, advance, advance_tail_flight_tick_with_contact_report,
+    PHYSICS_DT_SECONDS, PilotAcceleration, TailFlightTickConfig, TailFlightTickInput,
+    TailFlightTickOutcome, TailFlightTickState, TailIncidence, TailPilotIntent,
+    TailPilotPositionCommand, TailRateTarget, UnitQuaternion, WaterContactGeometry, WindField,
+    Wrench, advance, advance_tail_flight_tick_with_contact_report,
 };
 use nalgebra::{Quaternion, SMatrix, SVector, UnitQuaternion as Rotation, Vector3, linalg::Schur};
 
@@ -34,7 +34,6 @@ struct TickMap<'a> {
     initial: TailFlightTickState,
     load: HybridAerodynamicLoad<'a>,
     contacts: WaterContactGeometry<'a>,
-    profile: TailControlProfile,
     config: TailFlightTickConfig,
     gravity: Gravity,
     scales: [f64; DIMENSIONS],
@@ -100,14 +99,15 @@ impl TickMap<'_> {
             .unwrap()
             .commands()
             .mixed_incidence_target();
-        let maximum_step = self.profile.maximum_slew_rad_per_second() * PHYSICS_DT_SECONDS;
-        for (command, current) in [target.elevator_rad(), target.rudder_rad()]
+        for ((command, current), limit) in [target.elevator_rad(), target.rudder_rad()]
             .into_iter()
             .zip([
                 previous.incidence().elevator_rad(),
                 previous.incidence().rudder_rad(),
             ])
+            .zip(self.aircraft.tail_actuators())
         {
+            let maximum_step = limit.maximum_slew_rad_per_second() * PHYSICS_DT_SECONDS;
             assert!(command.abs() < 0.1, "incidence saturation margin was lost");
             assert!(
                 (command - current).abs() < maximum_step,
@@ -193,7 +193,19 @@ fn with_map(mode: ControlMode, verify: impl FnOnce(&TickMap<'_>)) {
     )
     .unwrap();
     let mapping = trim.pilot_mapping().unwrap();
-    let profile = TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();
+    let profile = birdman_game_format::controller::ControllerDocument::decode_json(
+        birdman_game_content::DEFAULT_CONTROLLER_JSON,
+    )
+    .unwrap()
+    .core_profile(
+        birdman_game_core::ControllerReference::try_new(
+            trim.theta_rad(),
+            trim.conditions().airspeed_mps(),
+        )
+        .unwrap(),
+        trim.alpha_rad(),
+    )
+    .unwrap();
     let gravity = Gravity::try_new(definition.document().trim.gravity_mps2).unwrap();
     let speed = definition.document().trim.airspeed_mps;
     let polar_interval = definition
@@ -218,7 +230,6 @@ fn with_map(mode: ControlMode, verify: impl FnOnce(&TickMap<'_>)) {
         .unwrap(),
         load,
         contacts: WaterContactGeometry::try_new(definition.contact_points()).unwrap(),
-        profile,
         config: TailFlightTickConfig::new(mode, profile, mapping, gravity),
         gravity,
         scales: [speed, speed, speed, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.2, 0.2],

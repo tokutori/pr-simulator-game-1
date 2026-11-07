@@ -41,14 +41,13 @@
 D=(D_{information},D_{assistance},D_{weather})
 ```
 
-- 公開アプリの既定はFull・Light Assisted FBW・Typicalである。
-- Lightは共有の0.2 FBW authorityへ解決する。
+- 公開アプリの既定はFull・混合・Typicalである。同梱controllerの混合比は0.5とする。
 - 3D描画品質の既定はAutoであり、難易度の三軸から独立する。
 
 | 軸 | 選択と責務 |
 |---|---|
 | Information | Full・Standard・Minimal・Realistic・Custom。HUDと情報補助だけを変更する |
-| Assistance | Strong・Assisted・Light・Manual・Custom。検証済みcontroller設定へ解決する |
+| Assistance | 手動・混合・自動。実効authorityは0・選択controller JSONのA・1 |
 | Weather | Calm・Mild・Typical・Challenging・NearLimit。登録scenarioと環境を選択する |
 
 - 各設定で6DoF方程式、係数、風の作用、actuator、積分刻み、質量特性の算出規則を共用する。

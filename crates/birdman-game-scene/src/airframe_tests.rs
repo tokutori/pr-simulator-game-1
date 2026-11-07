@@ -415,9 +415,12 @@ fn adopted_shape_contact_matches_independent_rotated_support_and_record_query() 
         definition.document().model_version,
     )
     .unwrap();
-    let header =
-        FlightRecordHeader::try_new(birdman_game_app::identity_for_selection(selection), 10)
-            .unwrap();
+    let header = FlightRecordHeader::try_new(
+        birdman_game_app::identity_for_selection(selection),
+        10,
+        None,
+    )
+    .unwrap();
     let record_contact = |previous: TailFlightTickState, report: TailFlightTickReport| {
         let TailFlightTickOutcome::WaterContact(contact) = report.outcome() else {
             panic!("expected contact to record");
@@ -698,7 +701,6 @@ fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revisio
             .execute(command, BackendReadiness::Ready)
             .unwrap();
     }
-    let profile = application.prepared().unwrap().controller_profile;
     let course = application.prepared().unwrap().course_axis;
     application
         .observe_countdown(
@@ -820,7 +822,6 @@ fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revisio
                     difficulty,
                     identity: &document.control_identity,
                     control_mode: ControlMode::Manual,
-                    controller_profile: profile,
                 },
                 course,
                 birdman_game_app::record_archive::record_build_provenance(),

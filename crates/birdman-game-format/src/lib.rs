@@ -40,7 +40,9 @@ pub mod aircraft;
 pub mod controller;
 
 /// Independent original JSON sources selectable by the application.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigurationDocumentKind {
@@ -101,9 +103,9 @@ pub use personal_best::{
     TailPersonalBestConfiguration, TailPersonalBestSelection, canonical_tail_personal_best_key,
 };
 pub use personal_best_metadata::{
-    FlightRecordBuildProvenance, FlightRecordControlMode,
-    FlightRecordIdentityMetadata, FlightRecordSourceFingerprints,
-    PERSONAL_BEST_COMPARISON_VERSION, TailPersonalBestConditions, TailPersonalBestIdentity,
+    FlightRecordBuildProvenance, FlightRecordControlMode, FlightRecordIdentityMetadata,
+    FlightRecordSourceFingerprints, PERSONAL_BEST_COMPARISON_VERSION, TailPersonalBestConditions,
+    TailPersonalBestIdentity,
 };
 
 /// Information presentation selected for a session.
@@ -304,7 +306,7 @@ impl DifficultySettings {
             ),
             DifficultyPreset::Expert => (
                 InformationLevel::Minimal,
-                AssistanceLevel::Light,
+                AssistanceLevel::Assisted,
                 WeatherClass::Challenging,
             ),
             DifficultyPreset::Realistic => (

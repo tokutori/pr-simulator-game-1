@@ -14,12 +14,13 @@
 | 対象 | 現行契約 |
 | --- | --- |
 | 機体JSON | `AircraftDocument`、schema 5、最大256 KiB |
+| 制御設定JSON | `ControllerDocument`、schema 1、最大64 KiB |
 | 環境JSON | `EnvironmentDocument`、schema 1、最大8 MiB |
-| 飛行記録JSON | `TailFlightRecordDocument`、schema 6/7/8/9、最大16 MiB |
-| 飛行ログCSV | schema 6はexport version 3、schema 7はversion 4、schema 8はversion 5、schema 9はversion 6 |
-| Personal Best | 比較方式v4、Rustによるkey再生成・選定 |
-| 物理・積分・接触 | physics model 8 |
-| 既定機体・scenario | aircraft model 7、catalog 10、scenario 11、controller profile 4 |
+| 飛行記録JSON | 新規schema 10、archiveはschema 6/7/8/9/10、最大16 MiB |
+| 飛行ログCSV | schema 6〜10をそれぞれexport version 3〜7へ投影 |
+| Personal Best | 比較方式v5、Rustによるkey再生成・選定 |
+| 物理・積分・接触 | physics model 9 |
+| 既定機体・scenario | aircraft model 7、catalog 10、scenario 11、controllerはIDと原文SHA-256 |
 
 - 版の正本は実装の公開定義・登録catalogとする。
 - JSON schema、物理model、機体、controller、環境、score、比較方式、build来歴は異なる概念であり、独立して保持する。
@@ -155,6 +156,15 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - `cargo run -p birdman-game-cli --locked -- validate-aircraft <path>`は外部ファイルを`AircraftDefinition`として準備し、実行時と同じ形状・空力・トリムの検査を行う。
 - 定常滑空の成立性は`SteadyGlideTrim`が質量モデル・静特性・指定条件から解く。パイロットの上下位置と静特性の参照点を含め、合成重心まわりの力・モーメントの釣合を確認する。
 
+## controller JSON
+
+- 文書: `ControllerDocument`のschema 1と64 KiB上限を使い、全階層の未知fieldを拒否する。合法テンプレート、PID、使用上限、Shared authority、迎角保護の型と単位は[飛行制御](flight-control.md)に定める。
+- 検証: 構文・型・schema違反と、独立した意味違反を分ける。意味違反はcode・JSON path・値・期待条件を集約し、pair違反には機体側のpath・値も付ける。共通UI・CLI・viewerは同じformatterを使う。
+- 準備: appが選択機体の実trimとcontrollerを組み合わせる。文書単独で有効な候補の保存・選択と、pairによる開始認可を分け、読込順にかかわらず最新pairを評価する。
+- 保存: 既存StorageOwnerがAircraft／Controllerの閉じた2種のslotを所有する。各slotのbyte上限・decoder・保存先を区別し、文書種・request ID・選択元identityが一致する保存完了だけをcommitする。
+- 原文: 両adapterはfile・保存領域から取得したbytesをRustへ通知する。検証済み原文をそのまま保存し、IDと原文SHA-256を記録identityへ接続する。
+- CLI: `validate-controller <path>`は文書単独、`validate-controller <path> <aircraft-path>`は実trimを含むpairを検査する。
+
 ## 環境JSON
 
 ### 境界と風場
@@ -255,11 +265,12 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 
 ### codecとJSON
 
-- 現行codecはschema 6・7・8・9を受理する。
+- 現行codecはschema 6・7・8・9・10を受理する。
 - schema 7は全sampleの有限な`wing_bending_factor`を要求し、同時刻の採用値は任意の終端`boundary_event`に保持する。
 - schema 6は曲げ係数の未記録状態を保持する。旧schema 6・7は尾翼荷重を未収録として読み込み、保存原文を保持する。
 - schema 8は各sampleの水平・垂直尾翼の荷重を保持する。各面の値は機体FRD軸の力とdatumまわりのモーメントであり、面が存在しない場合はnullとする。同時刻の採用値は終端`boundary_event`に保持する。
-- schema 9は機体の`configuration_id`と原文JSONのSHA-256を保持する。通常飛行とAttractはschema 9を生成し、PB比較はこの組と現行physics modelで分離する。
+- schema 9は機体の`configuration_id`と原文JSONのSHA-256を保持する。
+- schema 10はcontrollerのIDと原文SHA-256、coreの固定長controller identity、封印した実効ControlModeを保持する。通常飛行とAttractはschema 10を生成し、PB比較は機体・controller原文と実効modeで分離する。
 - 旧記録は原文と既存keyを保持して閲覧する。SHA未収録の記録は既存の登録機体ID・model versionに対応し、選択中の原文SHAが実際の同梱機体と一致する場合に映像を再生できる。
 - 未対応データを通知して元の保存内容を保持する。
 - 破損、未知field、非有限値、非単位quaternion、時刻・header不整合と、schemaに対応しない係数・eventの組合せを拒否する。
@@ -270,7 +281,7 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - JSON exportは解決済み条件と来歴を含む完全な記録である。
 - 保存されていない情報を現行buildから補完しない。
 
-### CSV version 3/4/5/6
+### CSV version 3/4/5/6/7
 
 - CSVは初期・全成功tick・fractional terminalを省略せず、位置、速度、姿勢、角速度、pilot状態、入力、actuator、風、telemetry、終了情報等を出力する。
 - 列名に単位を明示し、f64のround-trip表現を使う。
@@ -278,6 +289,7 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - version 4は`row_kind`と`wing_bending_factor`を加える。通常sample列の後に同時刻の採用eventを`boundary_event`行として出力し、version 3は従来の列構成を保持する。
 - version 5は水平・垂直尾翼それぞれの機体FRD力3成分（N）とdatumまわりのモーメント3成分（N·m）を追加する。各列は記録した同時刻の荷重を出力する。
 - version 6は`aircraft_source_sha256`を追加し、同じ申告機体IDの原文を区別する。
+- version 7は`controller_source_sha256`・`control_mode`・`effective_feedback_authority`を追加し、封印した実効値を出力する。
 
 - 加速度は保存済みNED速度、FRD角速度、pilot相対速度の有限差分による派生値である。
 - 内点は不等間隔3点、端点は2点の割線を用い、methodとstencil時刻を出力する。
@@ -306,27 +318,27 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 
 ## Personal Bestと保存
 
-### 比較方式v4
+### 比較方式v5
 
 Personal BestはcompleteなWaterContact、score、現行physics/score version、既知の解決済み条件、有効canonical keyを要求する。共有`TailPersonalBestSelection`が比較を所有し、同点は最初の既存recordを保持する。
 
 keyは次の条件をSHA-256へ入力する。
 
-- 明示identityと機体原文SHA-256、catalog・aircraft・controller・scenario・environment・physics・scoreのversion。
+- 明示identity、機体・controllerのIDと原文SHA-256、catalog・aircraft・scenario・environment・physics・scoreのversion。
 - seed、tick上限、Hz、有効なHUD表示条件、Assistance、Weather。
-- 実ControlModeとShared authority、二軸gain、slew、optional alpha guard、course。
+- 記録headerに封印された実ControlModeとShared authority、course。
 - 初期datum位置・速度、quaternion、角速度、wind、尾翼取付角、pilot位置・速度、および記録された初期曲げ係数。
 
 - finite f64は負zeroをpositive zeroへ正規化してbig-endian IEEE-754で符号化する。
 - 画質、presentation、build来歴は比較条件と独立して保持する。
 - 記録自身からkeyを再生成し、保存keyとの一致を検査する。
-- 過去のcontrollerは保存済みの解決条件から再構築する。
+- 過去の映像Replayは保存pose・尾翼角を使う。再積分はcontroller原文identityと実効modeが既知で、対象configurationと一致する場合に認可する。
 
 - HUD表示条件は主要telemetry、姿勢・方位、風、flight-path、迎角、基本数値群、角速度、尾翼・pilot補助数値群の有効性で比較する。Fullと同じ内容のCustomは同じ比較群となり、表示効果のないWarnings設定は中立値へ正規化する。
 - 必須異常表示はWarnings設定と独立して表示する。保存したInformationと各cue設定はそのまま保持する。
-- 任意`identity_metadata`は、未指定・既知v4・その他方式のrawを排他的に保持する。
-- 現方式の記録だけを順位付けする。block欠落、旧v2・v3を含むその他方式、構造情報不足の記録は未順位で一覧・Replayへ読み戻し、元key・原文を保持する。
-- 既知v4は数値と保存keyの整合を検証して受理する。
+- 任意`identity_metadata`は、未指定・既知v5・その他方式のrawを排他的に保持する。
+- 現方式の記録だけを順位付けする。block欠落、旧v2〜v4を含むその他方式、構造情報不足の記録は未順位で一覧・Replayへ読み戻し、元key・原文を保持する。
+- 既知v5は数値と保存keyの整合を検証して受理する。
 
 - build来歴は4種のsource fingerprint、Cargo.lock SHA-256、観測したrustc・target・profileを保持する。
 - 機体・環境・scenarioのsource fingerprintは共有実装と登録データから導出し、各adapterはその来歴を記録へ付与する。

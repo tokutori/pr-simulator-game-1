@@ -784,6 +784,7 @@ fn prepare_manual_flight(
     let (fixture_aircraft, mut contact) = aircraft_fixture();
     let (configuration, _) = HybridSessionPreparation::try_new_for_weather(
         &fixture_aircraft,
+        &birdman_game_app::SelectedController::bundled().unwrap(),
         ControlMode::Manual,
         maximum_ticks,
         seed,
@@ -1290,6 +1291,7 @@ fn record_replacement_changes_structure_while_rejected_commands_retain_it() {
     let archive_json = |record: &birdman_game_core::FlightRecord| {
         let (_, identity) = HybridSessionPreparation::try_new_for_weather(
             &fixture_aircraft,
+            &birdman_game_app::SelectedController::bundled().unwrap(),
             ControlMode::Manual,
             3,
             42,

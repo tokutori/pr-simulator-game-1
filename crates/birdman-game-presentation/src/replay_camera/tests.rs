@@ -19,9 +19,12 @@ fn fixture_record(
         selected.definition().document().model_version,
     )
     .unwrap();
-    let header =
-        FlightRecordHeader::try_new(birdman_game_app::identity_for_selection(selection), ticks)
-            .unwrap();
+    let header = FlightRecordHeader::try_new(
+        birdman_game_app::identity_for_selection(selection),
+        ticks,
+        None,
+    )
+    .unwrap();
     let input = TailFlightTickInput::new(
         TailPilotIntent::try_new(0.0, 0.0).unwrap(),
         TailRateTarget::try_new(0.0, 0.0).unwrap(),
@@ -113,6 +116,7 @@ fn render_pose_matches_the_same_record_sample_and_retains_unknown_geometry() {
         aircraft_sha256: None,
         aircraft_configuration_id: selected.definition().document().configuration_id.clone(),
         controller_profile_id: "camera-fixture".into(),
+        controller_sha256: None,
     };
     let sample = record.sample_at_seconds(0.205).unwrap();
     let projection = replay_camera_view(
@@ -226,6 +230,7 @@ fn replay_uses_adopted_interval_and_same_time_terminal_deformation() {
         aircraft_sha256: None,
         aircraft_configuration_id: definition.document().configuration_id.clone(),
         controller_profile_id: "camera-fixture".into(),
+        controller_sha256: None,
     };
     for (time, factor) in [(0.0, 0.81), (0.005, 1.21), (0.01, 1.4)] {
         let projection = replay_camera_view(

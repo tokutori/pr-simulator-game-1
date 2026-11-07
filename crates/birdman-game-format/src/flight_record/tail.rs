@@ -718,9 +718,12 @@ impl TailFlightRecordDocument {
         identity: &FlightRecordTailIdentityDocument,
         scenario: SessionScenarioIdentity,
         physics_model_version: u32,
+        control_mode: birdman_game_core::ControlMode,
     ) -> Result<(), FlightRecordFormatError> {
         self.validate()?;
-        if self.control_identity != *identity
+        if scenario.controller_identity.is_none()
+            || self.header.control_mode != Some(control_mode.into())
+            || self.control_identity != *identity
             || self.scenario_identity() != scenario
             || self.header.physics_model_version != physics_model_version
         {

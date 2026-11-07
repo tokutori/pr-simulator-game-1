@@ -52,7 +52,10 @@ export function readyApplicationFixture() {
     }
     for (const request of output.requests) {
       requests.push(request);
-      if (request.kind === "read_keyboard_controls") {
+      if (request.kind === "read_configuration") {
+        output = observe({ kind: "configuration_loaded", document: request.document,
+          request_id: request.request_id, completion: { kind: "missing" } }, now);
+      } else if (request.kind === "read_keyboard_controls") {
         output = observe({ kind: "keyboard_controls_loaded", request_id: request.request_id, completion: { kind: "missing" } }, now);
       } else if (request.kind === "write_keyboard_controls") {
         output = observe({ kind: "keyboard_controls_saved", request_id: request.request_id, failure: null }, now);

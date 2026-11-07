@@ -5,9 +5,13 @@ fn tick(
     gamepads: &[FlightGamepadObservation],
     held: f64,
 ) -> Result<TailFlightTickInput, TailControlError> {
-    let result = input.tick_input([[-0.2,0.2];2],gamepads, held, KeyboardControlSettings::default(), |step| {
-        TailPilotPositionIntent::try_new((held + step / 0.4).clamp(-1.0, 1.0))
-    })?;
+    let result = input.tick_input(
+        [[-0.2, 0.2]; 2],
+        gamepads,
+        held,
+        KeyboardControlSettings::default(),
+        |step| TailPilotPositionIntent::try_new((held + step / 0.4).clamp(-1.0, 1.0)),
+    )?;
     input.confirm_tick(result, false);
     Ok(result)
 }
@@ -62,12 +66,12 @@ fn keyboard_pitch_inversion_keeps_other_demands_and_physical_keys() {
         };
         for _ in 0..50 {
             let direct = normal
-                .tick_input([[-0.2,0.2];2],&[], 0.0, defaults, |_| {
+                .tick_input([[-0.2, 0.2]; 2], &[], 0.0, defaults, |_| {
                     TailPilotPositionIntent::try_new(0.5)
                 })
                 .unwrap();
             let reversed = inverted
-                .tick_input([[-0.2,0.2];2],&[], 0.0, settings, |_| {
+                .tick_input([[-0.2, 0.2]; 2], &[], 0.0, settings, |_| {
                     TailPilotPositionIntent::try_new(0.5)
                 })
                 .unwrap();
@@ -117,7 +121,8 @@ fn keyboard_integrates_the_confirmed_target_per_tick_and_clamps_at_its_limit() {
                 birdman_game_core::PilotPositionTarget::try_new(&aircraft, endpoint).unwrap();
             let normalized = mapping.normalized_target(held).unwrap().value();
             let demand = input
-                .tick_input([[-0.2,0.2];2],
+                .tick_input(
+                    [[-0.2, 0.2]; 2],
                     &[],
                     normalized,
                     KeyboardControlSettings::default(),
@@ -190,7 +195,7 @@ fn keyboard_integrates_the_confirmed_target_per_tick_and_clamps_at_its_limit() {
         let mut demand = 0.0;
         for _ in 0..50 {
             demand = input
-                .tick_input([[-0.2,0.2];2],&[], 0.0, settings, |_| unreachable!())
+                .tick_input([[-0.2, 0.2]; 2], &[], 0.0, settings, |_| unreachable!())
                 .unwrap()
                 .manual_intent()
                 .nose_up();
@@ -198,7 +203,7 @@ fn keyboard_integrates_the_confirmed_target_per_tick_and_clamps_at_its_limit() {
         assert_eq!(demand, 0.5);
         key(&mut input, FlightControlKey::ArrowUp, false, false);
         let release = input
-            .tick_input([[-0.2,0.2];2],&[], 0.0, settings, |_| unreachable!())
+            .tick_input([[-0.2, 0.2]; 2], &[], 0.0, settings, |_| unreachable!())
             .unwrap()
             .manual_intent()
             .nose_up();
@@ -206,7 +211,7 @@ fn keyboard_integrates_the_confirmed_target_per_tick_and_clamps_at_its_limit() {
         key(&mut input, FlightControlKey::ArrowDown, true, false);
         for _ in 0..100 {
             demand = input
-                .tick_input([[-0.2,0.2];2],&[], 0.0, settings, |_| unreachable!())
+                .tick_input([[-0.2, 0.2]; 2], &[], 0.0, settings, |_| unreachable!())
                 .unwrap()
                 .manual_intent()
                 .nose_up();
@@ -215,7 +220,7 @@ fn keyboard_integrates_the_confirmed_target_per_tick_and_clamps_at_its_limit() {
         key(&mut input, FlightControlKey::ArrowUp, true, false);
         for _ in 0..50 {
             demand = input
-                .tick_input([[-0.2,0.2];2],&[], 0.0, settings, |_| unreachable!())
+                .tick_input([[-0.2, 0.2]; 2], &[], 0.0, settings, |_| unreachable!())
                 .unwrap()
                 .manual_intent()
                 .nose_up();
@@ -343,13 +348,13 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
     key(&mut input, FlightControlKey::KeyL, true, false);
     let settings = KeyboardControlSettings::default();
     assert_eq!(
-        input.tick_input([[-0.2,0.2];2],&[], 0.0, settings, |_| Err(
+        input.tick_input([[-0.2, 0.2]; 2], &[], 0.0, settings, |_| Err(
             TailControlError::InvalidPilotIntent
         )),
         Err(TailControlError::InvalidPilotIntent)
     );
     let uncommitted = input
-        .tick_input([[-0.2,0.2];2],&[], 0.0, settings, |_| {
+        .tick_input([[-0.2, 0.2]; 2], &[], 0.0, settings, |_| {
             TailPilotPositionIntent::try_new(0.1)
         })
         .unwrap();
@@ -360,9 +365,9 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
     // NoElapsed and a failed tick do not call confirm_tick, so the same observation remains.
     assert_eq!(
         input
-            .tick_input([[-0.2,0.2];2],&[], 0.0, settings, |_| TailPilotPositionIntent::try_new(
-                0.1
-            ))
+            .tick_input([[-0.2, 0.2]; 2], &[], 0.0, settings, |_| {
+                TailPilotPositionIntent::try_new(0.1)
+            })
             .unwrap()
             .pilot_motion_admission(),
         TailPilotMotionAdmission::Rearmed
@@ -397,7 +402,8 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
     );
     let uncommitted_touch = |input: &mut FlightInputState| {
         input
-            .tick_input([[-0.2,0.2];2],
+            .tick_input(
+                [[-0.2, 0.2]; 2],
                 &[],
                 0.0,
                 KeyboardControlSettings::default(),
@@ -472,7 +478,8 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
     input.observe_touch(same_finger(FlightTouchPhase::Change, 0.89));
     let retake_tick = |input: &mut FlightInputState| {
         input
-            .tick_input([[-0.2,0.2];2],
+            .tick_input(
+                [[-0.2, 0.2]; 2],
                 &[],
                 0.6,
                 KeyboardControlSettings::default(),
@@ -586,9 +593,13 @@ fn gamepad_waits_for_neutral_and_crosses_the_confirmed_pilot_target_before_takeo
     sample.axes[2] = Some(0.54);
     tick(&mut input, &[sample], 0.4).unwrap();
     let pending = input
-        .tick_input([[-0.2,0.2];2],&[sample], 0.4, KeyboardControlSettings::default(), |_| {
-            TailPilotPositionIntent::try_new(0.4)
-        })
+        .tick_input(
+            [[-0.2, 0.2]; 2],
+            &[sample],
+            0.4,
+            KeyboardControlSettings::default(),
+            |_| TailPilotPositionIntent::try_new(0.4),
+        )
         .unwrap();
     assert_eq!(
         pending.pilot_motion_admission(),

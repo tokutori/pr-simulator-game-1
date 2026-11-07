@@ -677,3 +677,83 @@ impl ControllerDocument {
         build().map_err(ControllerFormatError::Core)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bundled() -> ControllerDocument {
+        ControllerDocument::decode_json(include_bytes!(
+            "../../../assets/controllers/default-rate-v1.json"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn independent_document_reports_all_pid_errors_and_rejects_unknown_or_oversized_source() {
+        let mut document = bundled();
+        assert_eq!(document.shared_authority, 0.5);
+        document
+            .core_profile(ControllerReference::try_new(0.0, 9.7).unwrap(), 0.0)
+            .unwrap();
+        if let PitchControllerDocument::Rate { ref mut rate } = document.pitch {
+            rate.kp = -1.0;
+            rate.ki = f64::NAN;
+        }
+        if let YawControllerDocument::Rate { ref mut rate } = document.yaw {
+            rate.output_bounds = [1.0, 2.0];
+        }
+        let paths: Vec<_> = document
+            .validation_issues()
+            .into_iter()
+            .map(|issue| issue.path)
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "/pitch/rate/kp",
+                "/pitch/rate/ki",
+                "/yaw/rate/output_bounds"
+            ]
+        );
+        let mut value = serde_json::to_value(bundled()).unwrap();
+        value["pitch"]["extra"] = true.into();
+        assert!(matches!(
+            ControllerDocument::decode_json(&serde_json::to_vec(&value).unwrap()),
+            Err(ControllerFormatError::Json(_))
+        ));
+        assert_eq!(
+            ControllerDocument::decode_json(&alloc::vec![b' '; MAX_CONTROLLER_JSON_BYTES + 1]),
+            Err(ControllerFormatError::InputTooLarge)
+        );
+    }
+
+    #[test]
+    fn intrinsic_selection_and_pair_constraints_are_independent() {
+        let mut controller = bundled();
+        let mut aircraft = crate::aircraft::AircraftDocument::decode_json(include_bytes!(
+            "../../../assets/aircraft/playable-glider-v7.json"
+        ))
+        .unwrap();
+        controller.incidence_bounds_rad[0] = [-0.3, 0.3];
+        controller.validate().unwrap();
+        let issues = controller.pair_issues(&aircraft, 0.0, 0.0);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].path, "/incidence_bounds_rad/0");
+        assert!(
+            issues[0]
+                .aircraft
+                .as_ref()
+                .unwrap()
+                .path
+                .ends_with("/actuator/incidence_bounds_rad")
+        );
+        let tail = aircraft
+            .surfaces
+            .iter_mut()
+            .find(|surface| surface.role == crate::aircraft::AircraftSurfaceRole::HorizontalTail)
+            .unwrap();
+        tail.actuator.as_mut().unwrap().incidence_bounds_rad = [-0.4, 0.4];
+        assert!(controller.pair_issues(&aircraft, 0.0, 0.0).is_empty());
+    }
+}
