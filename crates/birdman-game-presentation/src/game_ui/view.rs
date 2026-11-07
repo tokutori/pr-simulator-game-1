@@ -2037,14 +2037,16 @@ pub(super) fn layout(
         SessionPhase::Replay | SessionPhase::Attract => GameUiShell::Cinematic,
         _ => GameUiShell::Center,
     };
+    let flight_actions_only = matches!(
+        phase,
+        SessionPhase::Countdown { .. } | SessionPhase::FlightRunning
+    );
     let compact = viewport.width <= 600.0;
     let available_width = (viewport.width - if compact { 1.2 } else { 2.0 } * font).max(1.0);
     let width = match shell {
         GameUiShell::Center => available_width.min(42.0 * font),
         GameUiShell::Analysis => available_width.min(72.0 * font),
-        GameUiShell::FlightBar if phase == SessionPhase::FlightRunning => {
-            available_width.min(26.0 * font)
-        }
+        GameUiShell::FlightBar if flight_actions_only => available_width.min(26.0 * font),
         GameUiShell::FlightBar => viewport.width,
         GameUiShell::PauseSettings => pause_settings_width,
         GameUiShell::Cinematic => cinematic_width,
@@ -2069,7 +2071,7 @@ pub(super) fn layout(
         width_px: width,
         maximum_height_px: if flight_bar_renderer_recovery {
             (viewport.height - 2.0 * font).max(1.0)
-        } else if phase == SessionPhase::FlightRunning {
+        } else if shell == GameUiShell::FlightBar && flight_actions_only {
             (viewport.height - 2.0 * font).max(1.0).min(8.0 * font)
         } else if shell == GameUiShell::Analysis {
             (viewport.height - 2.0 * font).max(1.0)
@@ -2094,11 +2096,10 @@ pub(super) fn layout(
             .max(1.0) as u32,
         compact,
         scroll_y: !(shell == GameUiShell::FlightBar
-            && phase == SessionPhase::FlightRunning
+            && flight_actions_only
             && !flight_bar_renderer_recovery),
         clip_x: true,
-        passthrough: (shell == GameUiShell::FlightBar && phase == SessionPhase::FlightRunning)
-            || matches!(phase, SessionPhase::Countdown { .. }),
+        passthrough: shell == GameUiShell::FlightBar && flight_actions_only,
     })
 }
 

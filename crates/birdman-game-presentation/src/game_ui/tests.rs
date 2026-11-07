@@ -1229,6 +1229,17 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
     application.observe_countdown(token, 1.0, true).unwrap();
     let running = revision(&mut cache, &application, &state, &platform);
     assert!(running > countdown);
+    let running_view = game_ui_view(
+        &state,
+        &context(
+            application.core_session(),
+            application.difficulty(),
+            &platform,
+        ),
+    )
+    .unwrap();
+    assert_eq!(view.layout, running_view.layout);
+
     application
         .advance_tail_flight_tick(TailFlightTickInput::new(
             TailPilotIntent::try_new(0.0, 0.0).unwrap(),
