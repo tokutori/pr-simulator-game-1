@@ -193,7 +193,7 @@ fn schema_five_aggregates_independent_aircraft_authoring_problems() {
     document.schema_version = 4;
     assert_eq!(
         document.validate(),
-        Err(AircraftFormatError::UnsupportedSchemaVersion)
+        Err(AircraftFormatError::unsupported_schema_version(4))
     );
 }
 
@@ -254,11 +254,53 @@ fn decoding_rejects_unknown_fields_types_versions_and_oversized_input() {
             "{path}"
         );
     }
+    let mut legacy = source.clone();
+    legacy["schema_version"] = 4.into();
+    legacy["mass"]
+        .as_object_mut()
+        .unwrap()
+        .remove("airframe_center_of_mass_frd_m");
+    for surface in legacy["surfaces"].as_array_mut().unwrap() {
+        surface["actuator"] = serde_json::Value::Null;
+        for section in surface["sections"].as_array_mut().unwrap() {
+            section.as_object_mut().unwrap().remove("twist_rad");
+        }
+    }
+    let error = AircraftDocument::decode_json(&serde_json::to_vec(&legacy).unwrap()).unwrap_err();
+    assert_eq!(error, AircraftFormatError::unsupported_schema_version(4));
+    let [issue] = error.validation_issues() else {
+        panic!("missing schema diagnostic")
+    };
+    assert_eq!(issue.code, AircraftValidationCode::SchemaVersion);
+    assert_eq!(
+        (&*issue.path, &*issue.value, &*issue.expected),
+        ("/schema_version", "4", "schema_version == 5")
+    );
+    assert!(
+        alloc::format!("{error}")
+            .contains("SchemaVersion /schema_version: 4 (expected schema_version == 5)")
+    );
+    for input in [
+        b"[4]".as_slice(),
+        b"{}",
+        b"{\"schema_version\":4,\"schema_version\":5}",
+        b"{\"schema_version\":4}false",
+        b"{\"schema_version\":4,\"mass\":[}",
+        b"{\"schema_version\":\"4\"}",
+        b"{\"schema_version\":4,\"extra\":\"\xff\"}",
+    ] {
+        assert_eq!(
+            AircraftDocument::decode_json(input),
+            Err(AircraftFormatError::InvalidJson)
+        );
+    }
     let mut value = source;
     value["schema_version"] = (AIRCRAFT_SCHEMA_VERSION + 1).into();
     assert_eq!(
         AircraftDocument::decode_json(&serde_json::to_vec(&value).unwrap()),
-        Err(AircraftFormatError::UnsupportedSchemaVersion)
+        Err(AircraftFormatError::unsupported_schema_version(
+            AIRCRAFT_SCHEMA_VERSION + 1
+        ))
     );
     assert_eq!(
         AircraftDocument::decode_json(b"{\"schema_version\":NaN}"),

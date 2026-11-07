@@ -1,5 +1,4 @@
 use birdman_game_content::AircraftDefinitionError;
-use birdman_game_format::aircraft::AircraftFormatError;
 use eframe::egui::{self, RichText};
 
 use crate::app::{LoadError, Tab, ViewerApp};
@@ -55,12 +54,11 @@ pub fn show(context: &egui::Context, app: &mut ViewerApp) {
             Ok(loaded) => loaded,
             Err(error) => {
                 ui.heading("読み込み結果");
-                if let LoadError::Aircraft(AircraftDefinitionError::Format(
-                    AircraftFormatError::Validation(issues),
-                )) = error
+                if let LoadError::Aircraft(AircraftDefinitionError::Format(cause)) = error
+                    && !cause.validation_issues().is_empty()
                 {
                     egui::ScrollArea::both().show(ui, |ui| {
-                        for issue in issues {
+                        for issue in cause.validation_issues() {
                             validation_issue(
                                 ui,
                                 issue.code,

@@ -26,25 +26,66 @@ fn aircraft_command_admits_only_prepared_geometry_and_a_feasible_trim() {
     for section in &mut wing.sections {
         section.quarter_chord_frd_m[1] += 30.0;
     }
-    for (name, document, expected_code, expected_reason) in [
-        ("valid", valid, 0, None),
+    let mut legacy = serde_json::to_value(&valid).unwrap();
+    legacy["schema_version"] = 4.into();
+    legacy["mass"]
+        .as_object_mut()
+        .unwrap()
+        .remove("airframe_center_of_mass_frd_m");
+    for surface in legacy["surfaces"].as_array_mut().unwrap() {
+        surface["actuator"] = serde_json::Value::Null;
+        for section in surface["sections"].as_array_mut().unwrap() {
+            section.as_object_mut().unwrap().remove("twist_rad");
+        }
+    }
+    let mut invalid_authoring = valid.clone();
+    invalid_authoring.mass.airframe_center_of_mass_frd_m = [1000.0, 0.0, 0.0];
+    invalid_authoring.surfaces[wing_index].sections[0].twist_rad = 4.0;
+    let tail_index = valid
+        .surfaces
+        .iter()
+        .position(|s| s.role == AircraftSurfaceRole::HorizontalTail)
+        .unwrap();
+    invalid_authoring.surfaces[tail_index].actuator = None;
+    for (name, document, expected_code, expected_reasons) in [
+        ("valid", serde_json::to_value(valid).unwrap(), 0, vec![]),
         (
             "asymmetric-strips",
-            asymmetric,
+            serde_json::to_value(asymmetric).unwrap(),
             2,
-            Some(format!("/surfaces/{wing_index}/strip_fractions")),
+            vec![format!("/surfaces/{wing_index}/strip_fractions")],
         ),
         (
             "untrimmable",
-            untrimmable,
+            serde_json::to_value(untrimmable).unwrap(),
             2,
-            Some(SteadyGlideError::NotBracketed.to_string()),
+            vec![SteadyGlideError::NotBracketed.to_string()],
         ),
         (
             "wing-without-root",
-            displaced_wing,
+            serde_json::to_value(displaced_wing).unwrap(),
             2,
-            Some(ShapeError::OutsideSurface(HybridSurfaceRole::MainWing).to_string()),
+            vec![ShapeError::OutsideSurface(HybridSurfaceRole::MainWing).to_string()],
+        ),
+        (
+            "schema-four",
+            legacy,
+            2,
+            vec![
+                "Aircraft schema version is unsupported".into(),
+                "SchemaVersion /schema_version: 4 (expected schema_version == 5)".into(),
+            ],
+        ),
+        (
+            "schema-five-authoring",
+            serde_json::to_value(invalid_authoring).unwrap(),
+            2,
+            vec![
+                "/mass".into(),
+                "airframe_center_of_mass_frd_m: [1000.0".into(),
+                format!("/surfaces/{tail_index}/actuator: None"),
+                format!("/surfaces/{wing_index}/sections/0/twist_rad: 4.0"),
+            ],
         ),
     ] {
         let bytes = serde_json::to_vec(&document).unwrap();
@@ -80,12 +121,13 @@ fn aircraft_command_admits_only_prepared_geometry_and_a_feasible_trim() {
             assert!(output.stderr.is_empty());
         } else {
             assert!(output.stdout.is_empty());
-            let reason = expected_reason.unwrap();
-            assert!(
-                String::from_utf8_lossy(&output.stderr).contains(&reason),
-                "{name}: expected reason {reason:?}, stderr: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+            for reason in expected_reasons {
+                assert!(
+                    String::from_utf8_lossy(&output.stderr).contains(&reason),
+                    "{name}: expected reason {reason:?}, stderr: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
         }
     }
 }

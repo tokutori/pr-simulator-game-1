@@ -4,6 +4,8 @@ use alloc::format;
 /// Stable semantic validation categories for aircraft authoring tools.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AircraftValidationCode {
+    /// Declared external document schema version.
+    SchemaVersion,
     /// Configuration identifier or model version.
     Identity,
     /// Mass or centre-of-mass coordinates.
@@ -693,7 +695,9 @@ impl AircraftDocument {
     /// Coupled calculations run only after their required component values validate.
     pub fn validate(&self) -> Result<(), AircraftFormatError> {
         if self.schema_version != AIRCRAFT_SCHEMA_VERSION {
-            return Err(AircraftFormatError::UnsupportedSchemaVersion);
+            return Err(AircraftFormatError::unsupported_schema_version(
+                self.schema_version,
+            ));
         }
         let mut issues = Vec::new();
         use AircraftValidationCode as C;

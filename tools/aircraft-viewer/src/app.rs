@@ -182,6 +182,19 @@ mod tests {
         assert!(issues.iter().any(|issue| issue.path == "/pitch/rate/kp"));
         assert!(issues.iter().any(|issue| issue.path == "/shared_authority"));
         assert_eq!(app.controller.source, "invalid-controller.json");
+        app.document = DocumentState::decode(
+            "schema-four.json".into(),
+            br#"{"schema_version":4,"mass":{},"surfaces":[{"actuator":null}]}"#,
+        );
+        let Err(LoadError::Aircraft(AircraftDefinitionError::Format(cause))) = &app.document.result
+        else {
+            panic!("typed aircraft schema error")
+        };
+        assert!(matches!(
+            cause,
+            birdman_game_format::aircraft::AircraftFormatError::UnsupportedSchemaVersion(_)
+        ));
+        assert_eq!(cause.validation_issues()[0].path, "/schema_version");
         app.document = DocumentState::decode("broken.json".into(), b"{");
         assert!(matches!(app.document.result, Err(LoadError::Aircraft(_))));
         assert_eq!(app.document.source, "broken.json");

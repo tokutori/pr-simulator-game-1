@@ -404,7 +404,7 @@ pub enum AircraftFormatError {
     /// JSON syntax, field or value type is invalid.
     InvalidJson,
     /// Data schema version is unsupported.
-    UnsupportedSchemaVersion,
+    UnsupportedSchemaVersion(AircraftValidationIssue),
     /// Structural or table counts exceed the preparation budget.
     InvalidCount,
     /// The surface roles are repeated or incomplete.
@@ -443,7 +443,11 @@ impl core::fmt::Display for AircraftFormatError {
             Self::InvalidJson => {
                 f.write_str("Aircraft JSON has invalid syntax, fields or field types")
             }
-            Self::UnsupportedSchemaVersion => f.write_str("Aircraft schema version is unsupported"),
+            Self::UnsupportedSchemaVersion(issue) => write!(
+                f,
+                "Aircraft schema version is unsupported: {:?} {}: {} (expected {})",
+                issue.code, issue.path, issue.value, issue.expected
+            ),
             Self::InvalidCount => {
                 f.write_str("Aircraft collection count is outside its allowed budget")
             }
@@ -471,6 +475,69 @@ impl core::error::Error for AircraftFormatError {
             _ => None,
         }
     }
+}
+
+impl AircraftFormatError {
+    fn unsupported_schema_version(version: u32) -> Self {
+        Self::UnsupportedSchemaVersion(AircraftValidationIssue {
+            code: AircraftValidationCode::SchemaVersion,
+            path: "/schema_version".into(),
+            value: alloc::format!("{version}"),
+            expected: alloc::format!("schema_version == {AIRCRAFT_SCHEMA_VERSION}"),
+        })
+    }
+
+    /// Typed version or parameter diagnostics supplied by this error.
+    pub fn validation_issues(&self) -> &[AircraftValidationIssue] {
+        match self {
+            Self::Validation(issues) => issues,
+            Self::UnsupportedSchemaVersion(issue) => core::slice::from_ref(issue),
+            _ => &[],
+        }
+    }
+}
+
+/// Reads only the declared version while checking the complete JSON object syntax.
+fn declared_schema_version(input: &str) -> Result<u32, serde_json::Error> {
+    use serde::de::{Error, IgnoredAny, MapAccess, Visitor};
+
+    #[derive(Deserialize)]
+    #[serde(field_identifier, rename_all = "snake_case")]
+    enum Field {
+        SchemaVersion,
+        #[serde(other)]
+        Other,
+    }
+    struct VersionVisitor;
+    impl<'de> Visitor<'de> for VersionVisitor {
+        type Value = u32;
+
+        fn expecting(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            formatter.write_str("an aircraft JSON object with schema_version")
+        }
+
+        fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<u32, M::Error> {
+            let mut version = None;
+            while let Some(field) = map.next_key()? {
+                match field {
+                    Field::SchemaVersion => {
+                        if version.is_some() {
+                            return Err(M::Error::duplicate_field("schema_version"));
+                        }
+                        version = Some(map.next_value::<u32>()?);
+                    }
+                    Field::Other => {
+                        map.next_value::<IgnoredAny>()?;
+                    }
+                }
+            }
+            version.ok_or_else(|| M::Error::missing_field("schema_version"))
+        }
+    }
+    let mut decoder = serde_json::Deserializer::from_str(input);
+    let version = serde::Deserializer::deserialize_map(&mut decoder, VersionVisitor)?;
+    decoder.end()?;
+    Ok(version)
 }
 
 impl AircraftDocument {
@@ -503,6 +570,12 @@ impl AircraftDocument {
     pub fn decode_json(input: &[u8]) -> Result<Self, AircraftFormatError> {
         if input.len() > MAX_AIRCRAFT_JSON_BYTES {
             return Err(AircraftFormatError::InputTooLarge);
+        }
+        let text = core::str::from_utf8(input).map_err(|_| AircraftFormatError::InvalidJson)?;
+        let version =
+            declared_schema_version(text).map_err(|_| AircraftFormatError::InvalidJson)?;
+        if version != AIRCRAFT_SCHEMA_VERSION {
+            return Err(AircraftFormatError::unsupported_schema_version(version));
         }
         let document: Self =
             serde_json::from_slice(input).map_err(|_| AircraftFormatError::InvalidJson)?;

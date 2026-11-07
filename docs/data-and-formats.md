@@ -143,6 +143,7 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - twistの正方向は増加span方向の右手系とし、水平翼では前縁上げ、垂直尾翼では前縁右向きに対応する。mirror翼は左右同じtwistを与え、ゼロは既存station-plane loftと一致する。
 - 尾翼の`actuator`は`incidence_bounds_rad`と`maximum_slew_rad_per_second`を保持する。区間は幾何neutralからのdeltaゼロを含み、controllerの使用限界を経た要求を最後に機械stopと軸別速度へ制限する。
 - JSONの構文・型・未知fieldは入場時に検査し、デコード後の独立したsemantic問題をcode・JSON pointer・入力値・成立条件の一覧として返す。
+- 版の識別: byte上限内のUTF-8 JSON objectから宣言版を先に読み、現行schemaだけを構造decodeへ進める。版不一致は`UnsupportedSchemaVersion`と`/schema_version`の型付き診断、UTF-8・構文・宣言版の型・重複・欠落の不正は`InvalidJson`で拒否する。
 - 構造定義は主桁の端点・半径・曲げ剛性、コックピット断面、パイロット視点と、`members`の主翼・尾翼rib/foam・stringer・cockpit frame・rimの寸法と配置を保持する。
 - `format::AircraftDocument`は文書の構造・有限値・物理値域を検証する。`content::AircraftDefinition`は空力stripの対称性・構造支持点の生成・主翼たわみの定義域・トリム解の成立まで検証し、準備済みstorageを公開する。
 - `content::AircraftDefinition`は文書と変換済みの質量・section・strip・静特性・中立構造支持点を所有する。借用した荷重モデルと構造形状の寿命はこのstorageと結び付く。
