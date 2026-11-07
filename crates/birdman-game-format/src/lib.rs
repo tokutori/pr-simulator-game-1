@@ -38,6 +38,7 @@ extern crate alloc;
 
 pub mod aircraft;
 pub mod controller;
+pub mod external_controller;
 
 /// Independent original JSON sources selectable by the application.
 #[derive(
