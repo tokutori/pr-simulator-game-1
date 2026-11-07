@@ -1059,3 +1059,188 @@ fn display_settings_are_admitted_on_title_setup_and_pause_only() {
     // The flight record identity never carries the display-only selection.
     assert_eq!(application.display_settings().contrast, settings.contrast);
 }
+
+#[test]
+fn hitl_accepted_timeout_retains_last_boundary_first_fault_and_unranked_record() {
+    use crate::{ControllerIoObservation, ControllerIoRequest, SelectedControllerExecution};
+    use birdman_game_format::external_controller::{
+        Admission, ControllerFault, ControllerFrame, ExchangeKind, NativeControllerConnection,
+        NativeControllerDocument,
+    };
+    // Deterministic software observations exercise owner admission; no serial device is opened.
+    let document = NativeControllerDocument {
+        schema_version: 1,
+        connection: NativeControllerConnection::Hitl {
+            port: "software-observations".into(),
+            baud_rate: 2_000_000,
+            hardware_id: "software-fixture".into(),
+            firmware_id: "1".into(),
+        },
+    };
+    let mut application = ApplicationSession::default();
+    application
+        .select_controller_execution(
+            SelectedControllerExecution::decode(serde_json::to_vec(&document).unwrap()).unwrap(),
+        )
+        .unwrap();
+    application
+        .observe_presentation(PresentationObservation::Backend { ready: true })
+        .unwrap();
+    execute(&mut application, SessionCommand::OpenSetup {});
+    execute(
+        &mut application,
+        SessionCommand::SelectWeather {
+            weather: WeatherClass::Calm,
+        },
+    );
+    execute(&mut application, SessionCommand::Prepare {});
+    let opening = application.take_controller_io();
+    let [ControllerIoRequest::Open { generation, .. }] = opening.as_slice() else {
+        panic!("HITL preparation must request one connection");
+    };
+    let generation = *generation;
+    application.observe_controller_time(1.0);
+    application
+        .observe_controller_io(ControllerIoObservation::Opened {
+            generation,
+            failure: None,
+        })
+        .unwrap();
+    let reply = |application: &mut ApplicationSession, expected: ExchangeKind, now: f64| {
+        let requests = application.take_controller_io();
+        let [
+            ControllerIoRequest::Write {
+                generation,
+                write_id,
+                bytes,
+            },
+        ] = requests.as_slice()
+        else {
+            panic!("expected one owner-issued exchange");
+        };
+        let request = ControllerFrame::decode(bytes).unwrap();
+        assert_eq!(request.header().kind, expected);
+        if expected == ExchangeKind::Accepted {
+            assert_eq!(
+                request.accepted_payload().unwrap().admission,
+                Admission::CancelledCandidate
+            );
+        }
+        let response = if expected == ExchangeKind::Evaluate {
+            ControllerFrame::angles(request.header(), [0.0; 2]).unwrap()
+        } else {
+            ControllerFrame::acknowledgement(request.header()).unwrap()
+        };
+        application.observe_controller_time(now);
+        application
+            .observe_controller_io(ControllerIoObservation::Written {
+                generation: *generation,
+                write_id: *write_id,
+                sent_ms: now,
+            })
+            .unwrap();
+        application
+            .observe_controller_io(ControllerIoObservation::Received {
+                generation: *generation,
+                bytes: response.as_bytes().to_vec(),
+                received_ms: now,
+            })
+            .unwrap();
+    };
+    reply(&mut application, ExchangeKind::Init, 1.0);
+    reply(&mut application, ExchangeKind::Evaluate, 2.0);
+    reply(&mut application, ExchangeKind::Accepted, 3.0);
+    assert!(application.controller_execution_ready());
+    application
+        .observe_readiness(BackendReadiness::Ready)
+        .unwrap();
+    launch(&mut application);
+    application.advance_flight_frame(4.0, &[], true).unwrap();
+    application.arm_controller_tick_deadline(24.0);
+    application.advance_flight_frame(14.0, &[], true).unwrap();
+    assert_eq!(
+        application
+            .core_session()
+            .snapshot()
+            .tail_flight_state()
+            .unwrap()
+            .tick_index(),
+        0
+    );
+    reply(&mut application, ExchangeKind::Evaluate, 15.0);
+    application.advance_flight_frame(15.0, &[], true).unwrap();
+    let boundary = application
+        .core_session()
+        .snapshot()
+        .tail_flight_state()
+        .unwrap();
+    assert_eq!(boundary.tick_index(), 1);
+    let requests = application.take_controller_io();
+    let [
+        ControllerIoRequest::Write {
+            generation,
+            write_id,
+            bytes,
+        },
+    ] = requests.as_slice()
+    else {
+        panic!("accepted interval must be acknowledged");
+    };
+    let accepted = ControllerFrame::decode(bytes).unwrap();
+    assert_eq!(accepted.header().kind, ExchangeKind::Accepted);
+    assert_eq!(
+        accepted.accepted_payload().unwrap().admission,
+        Admission::Full
+    );
+    application.observe_controller_time(15.0);
+    application
+        .observe_controller_io(ControllerIoObservation::Written {
+            generation: *generation,
+            write_id: *write_id,
+            sent_ms: 15.0,
+        })
+        .unwrap();
+    assert_eq!(application.controller_next_deadline(), Some(24.0));
+    application.observe_controller_time(24.0);
+    application.observe_controller_deadline().unwrap();
+    assert_eq!(
+        application.core_session().snapshot().phase(),
+        SessionPhase::Result
+    );
+    let fault = application.controller_fault().unwrap().clone();
+    assert_eq!(fault.fault, ControllerFault::DeadlineMissed);
+    application
+        .observe_controller_io(ControllerIoObservation::Failed {
+            generation: *generation,
+            fault: ControllerFault::TransportClosed,
+            cause: "later transport failure".into(),
+        })
+        .unwrap();
+    assert_eq!(application.controller_fault(), Some(&fault));
+    let record = application.core_session().flight_record().unwrap();
+    assert_eq!(record.finalization().unwrap().terminal_tick, 1);
+    assert_eq!(
+        record.terminal_sample().unwrap().flight_state,
+        boundary.flight_state()
+    );
+    let document = application.flight_record_document().unwrap();
+    assert_eq!(document.schema_version, 11);
+    assert_eq!(document.controller_fault.as_ref(), Some(&fault));
+    assert!(
+        !document
+            .control_identity
+            .execution
+            .as_ref()
+            .unwrap()
+            .personal_best_eligible()
+    );
+    assert!(document.header.personal_best_key.is_none());
+    assert!(document.personal_best_candidate_score().unwrap().is_none());
+    assert_eq!(
+        birdman_game_format::TailFlightRecordDocument::decode_json(
+            &document.encode_json().unwrap()
+        )
+        .unwrap(),
+        document
+    );
+}
