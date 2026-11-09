@@ -4394,7 +4394,11 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
         .observe_countdown(token, 3.0, true)
         .unwrap();
     runtime
-        .observe_test(physical_key(KeyboardKey::Up, true, false))
+        .observe_test(ApplicationInput::PhysicalKey {
+            key: KeyboardKey::Up,
+            pressed: true,
+            repeat: false,
+        })
         .unwrap();
     assert!(runtime.application.accepted_flight_keys()[0]);
     runtime
