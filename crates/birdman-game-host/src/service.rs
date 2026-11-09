@@ -458,6 +458,7 @@ async fn run(
         None;
     let mut interval = tokio::time::interval(Duration::from_secs_f64(1.0 / 60.0));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut previous_pulse: Option<Instant> = None;
     loop {
         let io_deadline = io.next_deadline_ms();
         let wake_at = io_deadline
@@ -718,9 +719,26 @@ async fn run(
                     .map_err(|error| error.to_string());
             }
             None => {
+                let started = Instant::now();
+                if let Some(previous) = previous_pulse.replace(started) {
+                    let interval = started.duration_since(previous);
+                    if interval > Duration::from_millis(100) {
+                        eprintln!(
+                            "Host pulse interval: {:.1} ms",
+                            interval.as_secs_f64() * 1000.0
+                        );
+                    }
+                }
                 result = server
                     .pulse(epoch.elapsed().as_secs_f64() * 1000.0)
                     .map_err(|error| error.to_string());
+                let elapsed = started.elapsed();
+                if elapsed > Duration::from_millis(100) {
+                    eprintln!(
+                        "Host pulse handling: {:.1} ms",
+                        elapsed.as_secs_f64() * 1000.0
+                    );
+                }
             }
         }
         for request in server.take_io_requests() {

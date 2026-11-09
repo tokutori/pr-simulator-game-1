@@ -512,6 +512,11 @@ fn until(clients: &mut [Client], condition: impl Fn(&[Client]) -> bool) {
                         view.active_overlay,
                         view.view_revision
                     )),
+                    client.view.as_ref().map(|view| view
+                        .description
+                        .chars()
+                        .take(256)
+                        .collect::<String>()),
                     client.consumed_frame_revision,
                     client.aircraft_position,
                     &client.diagnostic,
