@@ -1358,3 +1358,214 @@ fn hitl_accepted_timeout_retains_last_boundary_first_fault_and_unranked_record()
         );
     }
 }
+
+#[test]
+fn sitl_exchange_deadlines_survive_pause_and_bound_fault_and_abort_cleanup() {
+    use crate::{ControllerIoObservation, ControllerIoRequest, SelectedControllerExecution};
+    use birdman_game_format::external_controller::{
+        ControllerFault, ControllerFrame, ExchangeKind, NativeControllerConnection,
+        NativeControllerDocument, SITL_RESOURCE_POLICY_VERSION,
+    };
+    for scenario in ["evaluate", "accepted", "cancel", "abort"] {
+        eprintln!("SITL exchange scenario: {scenario}");
+        let document = NativeControllerDocument {
+            schema_version: 1,
+            connection: NativeControllerConnection::Sitl {
+                program: "software-observations".into(),
+                arguments: Vec::new(),
+                program_id: "silent".into(),
+                version: "1".into(),
+                binary_sha256: "aa".repeat(32),
+            },
+        };
+        let mut application = ApplicationSession::default();
+        application
+            .select_controller_execution(
+                SelectedControllerExecution::decode(serde_json::to_vec(&document).unwrap())
+                    .unwrap(),
+            )
+            .unwrap();
+        application
+            .observe_presentation(PresentationObservation::Backend { ready: true })
+            .unwrap();
+        execute(&mut application, SessionCommand::OpenSetup {});
+        execute(
+            &mut application,
+            SessionCommand::SelectWeather {
+                weather: WeatherClass::Calm,
+            },
+        );
+        execute(&mut application, SessionCommand::Prepare {});
+        let requests = application.take_controller_io();
+        let [ControllerIoRequest::Open { generation, .. }] = requests.as_slice() else {
+            panic!("expected one SITL connection");
+        };
+        let generation = *generation;
+        application.observe_controller_time(1.0).unwrap();
+        application
+            .observe_controller_io(
+                ControllerIoObservation::Opened {
+                    generation,
+                    failure: None,
+                },
+                true,
+            )
+            .unwrap();
+        let reply = |application: &mut ApplicationSession, expected, now| {
+            let requests = application.take_controller_io();
+            let [
+                ControllerIoRequest::Write {
+                    generation,
+                    write_id,
+                    bytes,
+                },
+            ] = requests.as_slice()
+            else {
+                panic!("expected one exchange");
+            };
+            let request = ControllerFrame::decode(bytes).unwrap();
+            assert_eq!(request.header().kind, expected);
+            let response = if expected == ExchangeKind::Evaluate {
+                ControllerFrame::angles(request.header(), [0.0; 2]).unwrap()
+            } else {
+                ControllerFrame::acknowledgement(request.header()).unwrap()
+            };
+            application.observe_controller_time(now).unwrap();
+            application
+                .observe_controller_io(
+                    ControllerIoObservation::Written {
+                        generation: *generation,
+                        write_id: *write_id,
+                        sent_ms: now,
+                    },
+                    true,
+                )
+                .unwrap();
+            application
+                .observe_controller_io(
+                    ControllerIoObservation::Received {
+                        generation: *generation,
+                        bytes: response.as_bytes().to_vec(),
+                        received_ms: now,
+                    },
+                    true,
+                )
+                .unwrap();
+        };
+        reply(&mut application, ExchangeKind::Init, 1.0);
+        assert!(application.controller_execution_ready());
+        application
+            .observe_readiness(BackendReadiness::Ready)
+            .unwrap();
+        launch(&mut application);
+        for now in [4.0, 14.0] {
+            application.observe_controller_time(now).unwrap();
+            application.advance_flight_frame(now, &[], true).unwrap();
+        }
+        assert_eq!(application.controller_next_deadline(), Some(5_014.0));
+        if scenario == "accepted" {
+            reply(&mut application, ExchangeKind::Evaluate, 15.0);
+            application.advance_flight_frame(15.0, &[], true).unwrap();
+            assert_eq!(application.controller_next_deadline(), Some(5_015.0));
+        }
+        application.observe_controller_time(16.0).unwrap();
+        if matches!(scenario, "accepted" | "cancel") {
+            execute(&mut application, SessionCommand::Pause {});
+            assert_eq!(
+                application.controller_next_deadline(),
+                Some(if scenario == "accepted" {
+                    5_015.0
+                } else {
+                    5_016.0
+                })
+            );
+        } else if scenario == "abort" {
+            execute(&mut application, SessionCommand::Abort {});
+        }
+        let requests = application.take_controller_io();
+        let expected = match scenario {
+            "evaluate" => ExchangeKind::Evaluate,
+            "abort" => ExchangeKind::Finish,
+            _ => ExchangeKind::Accepted,
+        };
+        assert_eq!(
+            requests
+                .iter()
+                .filter_map(|request| match request {
+                    ControllerIoRequest::Write { bytes, .. } =>
+                        Some(ControllerFrame::decode(bytes).unwrap().header().kind),
+                    _ => None,
+                })
+                .next_back(),
+            Some(expected)
+        );
+        let deadline = application.controller_next_deadline().unwrap();
+        if scenario == "abort" {
+            assert_eq!(deadline, 116.0);
+        }
+        application.observe_controller_time(deadline - 0.5).unwrap();
+        if scenario == "evaluate" {
+            application
+                .advance_flight_frame(deadline - 0.5, &[], true)
+                .unwrap();
+        }
+        application.observe_controller_deadline().unwrap();
+        assert!(application.controller_fault().is_none());
+        application.observe_controller_time(deadline).unwrap();
+        application.observe_controller_deadline().unwrap();
+        if scenario != "abort" {
+            assert_eq!(
+                application.controller_fault().unwrap().fault,
+                ControllerFault::DeadlineMissed
+            );
+            assert_eq!(
+                application.controller_next_deadline(),
+                Some(deadline + 100.0)
+            );
+            assert!(application.take_controller_io().iter().any(|request| matches!(request, ControllerIoRequest::Write { bytes, .. } if ControllerFrame::decode(bytes).unwrap().header().kind == ExchangeKind::Finish)));
+            application
+                .observe_controller_time(deadline + 100.0)
+                .unwrap();
+            application.observe_controller_deadline().unwrap();
+        }
+        assert!(matches!(
+            application.take_controller_io().as_slice(),
+            [ControllerIoRequest::Close { .. }]
+        ));
+        if scenario != "abort" {
+            if scenario != "evaluate" {
+                execute(&mut application, SessionCommand::Resume {});
+            }
+            let tick = application
+                .core_session()
+                .snapshot()
+                .tail_flight_state()
+                .unwrap()
+                .tick_index();
+            for now in [deadline + 101.0, deadline + 111.0] {
+                application.observe_controller_time(now).unwrap();
+                application.advance_flight_frame(now, &[], true).unwrap();
+            }
+            assert!(
+                application
+                    .core_session()
+                    .snapshot()
+                    .tail_flight_state()
+                    .unwrap()
+                    .tick_index()
+                    > tick
+            );
+        }
+        let descriptor = application
+            .prepared()
+            .unwrap()
+            .record_identity
+            .execution
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            descriptor.resource_policy_version,
+            SITL_RESOURCE_POLICY_VERSION
+        );
+    }
+}

@@ -88,7 +88,12 @@ impl SelectedControllerExecution {
         };
         ControllerExecutionDescriptor {
             abi_version: ABI_VERSION,
-            resource_policy_version: RESOURCE_POLICY_VERSION,
+            resource_policy_version: if matches!(artifact, ControllerArtifactIdentity::Sitl { .. })
+            {
+                SITL_RESOURCE_POLICY_VERSION
+            } else {
+                RESOURCE_POLICY_VERSION
+            },
             controller_id: settings.document().controller_id.clone(),
             controller_sha256: settings.raw_sha256().into(),
             artifact,
@@ -466,7 +471,7 @@ impl ControllerExecutionState {
                     if active.hitl {
                         active.tick_deadline_ms
                     } else {
-                        None
+                        Some(now + SITL_EXCHANGE_TIMEOUT_MILLISECONDS)
                     }
                 }
             };
@@ -776,7 +781,9 @@ impl ControllerExecutionState {
                 return;
             }
         } else if active.angles.is_none() {
-            if let Some(p) = active.pending.as_mut() {
+            if active.hitl
+                && let Some(p) = active.pending.as_mut()
+            {
                 p.deadline_ms = None;
             }
             return;
@@ -793,7 +800,9 @@ impl ControllerExecutionState {
         if let Ok(frame) = ControllerFrame::accepted(header, payload) {
             Self::send(active, frame, None, now, &mut self.requests);
         }
-        if let Some(p) = active.pending.as_mut() {
+        if active.hitl
+            && let Some(p) = active.pending.as_mut()
+        {
             p.deadline_ms = None;
         }
     }

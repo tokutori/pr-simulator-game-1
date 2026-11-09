@@ -1839,6 +1839,37 @@ fn external_record_retains_real_hardware_report_and_excludes_hitl_from_personal_
     )
     .unwrap();
     assert_eq!(restored.samples, source.samples);
+    let mut sitl = source.clone();
+    let descriptor = sitl.control_identity.execution.as_mut().unwrap();
+    descriptor.artifact = ControllerArtifactIdentity::Sitl {
+        program_id: "sample".into(),
+        version: "1".into(),
+        binary_sha256: "bb".repeat(32),
+        arguments: Vec::new(),
+    };
+    let legacy_identity = descriptor.digest();
+    sitl.to_finalized_core_record().unwrap();
+    sitl.control_identity
+        .execution
+        .as_mut()
+        .unwrap()
+        .resource_policy_version = crate::external_controller::SITL_RESOURCE_POLICY_VERSION;
+    assert_ne!(
+        sitl.control_identity.execution.as_ref().unwrap().digest(),
+        legacy_identity
+    );
+    sitl.to_finalized_core_record().unwrap();
+    for policy in [0, 3] {
+        sitl.control_identity
+            .execution
+            .as_mut()
+            .unwrap()
+            .resource_policy_version = policy;
+        assert!(sitl.validate().is_err());
+    }
+    let mut unsupported = source.control_identity.execution.clone().unwrap();
+    unsupported.resource_policy_version = crate::external_controller::SITL_RESOURCE_POLICY_VERSION;
+    assert!(unsupported.validate().is_err());
     let mut mismatched_header = external.header();
     let Some(birdman_game_core::ControllerExecution::External { identity, .. }) =
         &mut mismatched_header.execution

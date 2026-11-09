@@ -8,8 +8,12 @@ use sha2::{Digest, Sha256};
 pub const ABI_VERSION: u16 = 1;
 /// Resource policy incorporated into the execution identity.
 pub const RESOURCE_POLICY_VERSION: u32 = 1;
+/// Lockstep process exchanges include a bounded response interval.
+pub const SITL_RESOURCE_POLICY_VERSION: u32 = 2;
 /// Maximum Native initialization interval, including cold controller preparation.
 pub const INITIALIZATION_TIMEOUT_MILLISECONDS: f64 = 5_000.0;
+/// Maximum receipt interval for each SITL Evaluate or Accepted exchange.
+pub const SITL_EXCHANGE_TIMEOUT_MILLISECONDS: f64 = 5_000.0;
 /// One complete steady-state HITL exchange shares this physical interval.
 pub const HITL_INTERVAL_MILLISECONDS: f64 = birdman_game_core::PHYSICS_DT_SECONDS * 1_000.0;
 /// Bounded best-effort Finish notification and acknowledgement interval.
@@ -908,8 +912,11 @@ impl ControllerExecutionDescriptor {
                 baud_rate,
             } => text(hardware_id) && text(firmware_id) && *baud_rate > 0,
         };
+        let policy = self.resource_policy_version == RESOURCE_POLICY_VERSION
+            || (matches!(self.artifact, ControllerArtifactIdentity::Sitl { .. })
+                && self.resource_policy_version == SITL_RESOURCE_POLICY_VERSION);
         if self.abi_version != ABI_VERSION
-            || self.resource_policy_version != RESOURCE_POLICY_VERSION
+            || !policy
             || !text(&self.controller_id)
             || !sha(&self.controller_sha256)
             || !artifact
