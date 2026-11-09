@@ -654,7 +654,7 @@ export class ThreeApplicationRenderer {
         let permission: Promise<XRSession>;
         try {
           if (navigator.xr === undefined) throw new Error("WebXR is unavailable");
-          permission = navigator.xr.requestSession("immersive-vr", { requiredFeatures: ["local"] });
+          permission = navigator.xr.requestSession("immersive-vr", { requiredFeatures: ["local"], optionalFeatures: ["hand-tracking"] });
         } catch (cause) {
           this.notify({ kind: "display_completed", request_id: request.request_id, completion: { kind: "failed", cause: errorMessage(cause) } });
           return;

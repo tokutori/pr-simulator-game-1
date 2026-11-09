@@ -213,6 +213,7 @@ class XrSession extends EventTarget {
   readonly renderState: XRRenderStateInit = {};
   private pendingRenderState: XRRenderStateInit | null = null;
   readonly enabledFeatures: readonly string[] = [];
+  sessionInit: XRSessionInit | null = null;
   readonly environmentBlendMode = "opaque";
   visibilityState: XRVisibilityState = "visible";
   head: Pose = { position: { x: 0.1, y: 1.6, z: -0.1 }, orientation: { w: 1, x: 0, y: 0, z: 0 } };
@@ -262,7 +263,7 @@ async function fixture() {
   Object.defineProperty(browser.document, "fonts", { value: Object.assign(new browser.EventTarget(), { ready: Promise.resolve() }) });
   Object.defineProperty(browser, "indexedDB", { value: new IDBFactory() });
   const session = new XrSession();
-  Object.defineProperty(browser.navigator, "xr", { value: { requestSession: () => Promise.resolve(session) } });
+  Object.defineProperty(browser.navigator, "xr", { value: { requestSession: (_mode: string, init: XRSessionInit) => { session.sessionInit = init; return Promise.resolve(session); } } });
   for (const [key, value] of Object.entries({ window: browser, document: browser.document, navigator: browser.navigator,
     HTMLElement: browser.HTMLElement, HTMLInputElement: browser.HTMLInputElement, HTMLSelectElement: browser.HTMLSelectElement,
     MutationObserver: browser.MutationObserver, getComputedStyle: browser.getComputedStyle.bind(browser), XRWebGLLayer: XrLayer,
@@ -711,6 +712,55 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       expect(shadowRelease).toHaveBeenCalled();
       if (fault === "commit rollback") expect(diagnostic).toHaveBeenCalled();
       else if (fault === "cancelled cleanup") expect(state.updates.mock.calls.some(([json]) => json.includes("physical target release failed"))).toBe(true);
+    } finally { state.dispose(); await flush(); await state.browser.happyDOM.abort(); }
+  });
+
+  it("operates the spatial menu with a hand input source", async () => {
+    const state = await fixture();
+    try {
+      await state.ready();
+      state.click("boot-enter-hmd");
+      await flush();
+      expect(state.session.sessionInit).toEqual({ requiredFeatures: ["local"], optionalFeatures: ["hand-tracking"] });
+      state.frame(10);
+      await flush();
+      state.frame(11);
+      const opening = state.drawing();
+      const menu = opening.spatial?.menu;
+      if (menu?.kind !== "ready" || opening.scene.camera == null) throw new Error("Current tracked Menu is unavailable");
+      const currentView = state.updates.mock.results
+        .filter(result => result.type === "return")
+        .map(result => (JSON.parse(result.value) as ApplicationOutput).drawing?.ui)
+        .findLast(ui => ui?.kind === "view");
+      if (currentView?.kind !== "view") throw new Error("Current shared View is unavailable");
+      const start = currentView.view.panels.flatMap(panel => panel.controls).find(control => control.id === "game-title-start");
+      if (start === undefined) throw new Error("Current shared View omitted its start control");
+      const label = text(menu.paint.content.items, start.label);
+      if (label === undefined) throw new Error("Shared painting omitted its start label");
+      const before = poseMatrix(menu.world_from_panel);
+      const point = new Vector3(label.anchor.x + label.fontMeters * 0.3 - menu.paint.size.width / 2,
+        menu.paint.size.height / 2 - label.anchor.y + label.fontMeters * 0.3, 0).applyMatrix4(before);
+      const origin = new Vector3().setFromMatrixPosition(poseMatrix(opening.scene.camera.world_from_head ?? state.session.head));
+      const ray = new Matrix4().compose(origin, new Quaternion().setFromUnitVectors(new Vector3(0, 0, -1), point.sub(origin).normalize()), new Vector3(1, 1, 1));
+      state.session.pointer = matrixPose(poseMatrix(state.session.head).multiply(poseMatrix(opening.scene.camera.world_from_head ?? state.session.head).invert()).multiply(ray));
+      const hand = { targetRayMode: "tracked-pointer", targetRaySpace: {}, profiles: ["generic-hand"], handedness: "left", gripSpace: {}, gamepad: null, hand: {} } as unknown as XRInputSource;
+      state.session.inputSources.push(hand);
+      state.frame(20);
+      const rawFrame = state.updates.mock.calls.map(([json]) => (JSON.parse(json) as ApplicationObservation).input)
+        .findLast(input => input.kind === "frame");
+      expect(rawFrame?.kind === "frame" ? rawFrame.spatial.sources : null).toEqual([{
+        source_id: 1, target_ray_mode: "tracked-pointer", handedness: "left", tracking_from_ray: state.session.pointer,
+        select_pressed: null, gamepad: null
+      }]);
+      const hovered = state.drawing().spatial?.menu;
+      if (hovered?.kind !== "ready" || hovered.cursors.length !== 1) throw new Error("Hand ray did not produce a shared cursor");
+      state.session.select(21, hand);
+      const afterSelect = state.updates.mock.results
+        .filter(result => result.type === "return")
+        .map(result => (JSON.parse(result.value) as ApplicationOutput).drawing?.ui)
+        .findLast(ui => ui?.kind === "view");
+      if (afterSelect?.kind !== "view") throw new Error("Shared View is unavailable after hand select");
+      expect(afterSelect.view.panels.flatMap(panel => panel.controls).some(control => control.id === "game-setup-start")).toBe(true);
     } finally { state.dispose(); await flush(); await state.browser.happyDOM.abort(); }
   });
 });
