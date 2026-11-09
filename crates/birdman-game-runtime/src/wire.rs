@@ -200,18 +200,18 @@ pub(super) struct BufferManifest {
     pub key: ApplicationBufferKey,
     pub data_type: ApplicationBufferType,
     pub byte_length: u32,
-    pub transfer_id: u64,
+    pub transfer_id: Option<u64>,
 }
 
 impl BufferManifest {
-    pub(super) fn transfer(&self) -> TransferManifest {
-        TransferManifest {
-            transfer_id: self.transfer_id,
+    pub(super) fn transfer(&self) -> Option<TransferManifest> {
+        Some(TransferManifest {
+            transfer_id: self.transfer_id?,
             kind: BinaryKind::RenderBuffer,
             local_id: self.key.buffer_id,
             revision: self.key.revision,
             byte_length: self.byte_length,
-        }
+        })
     }
 }
 
@@ -234,6 +234,7 @@ pub(super) enum ConfigurationResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum CanonicalInput {
+    Action { action: GameUiAction },
     Observation {
         input: Box<ApplicationInput>,
     },
@@ -274,6 +275,7 @@ pub(super) enum ClientMessage {
         protocol_version: u32,
         identity: ApplicationHostIdentity,
         platform: Box<ApplicationPlatformObservation>,
+        presentation: Box<birdman_game_presentation::game_ui::GameUiPlatformInput>,
     },
     Input {
         actor: ActorScope,
@@ -285,6 +287,14 @@ pub(super) enum ClientMessage {
     Platform {
         peer: PeerScope,
         observation: Box<ApplicationPlatformObservation>,
+    },
+    EndpointStatus {
+        peer: PeerScope,
+        resource_epoch: Option<u32>,
+        mode: Option<birdman_game_presentation::game_ui::GameUiPresentationMode>,
+        visible: bool,
+        input_focused: bool,
+        presentation: Box<birdman_game_presentation::game_ui::GameUiPlatformInput>,
     },
     Heartbeat {
         peer: PeerScope,
@@ -306,7 +316,6 @@ pub(super) enum ClientMessage {
     PrepareAssets {
         peer: PeerScope,
         request_id: u32,
-        resource_epoch: u32,
         target: ApplicationGraphicsTarget,
     },
     ReleaseAssets {
@@ -325,6 +334,7 @@ pub(super) enum ClientMessage {
 #[serde(deny_unknown_fields)]
 pub(super) struct PublishedFrame {
     pub frame_id: u64,
+    pub assets_generation: u64,
     pub resource_epoch: u32,
     pub view_revision: u32,
     pub server_time_ms: f64,
@@ -364,6 +374,7 @@ pub(super) enum ServerMessage {
         peer: PeerScope,
         view: Arc<GameUiView>,
         keyboard: KeyboardControlSettings,
+        keyboard_consumption: super::keyboard::KeyboardConsumption,
         grants: Vec<ActivationGrant>,
     },
     Frame {
@@ -373,7 +384,8 @@ pub(super) enum ServerMessage {
     Assets {
         peer: PeerScope,
         request_id: u32,
-        resource_epoch: u32,
+        assets_generation: u64,
+        aircraft_identity: [u8; 32],
         target: ApplicationGraphicsTarget,
         assets: Box<ApplicationEnvironmentAssets>,
         buffers: Vec<BufferManifest>,
@@ -381,7 +393,6 @@ pub(super) enum ServerMessage {
     AssetsFailed {
         peer: PeerScope,
         request_id: u32,
-        resource_epoch: u32,
         cause: String,
     },
     Effect {
@@ -401,6 +412,7 @@ pub(super) enum ServerMessage {
 pub(super) enum WireError {
     Invalid(&'static str),
     Json(serde_json::Error),
+    Transport(String),
 }
 
 impl fmt::Display for WireError {
@@ -408,6 +420,7 @@ impl fmt::Display for WireError {
         match self {
             Self::Invalid(message) => formatter.write_str(message),
             Self::Json(error) => error.fmt(formatter),
+            Self::Transport(cause) => formatter.write_str(cause),
         }
     }
 }
