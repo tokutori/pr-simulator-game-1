@@ -72,14 +72,178 @@ pub struct ApplicationSceneProjection {
 }
 
 pub(super) struct SceneContext<'a> {
-    pub application: &'a ApplicationSession,
-    pub ui: &'a GameUiState,
+    pub source: &'a SceneSource,
     pub viewport: &'a GameUiViewport,
     pub display: Option<(GameUiPresentationMode, Option<u32>)>,
     pub xr_viewer: Option<&'a XrViewerFrame>,
     pub phone_head: Option<Pose>,
     pub render_extent_px: Option<[u32; 2]>,
     pub venue_visible: bool,
+}
+
+/// Immutable accepted application values; tracking and display resources belong to the endpoint.
+pub(super) struct SceneSource {
+    phase: SessionPhase,
+    aircraft: Option<FlightRenderPose>,
+    world_from_aircraft: Pose,
+    camera: CameraSource,
+}
+
+enum CameraSource {
+    Stationary {
+        world_from_tracking: Pose,
+    },
+    Airframe {
+        pilot_eye_offset_frd_m: [f64; 3],
+        chase: bool,
+    },
+    Cinematic {
+        world_from_tracking: Pose,
+        vertical_field_of_view_degrees: f64,
+    },
+}
+
+impl SceneSource {
+    pub(super) fn capture(
+        application: &ApplicationSession,
+        ui: &GameUiState,
+    ) -> Result<Self, ApplicationRuntimeError> {
+        let phase = application.core_session().snapshot().phase();
+        let replay = if matches!(phase, SessionPhase::Replay | SessionPhase::Attract)
+            && application.replay_available()
+        {
+            let session = application.core_session();
+            let record = session
+                .playback_record()
+                .ok_or(ApplicationRuntimeError::Session(
+                    birdman_game_core::GameSessionError::InvalidTransition,
+                ))?;
+            let clock = session
+                .playback_clock()
+                .ok_or(ApplicationRuntimeError::Session(
+                    birdman_game_core::GameSessionError::InvalidTransition,
+                ))?;
+            Some(
+                replay_camera_view(
+                    record,
+                    application.display_control_identity(),
+                    application.aircraft().map_err(|_| {
+                        ApplicationRuntimeError::Camera(CameraError::AircraftUnavailable)
+                    })?,
+                    clock.time_seconds(),
+                    ui.replay_camera,
+                    phase == SessionPhase::Attract,
+                )
+                .map_err(ApplicationRuntimeError::ReplayCamera)?,
+            )
+        } else {
+            None
+        };
+        let aircraft = if let Some(view) = &replay {
+            Some(view.render_pose())
+        } else if matches!(
+            phase,
+            SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. } | SessionPhase::Result
+        ) {
+            live_render_pose(application).map_err(ApplicationRuntimeError::RenderPose)?
+        } else {
+            prepared_render_pose(application).map_err(ApplicationRuntimeError::RenderPose)?
+        };
+        let world_from_aircraft = match aircraft {
+            Some(flight) => {
+                let datum = flight.datum_position_ned;
+                let rotation = flight.attitude_body_to_ned;
+                flight_relative_pose(
+                    [datum.north, datum.east, datum.down],
+                    Quaternion {
+                        w: rotation.w,
+                        x: rotation.x,
+                        y: rotation.y,
+                        z: rotation.z,
+                    },
+                    Pose::IDENTITY,
+                )
+                .map_err(ApplicationRuntimeError::Camera)?
+            }
+            None => {
+                let venue = launch_venue().map_err(ApplicationRuntimeError::Venue)?;
+                let half_heading = venue.platform.heading_rad() / 2.0;
+                Pose {
+                    position: Vector3 {
+                        x: 0.0,
+                        y: venue.platform.front_lip_above_water_meters,
+                        z: 0.0,
+                    },
+                    orientation: Quaternion {
+                        w: half_heading.cos(),
+                        x: 0.0,
+                        y: -half_heading.sin(),
+                        z: 0.0,
+                    },
+                }
+            }
+        };
+        let camera = if aircraft.is_some()
+            && matches!(
+                phase,
+                SessionPhase::Countdown { .. }
+                    | SessionPhase::FlightRunning
+                    | SessionPhase::FlightPaused { .. }
+                    | SessionPhase::Result
+                    | SessionPhase::Replay
+                    | SessionPhase::Attract
+            ) {
+            if let Some(camera) = replay.as_ref().and_then(|view| view.cinematic()) {
+                let [x, y, z] = camera.position_m();
+                let [w, first, second, third] = camera.orientation_wxyz();
+                CameraSource::Cinematic {
+                    world_from_tracking: Pose {
+                        position: Vector3 { x, y, z },
+                        orientation: Quaternion {
+                            w,
+                            x: first,
+                            y: second,
+                            z: third,
+                        },
+                    },
+                    vertical_field_of_view_degrees: camera.vertical_field_of_view_degrees(),
+                }
+            } else {
+                CameraSource::Airframe {
+                    pilot_eye_offset_frd_m: application
+                        .aircraft()
+                        .map_err(|_| {
+                            ApplicationRuntimeError::Camera(CameraError::AircraftUnavailable)
+                        })?
+                        .definition()
+                        .document()
+                        .structure
+                        .pilot_eye_offset_frd_m,
+                    chase: replay
+                        .as_ref()
+                        .map_or(ui.flight_camera == GameUiFlightCamera::Chase, |view| {
+                            view.camera() != GameUiReplayCamera::Pilot
+                        }),
+                }
+            }
+        } else {
+            CameraSource::Stationary {
+                world_from_tracking: birdman_game_presentation::camera::exhibition_camera_pose(
+                    launch_venue()
+                        .map_err(ApplicationRuntimeError::Venue)?
+                        .platform
+                        .horizontal_direction_ned(),
+                )
+                .map_err(ApplicationRuntimeError::Camera)?,
+            }
+        };
+        Ok(Self {
+            phase,
+            aircraft,
+            world_from_aircraft,
+            camera,
+        })
+    }
 }
 
 pub(super) struct SceneFrame {
@@ -145,7 +309,9 @@ impl SceneOwner {
         let mode = context
             .display
             .map_or(GameUiPresentationMode::Screen, |(mode, _)| mode);
-        let phase = context.application.core_session().snapshot().phase();
+        let phase = context.source.phase;
+        let aircraft = context.source.aircraft;
+        let world_from_aircraft = context.source.world_from_aircraft;
         if !matches!(
             phase,
             SessionPhase::FlightRunning
@@ -156,84 +322,6 @@ impl SceneOwner {
         ) {
             self.look = [0.0; 2];
         }
-        let replay = if matches!(phase, SessionPhase::Replay | SessionPhase::Attract)
-            && context.application.replay_available()
-        {
-            let session = context.application.core_session();
-            let record = session
-                .playback_record()
-                .ok_or(ApplicationRuntimeError::Session(
-                    birdman_game_core::GameSessionError::InvalidTransition,
-                ))?;
-            let clock = session
-                .playback_clock()
-                .ok_or(ApplicationRuntimeError::Session(
-                    birdman_game_core::GameSessionError::InvalidTransition,
-                ))?;
-            Some(
-                replay_camera_view(
-                    record,
-                    context.application.display_control_identity(),
-                    context.application.aircraft().map_err(|_| {
-                        ApplicationRuntimeError::Camera(
-                            birdman_game_presentation::camera::CameraError::AircraftUnavailable,
-                        )
-                    })?,
-                    clock.time_seconds(),
-                    context.ui.replay_camera,
-                    phase == SessionPhase::Attract,
-                )
-                .map_err(ApplicationRuntimeError::ReplayCamera)?,
-            )
-        } else {
-            None
-        };
-        let aircraft = if let Some(view) = &replay {
-            Some(view.render_pose())
-        } else if matches!(
-            phase,
-            SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. } | SessionPhase::Result
-        ) {
-            live_render_pose(context.application).map_err(ApplicationRuntimeError::RenderPose)?
-        } else {
-            prepared_render_pose(context.application)
-                .map_err(ApplicationRuntimeError::RenderPose)?
-        };
-        let world_from_aircraft = match aircraft {
-            Some(flight) => {
-                let datum = flight.datum_position_ned;
-                let rotation = flight.attitude_body_to_ned;
-                flight_relative_pose(
-                    [datum.north, datum.east, datum.down],
-                    Quaternion {
-                        w: rotation.w,
-                        x: rotation.x,
-                        y: rotation.y,
-                        z: rotation.z,
-                    },
-                    Pose::IDENTITY,
-                )
-            }
-            None => Ok(launch_venue()
-                .map_err(ApplicationRuntimeError::Venue)
-                .map(|venue| {
-                    let half_heading = venue.platform.heading_rad() / 2.0;
-                    Pose {
-                        position: Vector3 {
-                            x: 0.0,
-                            y: venue.platform.front_lip_above_water_meters,
-                            z: 0.0,
-                        },
-                        orientation: Quaternion {
-                            w: half_heading.cos(),
-                            x: 0.0,
-                            y: -half_heading.sin(),
-                            z: 0.0,
-                        },
-                    }
-                })?),
-        }
-        .map_err(ApplicationRuntimeError::Camera)?;
         let Some(display) = context.display else {
             self.rig = None;
             self.reference = None;
@@ -260,72 +348,59 @@ impl SceneOwner {
             self.resource = Some(display);
             self.origin = XrTrackingOrigin::default();
         }
-        let chase = replay.as_ref().map_or(
-            context.ui.flight_camera == GameUiFlightCamera::Chase,
-            |view| view.camera() != GameUiReplayCamera::Pilot,
-        );
         let look = if mode == GameUiPresentationMode::Screen {
             self.look
         } else {
             [0.0; 2]
         };
-        let cinematic = replay.as_ref().and_then(|view| view.cinematic());
-        let fov = cinematic.map_or(
-            birdman_game_presentation::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES,
-            |camera| camera.vertical_field_of_view_degrees(),
-        );
-        let mount = if let Some(flight) = aircraft.filter(|_| {
-            matches!(
-                phase,
-                SessionPhase::Countdown { .. }
-                    | SessionPhase::FlightRunning
-                    | SessionPhase::FlightPaused { .. }
-                    | SessionPhase::Result
-                    | SessionPhase::Replay
-                    | SessionPhase::Attract
-            )
-        }) {
-            if let Some(camera) = cinematic {
-                let [x, y, z] = camera.position_m();
-                let [w, first, second, third] = camera.orientation_wxyz();
-                XrCameraMount::External {
-                    world_from_tracking: Pose {
-                        position: Vector3 { x, y, z },
-                        orientation: Quaternion {
-                            w,
-                            x: first,
-                            y: second,
-                            z: third,
-                        },
-                    },
-                }
-            } else if chase {
-                XrCameraMount::External {
-                    world_from_tracking: flight_camera_pose(&flight, true, look, pilot_eye(context.application.aircraft().map_err(|_| ApplicationRuntimeError::Camera(birdman_game_presentation::camera::CameraError::AircraftUnavailable))?.definition().document().structure.pilot_eye_offset_frd_m))
+        let (mount, fov) = match &context.source.camera {
+            CameraSource::Stationary {
+                world_from_tracking,
+            } => (
+                XrCameraMount::Stationary {
+                    world_from_tracking: *world_from_tracking,
+                },
+                birdman_game_presentation::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES,
+            ),
+            CameraSource::Airframe {
+                pilot_eye_offset_frd_m,
+                chase,
+            } => {
+                let flight = aircraft.ok_or(ApplicationRuntimeError::Camera(
+                    CameraError::AircraftUnavailable,
+                ))?;
+                let eye = pilot_eye(*pilot_eye_offset_frd_m);
+                let mount = if *chase {
+                    XrCameraMount::External {
+                        world_from_tracking: flight_camera_pose(&flight, true, look, eye)
+                            .map_err(ApplicationRuntimeError::Camera)?,
+                    }
+                } else {
+                    XrCameraMount::Aircraft {
+                        aircraft_from_tracking: camera_local_pose(
+                            eye,
+                            flight.pilot_position_meters,
+                            flight.initial_pilot_position_meters,
+                            false,
+                            look,
+                        )
                         .map_err(ApplicationRuntimeError::Camera)?,
-                }
-            } else {
-                XrCameraMount::Aircraft {
-                    aircraft_from_tracking: camera_local_pose(
-                        pilot_eye(context.application.aircraft().map_err(|_| ApplicationRuntimeError::Camera(birdman_game_presentation::camera::CameraError::AircraftUnavailable))?.definition().document().structure.pilot_eye_offset_frd_m),
-                        flight.pilot_position_meters,
-                        flight.initial_pilot_position_meters,
-                        false,
-                        look,
-                    )
-                    .map_err(ApplicationRuntimeError::Camera)?,
-                }
-            }
-        } else {
-            XrCameraMount::Stationary {
-                world_from_tracking: birdman_game_presentation::camera::exhibition_camera_pose(
-                    launch_venue()
-                        .map_err(ApplicationRuntimeError::Venue)?
-                        .platform
-                        .horizontal_direction_ned(),
+                    }
+                };
+                (
+                    mount,
+                    birdman_game_presentation::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES,
                 )
-                .map_err(ApplicationRuntimeError::Camera)?,
             }
+            CameraSource::Cinematic {
+                world_from_tracking,
+                vertical_field_of_view_degrees,
+            } => (
+                XrCameraMount::External {
+                    world_from_tracking: *world_from_tracking,
+                },
+                *vertical_field_of_view_degrees,
+            ),
         };
         let rig = self
             .origin

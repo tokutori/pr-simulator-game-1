@@ -1584,9 +1584,9 @@ impl ApplicationRuntime {
                 frame: Box::new(frame),
             }
         };
+        let scene_source = scene::SceneSource::capture(&self.application, &self.ui)?;
         let mut scene_frame = self.scene.project(scene::SceneContext {
-            application: &self.application,
-            ui: &self.ui,
+            source: &scene_source,
             viewport: &self.platform.viewport,
             display: self
                 .display
