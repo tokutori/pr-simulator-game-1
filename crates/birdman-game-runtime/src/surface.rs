@@ -319,16 +319,23 @@ impl SurfaceOwner {
         &mut self,
         presentation_id: u32,
         pointer: ApplicationPointerObservation,
+        focused: bool,
         timestamp_ms: f64,
     ) -> Result<Option<SurfaceAction>, ApplicationRuntimeError> {
         if !self.acknowledge(Some(presentation_id))? {
             return Ok(None);
         }
         let panel_pose = self.published.as_ref().unwrap().panel_pose;
-        let Some(ray) = pointer_ray(pointer) else {
+        let Some(ray) = pointer_ray(&pointer) else {
             return Ok(None);
         };
-        let Some(hit) = self.pointer.select_on_panel(ray, timestamp_ms, panel_pose) else {
+        let Some(hit) = self.pointer.select_on_panel(
+            ray,
+            &pointer.target_ray_mode,
+            focused,
+            timestamp_ms,
+            panel_pose,
+        ) else {
             return Ok(None);
         };
         Ok(self.activate(hit))
@@ -707,10 +714,10 @@ impl SurfaceOwner {
     }
 }
 
-fn pointer_ray(observation: ApplicationPointerObservation) -> Option<XrPointerRay> {
+fn pointer_ray(observation: &ApplicationPointerObservation) -> Option<XrPointerRay> {
     let pose = compose_pose(Pose::IDENTITY, observation.tracking_from_ray).ok()?;
     Some(XrPointerRay {
-        source: XrPointerSource::Controller {
+        source: XrPointerSource::InputSource {
             id: observation.source_id,
         },
         reference_from_space: pose,
@@ -730,7 +737,7 @@ fn pointer_ray(observation: ApplicationPointerObservation) -> Option<XrPointerRa
 fn cursor(hit: &XrPointerHit, progress: f64) -> MenuCursor {
     MenuCursor {
         point: hit.point,
-        progress: if matches!(hit.source, XrPointerSource::Controller { .. }) {
+        progress: if matches!(hit.source, XrPointerSource::InputSource { .. }) {
             1.0
         } else {
             progress

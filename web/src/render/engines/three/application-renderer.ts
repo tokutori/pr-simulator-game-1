@@ -731,7 +731,8 @@ export class ThreeApplicationRenderer {
         const select = (event: XRInputSourceEvent): void => {
           const pose = event.frame.getPose(event.inputSource.targetRaySpace, reference);
           if (pose != null && this.presented_id !== null) this.notify({ kind: "xr_select", display_resource_id: id,
-            presentation_id: this.presented_id, pointer: { source_id: this.sourceId(event.inputSource), tracking_from_ray: xrPose(pose.transform) }, timestamp_ms: performance.now() });
+            presentation_id: this.presented_id, pointer: { source_id: this.sourceId(event.inputSource), target_ray_mode: event.inputSource.targetRayMode,
+              tracking_from_ray: xrPose(pose.transform) }, timestamp_ms: performance.now() });
         };
         reference.addEventListener("reset", reset);
         handle.session.addEventListener("select", select);

@@ -563,13 +563,16 @@ fn gamepad_waits_for_neutral_and_crosses_the_confirmed_pilot_target_before_takeo
         acquired.pilot_motion_admission(),
         TailPilotMotionAdmission::Rearmed
     );
+    input.retire_surface();
+    let continued = tick(&mut input, &[sample], 0.4).unwrap();
+    assert_eq!(continued.manual_intent(), acquired.manual_intent());
+    assert_eq!(set_value(continued), 1.0);
     assert_eq!(
-        tick(&mut input, &[sample], 0.4)
-            .unwrap()
-            .pilot_motion_admission(),
+        continued.pilot_motion_admission(),
         TailPilotMotionAdmission::Continued
     );
     input.observe_pilot_stop(true);
+    input.retire_surface();
     assert_eq!(
         tick(&mut input, &[sample], 0.4)
             .unwrap()
@@ -606,6 +609,7 @@ fn gamepad_waits_for_neutral_and_crosses_the_confirmed_pilot_target_before_takeo
         TailPilotMotionAdmission::Rearmed
     );
     key(&mut input, FlightControlKey::ArrowUp, false, false);
+    input.retire_surface();
     assert_eq!(input.pilot_rearm_pending, Some(PilotRearmSource::Gamepad));
     input.confirm_tick(pending, true);
     assert!(matches!(

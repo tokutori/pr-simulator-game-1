@@ -60,7 +60,7 @@
 | --- | --- |
 | `role` | `main_wing`・`horizontal_tail`・`vertical_tail` のいずれか |
 | `mirror_span` | 断面列をスパン座標0について鏡像にするか。主翼と水平尾翼は通常 `true`、垂直尾翼は `false` |
-| `sections` | 断面の配列。スパン方向へ単調な順序で並べ、上限は128 |
+| `sections` | 断面の配列。スパン方向へ単調な順序で並べ、2〜128個 |
 | `strip_fractions` | 空力stripの分割境界。0から始まり1で終わる狭義増加列で、2〜128個。鏡像する面では対称（$a_i + a_{n-1-i} = 1$）であること |
 | `lift_anchor` | `[基準の法線力係数, その入射角（rad）]`。入射角は $-\pi/2$ から $\pi/2$ の間（両端を含まない） |
 | `tail_aerodynamics` | 尾翼のみ必須で、主翼は `null` |
@@ -189,14 +189,14 @@ NACA式の平均線と厚みのパラメータで、面ごとに1つを指定す
 
 | 項目 | 内容 |
 | --- | --- |
-| `nose_station` | 前方枠の接続先となる `cockpit_stations` の番号 |
+| `nose_station` | 前方枠の接続先となる `cockpit_stations` の番号（0以上、`cockpit_stations` の個数未満） |
 | `upper_station_fractions` | 上部枠端点の、機首から後方への割合の組 |
 | `lower_station_fractions` | 下部枠端点の割合の組 |
 | `beam_attachment_fractions` | 主桁への取付管の割合の組 |
 | `cross_radius_m` | 直立・横枠管の半径（m） |
 | `diagonal_radius_m` | 斜材の半径（m） |
 | `attachment_radius_m` | 取付管の半径（m） |
-| `rim_station` | キャノピー開口の縁を担う `cockpit_stations` の番号 |
+| `rim_station` | キャノピー開口の縁を担う `cockpit_stations` の番号（0以上、`cockpit_stations` の個数未満） |
 | `rim_segments` | 開口縁の直線区間数。4〜128 |
 | `rim_radius_m` | 開口縁の管半径（m） |
 
@@ -221,7 +221,7 @@ NACA式の平均線と厚みのパラメータで、面ごとに1つを指定す
 エラーの読み方:
 
 - 構文・型・未知フィールドのエラー: JSONとして受理できない段階の失敗であり、該当箇所の綴りと型を直す。
-- 意味検証のエラー: 分類コード・JSON path・入力値・期待条件の組で全件が返る。分類は `SchemaVersion`・`Identity`・`Mass`・`Inertia`・`Pilot`・`Surface`・`Twist`・`Actuator`・`Polar`・`Structure`・`Trim` の11種であり、pathの指す項目を期待条件に合わせて直す（例: `/trim/alpha_bounds_rad/1` が表の範囲外であれば、`polar` の行を増やすか探索区間を狭める）。
+- 意味検証のエラー: 分類コード・JSON path・入力値・期待条件の組で全件が返る。分類は `SchemaVersion`・`Identity`・`Mass`・`Inertia`・`Pilot`・`Surface`・`Twist`・`Actuator`・`Polar`・`Structure`・`Trim` の11種であり、pathの指す項目を期待条件に合わせて直す（例: `/trim/alpha_bounds_rad/1` が表の範囲外であれば、`polar` の行を増やすか探索区間を狭める）。CLIの表示は `{path}: {value} (expected {expected})` の形であり、分類コード名はviewerの検証結果で確認する。
 - 準備検証の失敗: 文書単独では有効でも、トリム解が存在しない等の理由で飛行を開始できない状態を指す。`trim` の運用点と `polar` のピッチモーメント列の釣合を見直す。
 
 読み込みに失敗した保存済み機体は自動では削除されず、既定機体で起動して理由と削除操作が表示される。

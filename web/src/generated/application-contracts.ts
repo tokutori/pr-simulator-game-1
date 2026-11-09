@@ -251,7 +251,7 @@ export type ApplicationInput = {
     readonly display_resource_id?: number | null;
     readonly kind: "xr_select";
     /**
-     * Raw controller pose sampled for the trigger.
+     * Raw source mode and pose sampled for the primary action.
      */
     readonly pointer: ApplicationPointerObservation;
     /**
@@ -2590,13 +2590,17 @@ export interface ApplicationGpuQuery {
     readonly source_ms: number;
 }
 /**
- * Unmodified tracked controller pose in the active runtime reference space.
+ * Unmodified XR select source in the active runtime reference space.
  */
 export interface ApplicationPointerObservation {
     /**
      * Platform input-source identity, retired when that source disconnects.
      */
     readonly source_id: number;
+    /**
+     * Raw event source mode, including sources that exist only during the action.
+     */
+    readonly target_ray_mode: string;
     /**
      * Runtime target-ray-space pose in tracking coordinates.
      */

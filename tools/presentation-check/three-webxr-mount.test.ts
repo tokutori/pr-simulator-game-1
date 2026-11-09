@@ -243,9 +243,11 @@ class XrSession extends EventTarget {
     this.pendingRenderState = null;
     this.callback(now + 50, this.frame(now));
   }
-  select(now: number): void {
+  select(now: number, source = this.inputSources[0]): void {
     const event = new Event("select");
-    Object.assign(event, { frame: this.frame(now), inputSource: this.inputSources[0] });
+    const frame = this.frame(now);
+    frame.getViewerPose = () => { throw new DOMException("Input event frames are not animation frames", "InvalidStateError"); };
+    Object.assign(event, { frame, inputSource: source });
     this.dispatchEvent(event);
   }
 }
@@ -597,9 +599,14 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       const resetMenu = state.drawing().spatial?.menu;
       if (resetMenu?.kind !== "ready") throw new Error("Menu did not recover after reference reset");
       expectMatrix(poseMatrix(resetMenu.world_from_panel), before);
-      state.frame(31);
-      state.select(32);
+      const trackedSources = state.session.inputSources.splice(0);
+      const transient = { targetRayMode: "transient-pointer", targetRaySpace: {}, handedness: "none" } as unknown as XRInputSource;
+      state.session.select(32, transient);
+      const rawSelect = state.updates.mock.calls.map(([json]) => (JSON.parse(json) as ApplicationObservation).input)
+        .findLast(input => input.kind === "xr_select");
+      expect(rawSelect?.kind === "xr_select" ? rawSelect.pointer.target_ray_mode : null).toBe("transient-pointer");
       expect(state.browser.document.querySelector('[data-control-id="game-setup-start"]')).not.toBeNull();
+      state.session.inputSources.push(...trackedSources);
       state.frame(33);
       state.frame(34);
       squeeze.pressed = true;

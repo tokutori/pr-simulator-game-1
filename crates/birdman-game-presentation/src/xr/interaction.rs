@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 pub enum XrPointerSource {
     /// Head-directed dwell input.
     Gaze,
-    /// Runtime-assigned controller identity.
-    Controller {
+    /// Runtime-assigned XR input-source identity.
+    InputSource {
         /// Session-local runtime source identifier.
         id: u32,
     },
@@ -240,7 +240,7 @@ impl XrInputSourceObservation {
         }
         let pose = self.tracking_from_ray?.normalized()?;
         Some(XrPointerRay {
-            source: XrPointerSource::Controller { id: self.source_id },
+            source: XrPointerSource::InputSource { id: self.source_id },
             reference_from_space: pose,
             origin: Vector3 {
                 x: 0.0,
@@ -456,12 +456,12 @@ impl XrPointerSession {
             let preferred = hits
                 .iter()
                 .position(|hit| {
-                    matches!(hit.source, XrPointerSource::Controller { .. })
+                    matches!(hit.source, XrPointerSource::InputSource { .. })
                         && Some(hit.source) == retained
                 })
                 .or_else(|| {
                     hits.iter()
-                        .position(|hit| matches!(hit.source, XrPointerSource::Controller { .. }))
+                        .position(|hit| matches!(hit.source, XrPointerSource::InputSource { .. }))
                 })
                 .or_else(|| {
                     if gamepad.is_some() {
@@ -485,7 +485,7 @@ impl XrPointerSession {
             }
             result.secondary = hits
                 .into_iter()
-                .filter(|hit| matches!(hit.source, XrPointerSource::Controller { .. }))
+                .filter(|hit| matches!(hit.source, XrPointerSource::InputSource { .. }))
                 .collect();
             if let Some((back, scroll)) = navigation {
                 result.back |= back;
@@ -537,7 +537,7 @@ impl XrPointerSession {
                     .primary
                     .iter()
                     .chain(&result.secondary)
-                    .find(|hit| hit.source == XrPointerSource::Controller { id: *id })
+                    .find(|hit| hit.source == XrPointerSource::InputSource { id: *id })
                     .cloned()
             });
             if let Some(hit) = selected
@@ -718,24 +718,49 @@ impl XrPointerSession {
         ))
     }
 
-    /// Selects against the actual submitted panel pose using the retained shared hit surface.
+    /// Selects a focused source action against the actual submitted panel and shared hit surface.
+    /// Transient event sources may exist entirely between animation-frame observations.
     pub fn select_on_panel(
         &mut self,
         pointer: XrPointerRay,
+        target_ray_mode: &str,
+        focused: bool,
         timestamp_ms: f64,
         panel_pose: Pose,
     ) -> Option<XrPointerHit> {
-        let observation = self.observation.as_ref()?;
-        if !observation.focused
+        if !focused
             || matches!(pointer.source, XrPointerSource::Gamepad { .. })
             || !timestamp_ms.is_finite()
-            || timestamp_ms < observation.timestamp_ms
+            || timestamp_ms < 0.0
+            || self
+                .last_timestamp_ms
+                .is_some_and(|last| timestamp_ms < last)
             || !match pointer.source {
-                XrPointerSource::Controller { id } => observation
-                    .sources
-                    .iter()
-                    .any(|value| value.source_id == id && value.ray().is_some()),
-                XrPointerSource::Gaze => observation.head_pose.is_some(),
+                XrPointerSource::InputSource { id } => match target_ray_mode {
+                    "tracked-pointer" => self.observation.as_ref().is_some_and(|observation| {
+                        observation.focused
+                            && observation
+                                .sources
+                                .iter()
+                                .any(|value| value.source_id == id && value.ray().is_some())
+                    }),
+                    "gaze" | "screen" | "transient-pointer" => {
+                        self.observation.as_ref().is_none_or(|observation| {
+                            observation
+                                .sources
+                                .iter()
+                                .find(|value| value.source_id == id)
+                                .is_none_or(|value| value.target_ray_mode == target_ray_mode)
+                        })
+                    }
+                    _ => false,
+                },
+                XrPointerSource::Gaze => {
+                    target_ray_mode == "gaze"
+                        && self.observation.as_ref().is_some_and(|observation| {
+                            observation.focused && observation.head_pose.is_some()
+                        })
+                }
                 XrPointerSource::Gamepad { .. } => false,
             }
         {
@@ -745,6 +770,7 @@ impl XrPointerSession {
         if !self.admit(&hit, timestamp_ms) {
             return None;
         }
+        self.last_timestamp_ms = Some(timestamp_ms);
         self.focus = Some(Focus {
             hit: hit.clone(),
             started_ms: timestamp_ms,

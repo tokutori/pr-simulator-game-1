@@ -102,7 +102,7 @@ fn observe(
                 }),
             sources: pointers
                 .into_iter()
-                .filter(|pointer| matches!(pointer.source, XrPointerSource::Controller { .. }))
+                .filter(|pointer| matches!(pointer.source, XrPointerSource::InputSource { .. }))
                 .map(source)
                 .collect(),
             gamepad: None,
@@ -111,7 +111,7 @@ fn observe(
 }
 
 fn source(pointer: XrPointerRay) -> XrInputSourceObservation {
-    let XrPointerSource::Controller { id } = pointer.source else {
+    let XrPointerSource::InputSource { id } = pointer.source else {
         panic!("Expected controller")
     };
     XrInputSourceObservation {
@@ -132,8 +132,8 @@ fn controller_handover_resets_dwell_and_disconnect_restores_a_fresh_gaze_interva
     let mut owner = XrPointerSession::default();
     owner.set_surface(Some(surface())).unwrap();
     let gaze = pointer(XrPointerSource::Gaze, 0.0);
-    let left = pointer(XrPointerSource::Controller { id: 1 }, -0.5);
-    let right = pointer(XrPointerSource::Controller { id: 2 }, 0.5);
+    let left = pointer(XrPointerSource::InputSource { id: 1 }, -0.5);
+    let right = pointer(XrPointerSource::InputSource { id: 2 }, 0.5);
     observe(&mut owner, 0.0, vec![gaze]);
     assert_eq!(observe(&mut owner, 900.0, vec![gaze]).progress, 0.9);
     let both = observe(&mut owner, 950.0, vec![gaze, left, right]);
@@ -146,12 +146,16 @@ fn controller_handover_resets_dwell_and_disconnect_restores_a_fresh_gaze_interva
     );
     assert_eq!(
         owner
-            .select_on_panel(right, 2001.0, PANEL_POSE)
+            .select_on_panel(right, "tracked-pointer", true, 2001.0, PANEL_POSE)
             .unwrap()
             .point,
         [0.5, 0.0]
     );
-    assert!(owner.select_on_panel(left, 2001.0, PANEL_POSE).is_none());
+    assert!(
+        owner
+            .select_on_panel(left, "tracked-pointer", true, 2001.0, PANEL_POSE)
+            .is_none()
+    );
     assert_eq!(
         observe(&mut owner, 2100.0, vec![gaze, left, right])
             .primary
@@ -168,14 +172,29 @@ fn controller_handover_resets_dwell_and_disconnect_restores_a_fresh_gaze_interva
 fn focus_loss_scope_exchange_and_stale_sources_invalidate_selection() {
     let mut owner = XrPointerSession::default();
     owner.set_surface(Some(surface())).unwrap();
+    assert!(
+        owner
+            .select_on_panel(
+                pointer(XrPointerSource::InputSource { id: 99 }, 0.0),
+                "screen",
+                true,
+                -1.0,
+                PANEL_POSE
+            )
+            .is_none()
+    );
     let gaze = pointer(XrPointerSource::Gaze, 0.0);
-    let controller = pointer(XrPointerSource::Controller { id: 4 }, 0.2);
+    let controller = pointer(XrPointerSource::InputSource { id: 4 }, 0.2);
     observe(&mut owner, 10.0, vec![gaze, controller]);
-    assert!(owner.select_on_panel(controller, 9.0, PANEL_POSE).is_none());
+    assert!(
+        owner
+            .select_on_panel(controller, "tracked-pointer", true, 9.0, PANEL_POSE)
+            .is_none()
+    );
     observe(&mut owner, 20.0, vec![gaze]);
     assert!(
         owner
-            .select_on_panel(controller, 21.0, PANEL_POSE)
+            .select_on_panel(controller, "tracked-pointer", true, 21.0, PANEL_POSE)
             .is_none()
     );
     let observation = XrPointerObservation {
@@ -187,32 +206,127 @@ fn focus_loss_scope_exchange_and_stale_sources_invalidate_selection() {
         gamepad: None,
     };
     assert!(owner.observe(observation).unwrap().primary.is_none());
-    assert!(owner.select_on_panel(gaze, 31.0, PANEL_POSE).is_none());
+    assert!(
+        owner
+            .select_on_panel(gaze, "gaze", true, 31.0, PANEL_POSE)
+            .is_none()
+    );
     owner
         .set_surface(Some(XrPointerSurface {
             scope: "credits".into(),
             ..surface()
         }))
         .unwrap();
-    assert!(owner.select_on_panel(gaze, 40.0, PANEL_POSE).is_none());
+    assert!(
+        owner
+            .select_on_panel(gaze, "gaze", true, 40.0, PANEL_POSE)
+            .is_none()
+    );
     assert_eq!(observe(&mut owner, 50.0, vec![gaze]).progress, 0.0);
+
+    let mut event_surface = surface();
+    event_surface.regions[0].bounds = XrPointerRect([0.0, 0.0, 1.0, 1.0]);
+    event_surface.regions.push(XrPointerRegion {
+        target: XrPointerTarget::Control { id: "other".into() },
+        bounds: XrPointerRect([1.0, 0.0, 1.0, 1.0]),
+        control: None,
+    });
+    owner.set_surface(Some(event_surface)).unwrap();
+    let event = pointer(XrPointerSource::InputSource { id: 99 }, -0.5);
+    assert!(
+        owner
+            .select_on_panel(event, "screen", false, 51.0, PANEL_POSE)
+            .is_none()
+    );
+    assert!(
+        owner
+            .select_on_panel(event, "unknown", true, 51.0, PANEL_POSE)
+            .is_none()
+    );
+    // Event sources may appear after the paint ACK and finish before the next rAF.
+    for (index, mode) in ["gaze", "screen", "transient-pointer"]
+        .into_iter()
+        .enumerate()
+    {
+        let now = 100.0 + index as f64 * 600.0;
+        let event = pointer(
+            XrPointerSource::InputSource {
+                id: 100 + index as u32,
+            },
+            -0.5,
+        );
+        assert!(
+            owner
+                .select_on_panel(event, mode, true, now, PANEL_POSE)
+                .is_some()
+        );
+        assert!(
+            owner
+                .select_on_panel(event, mode, true, now, PANEL_POSE)
+                .is_none()
+        );
+    }
+    let other = pointer(XrPointerSource::InputSource { id: 102 }, 0.5);
+    assert!(
+        owner
+            .select_on_panel(other, "transient-pointer", true, 1299.0, PANEL_POSE)
+            .is_none()
+    );
+    assert!(
+        owner
+            .select_on_panel(other, "transient-pointer", true, 1301.0, PANEL_POSE)
+            .is_some()
+    );
+
+    owner.set_surface(Some(surface())).unwrap();
+    let mut gaze_source = source(pointer(XrPointerSource::InputSource { id: 100 }, 0.0));
+    gaze_source.target_ray_mode = "gaze".into();
+    let mut frame = XrPointerObservation {
+        timestamp_ms: 2000.0,
+        focused: true,
+        panel_pose: PANEL_POSE,
+        head_pose: Some(Pose::IDENTITY),
+        sources: vec![gaze_source],
+        gamepad: None,
+    };
+    let projection = owner.observe(frame.clone()).unwrap();
+    assert_eq!(projection.primary.unwrap().source, XrPointerSource::Gaze);
+    assert!(
+        owner
+            .select_on_panel(
+                pointer(XrPointerSource::InputSource { id: 100 }, 0.0),
+                "screen",
+                true,
+                2001.0,
+                PANEL_POSE
+            )
+            .is_none()
+    );
+    frame.timestamp_ms = 3000.0;
+    assert!(owner.observe(frame.clone()).unwrap().activation.is_some());
+    frame.timestamp_ms = 4100.0;
+    assert!(owner.observe(frame).unwrap().activation.is_none());
 }
 
 #[test]
 fn transformed_panel_intersection_and_front_face_admission_match_trigger() {
     let mut owner = XrPointerSession::default();
     owner.set_surface(Some(surface())).unwrap();
-    let controller = pointer(XrPointerSource::Controller { id: 1 }, -0.25);
+    let controller = pointer(XrPointerSource::InputSource { id: 1 }, -0.25);
     let frame = observe(&mut owner, 0.0, vec![controller]);
     assert_eq!(
         frame.primary,
-        owner.select_on_panel(controller, 1.0, PANEL_POSE)
+        owner.select_on_panel(controller, "tracked-pointer", true, 1.0, PANEL_POSE)
     );
     let outside = pointer(controller.source, 2.0);
     assert!(observe(&mut owner, 10.0, vec![outside]).primary.is_none());
     let mut invalid = controller;
     invalid.direction.x = f64::NAN;
-    assert!(owner.select_on_panel(invalid, 20.0, PANEL_POSE).is_none());
+    assert!(
+        owner
+            .select_on_panel(invalid, "tracked-pointer", true, 20.0, PANEL_POSE)
+            .is_none()
+    );
 
     let head = Pose {
         orientation: crate::camera::Quaternion {
@@ -282,6 +396,8 @@ fn transformed_panel_intersection_and_front_face_admission_match_trigger() {
                         z: 0.0
                     },
                 },
+                "gaze",
+                true,
                 532.0,
                 panel_pose
             )
@@ -391,7 +507,7 @@ fn gamepad_connection_cursor_edges_scroll_and_focus_share_one_owner() {
             })
             .unwrap()
     };
-    let mut controller = source(pointer(XrPointerSource::Controller { id: 1 }, -0.25));
+    let mut controller = source(pointer(XrPointerSource::InputSource { id: 1 }, -0.25));
     controller.gamepad = Some(XrInputGamepadObservation {
         mapping: "xr-standard".into(),
         axes: vec![Some(0.0); 4],
@@ -407,7 +523,7 @@ fn gamepad_connection_cursor_edges_scroll_and_focus_share_one_owner() {
     assert!(first.activation.is_none() && !first.back);
     assert_eq!(
         first.primary.unwrap().source,
-        XrPointerSource::Controller { id: 1 }
+        XrPointerSource::InputSource { id: 1 }
     );
     controller.gamepad.as_mut().unwrap().buttons[1].pressed = false;
     frame(&mut owner, 6050.0, vec![controller.clone()], true);
@@ -476,7 +592,7 @@ fn gamepad_connection_cursor_edges_scroll_and_focus_share_one_owner() {
     let mut combined = owner.observation.clone().unwrap();
     combined.timestamp_ms = 6850.0;
     combined.sources[0].tracking_from_ray =
-        source(pointer(XrPointerSource::Controller { id: 2 }, -0.25)).tracking_from_ray;
+        source(pointer(XrPointerSource::InputSource { id: 2 }, -0.25)).tracking_from_ray;
     combined.gamepad = Some(XrGamepadObservation {
         buttons: [false; 2],
         ..pad
@@ -487,7 +603,7 @@ fn gamepad_connection_cursor_edges_scroll_and_focus_share_one_owner() {
     let back = owner.observe(combined.clone()).unwrap();
     assert!(matches!(
         back.primary.unwrap().source,
-        XrPointerSource::Controller { .. }
+        XrPointerSource::InputSource { .. }
     ));
     assert!(back.back && back.scroll_pages == 0.0 && back.activation.is_none());
     combined.gamepad = None;
@@ -501,7 +617,7 @@ fn gamepad_connection_cursor_edges_scroll_and_focus_share_one_owner() {
     assert_eq!(scrolling.progress, 0.0);
 
     // Native reports raw button states; activation admits a complete tracked press/release.
-    let mut native = source(pointer(XrPointerSource::Controller { id: 7 }, -0.25));
+    let mut native = source(pointer(XrPointerSource::InputSource { id: 7 }, -0.25));
     for (offset, pressed, focused, tracked, activated) in [
         (0.0, Some(true), true, true, false),
         (1.0, Some(false), true, true, false),
