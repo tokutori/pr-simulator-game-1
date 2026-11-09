@@ -476,12 +476,92 @@ impl ApplicationRuntime {
         &mut self,
         observation: ApplicationObservation,
     ) -> Result<ApplicationOutput, ApplicationRuntimeError> {
-        let ApplicationObservation { observed_ms, input } = observation;
-        if !observed_ms.is_finite() || observed_ms < self.observed_ms {
-            return Err(ApplicationRuntimeError::InvalidTimestamp);
+        let ApplicationObservation {
+            mut observed_ms,
+            input,
+        } = observation;
+        let arrival_valid = observed_ms.is_finite() && observed_ms >= self.observed_ms;
+        if !arrival_valid {
+            let kind = match &input {
+                ApplicationInput::Frame { .. } => "frame",
+                ApplicationInput::XrSelect { .. } => "xr_select",
+                ApplicationInput::Wake { .. } => "wake",
+                ApplicationInput::ControllerIo { .. } => "controller_io",
+                ApplicationInput::Keyboard { .. } | ApplicationInput::PhysicalKey { .. } => {
+                    "keyboard"
+                }
+                _ => "event_or_completion",
+            };
+            self.diagnostic = Some(format!(
+                "Observation timestamp rejected: domain=arrival input={kind} raw={observed_ms} last={}",
+                self.observed_ms
+            ));
+            if matches!(
+                &input,
+                ApplicationInput::Frame { .. } | ApplicationInput::XrSelect { .. }
+            ) {
+                return Ok(self.output(None, Vec::new(), false));
+            }
+            if let ApplicationInput::Wake { request_id } = &input {
+                // The platform already consumed its timer. Preserve the owner operation and
+                // request one new notification without advancing its deadline clock.
+                let wake = if let Some((id, at_ms)) = self.controller_wake
+                    && id == *request_id
+                {
+                    Some(ApplicationRequest::ScheduleWake {
+                        request_id: id,
+                        at_ms,
+                        realtime: true,
+                    })
+                } else if self.phone_wake == Some(*request_id) {
+                    self.phone
+                        .deadline()
+                        .map(|at_ms| ApplicationRequest::ScheduleWake {
+                            request_id: *request_id,
+                            at_ms,
+                            realtime: false,
+                        })
+                } else {
+                    None
+                };
+                return Ok(self.output(None, wake.into_iter().collect(), false));
+            }
+            // Completion identities, key releases and cleanup still need admission. A bad
+            // envelope supplies no new elapsed time; raw I/O sample times remain untouched.
+            observed_ms = self.observed_ms;
         }
+        let source_time = match &input {
+            ApplicationInput::Frame { timestamp_ms, .. } => Some(("frame", *timestamp_ms, false)),
+            ApplicationInput::XrSelect { timestamp_ms, .. } => {
+                Some(("xr_select", *timestamp_ms, true))
+            }
+            _ => None,
+        };
+        let source_rejected = if let Some((kind, timestamp_ms, event_time)) = source_time
+            && (!timestamp_ms.is_finite()
+                || timestamp_ms < 0.0
+                || (event_time && timestamp_ms > observed_ms))
+        {
+            self.diagnostic = Some(format!(
+                "Observation timestamp rejected: domain=source input={kind} raw={timestamp_ms} arrival={observed_ms} last={}",
+                self.observed_ms
+            ));
+            true
+        } else {
+            false
+        };
         self.observed_ms = observed_ms;
-        self.application.observe_controller_time(observed_ms);
+        if arrival_valid {
+            self.application
+                .observe_controller_time(observed_ms)
+                .map_err(ApplicationRuntimeError::Application)?;
+            self.reconcile_controller_observation(observed_ms)?;
+        }
+        if source_rejected {
+            let mut requests = Vec::new();
+            self.collect_controller_requests(&mut requests)?;
+            return Ok(self.output(None, requests, false));
+        }
         let input = match input {
             ApplicationInput::PageHide { persisted: false } => ApplicationInput::Dispose,
             input => input,
@@ -590,29 +670,10 @@ impl ApplicationRuntime {
         match input {
             ApplicationInput::ControllerIo { observation } => {
                 self.application
-                    .observe_controller_io(observation)
+                    .observe_controller_io(observation, arrival_valid)
                     .map_err(ApplicationRuntimeError::Application)?;
-                if !self.shutdown.closed()
-                    && self.application.core_session().snapshot().phase()
-                        == SessionPhase::BriefingPreparing
-                {
-                    self.application
-                        .observe_readiness(self.resource_readiness)
-                        .map_err(ApplicationRuntimeError::Session)?;
-                }
-                if !self.shutdown.closed()
-                    && self.application.controller_realtime()
-                    && self.application.controller_has_candidate()
-                    && self.application.core_session().snapshot().phase()
-                        == SessionPhase::FlightRunning
-                {
-                    self.application
-                        .advance_flight_frame(
-                            observed_ms,
-                            &self.controller_gamepads,
-                            self.presentation_input_focused(),
-                        )
-                        .map_err(ApplicationRuntimeError::Flight)?;
+                if arrival_valid {
+                    self.reconcile_controller_observation(observed_ms)?;
                 }
             }
             ApplicationInput::ConfigurationLoaded {
@@ -897,9 +958,6 @@ impl ApplicationRuntime {
                 pointer,
                 timestamp_ms,
             } => {
-                if timestamp_ms > observed_ms {
-                    return Err(ApplicationRuntimeError::InvalidTimestamp);
-                }
                 if self.spatial_input_focused()
                     && self.display.active_resource() == display_resource_id
                     && let Some(action) =
@@ -1014,19 +1072,6 @@ impl ApplicationRuntime {
                 if self.display.state().active_mode().is_some()
                     && self.display.active_resource() == display_resource_id
                 {
-                    if !timestamp_ms.is_finite() || timestamp_ms < 0.0 {
-                        return Err(ApplicationRuntimeError::InvalidTimestamp);
-                    }
-                    let progression_ms = if self.display.state().active_mode()
-                        == Some(GameUiPresentationMode::Hmd)
-                    {
-                        observed_ms
-                    } else {
-                        timestamp_ms
-                    };
-                    if progression_ms > observed_ms {
-                        return Err(ApplicationRuntimeError::InvalidTimestamp);
-                    }
                     self.frame_rate.observe(timestamp_ms);
                     if self.xr_resource.is_some() {
                         self.xr_viewer = Some(match xr {
@@ -1050,7 +1095,7 @@ impl ApplicationRuntime {
                             .collect();
                         self.controller_gamepads.clone_from(&flight_gamepads);
                         self.advance_frame(
-                            progression_ms,
+                            observed_ms,
                             &flight_gamepads,
                             self.presentation_input_focused(),
                         )?;
@@ -1154,19 +1199,19 @@ impl ApplicationRuntime {
                             })
                             .and_then(|control| {
                                 match &control.content {
-                            birdman_game_presentation::game_ui::GameUiControlContent::Chart {
-                                plot,
-                                ..
-                            } => Some((
-                                plot.seek_target?,
-                                plot.pointer_time(
-                                    position,
-                                    rect,
-                                    phase == ApplicationPointerPhase::Down,
-                                )?,
-                            )),
-                            _ => None,
-                        }
+                        birdman_game_presentation::game_ui::GameUiControlContent::Chart {
+                            plot,
+                            ..
+                        } => Some((
+                            plot.seek_target?,
+                            plot.pointer_time(
+                                position,
+                                rect,
+                                phase == ApplicationPointerPhase::Down,
+                            )?,
+                        )),
+                        _ => None,
+                    }
                             });
                         if let Some((target, value)) = chart {
                             let range_id = self.retained.as_ref().unwrap().panels.iter().flat_map(|panel| &panel.controls).find_map(|control| match control.content { birdman_game_presentation::game_ui::GameUiControlContent::Range { target: candidate, .. } if candidate == target && control.enabled => Some(control.id.clone()), _ => None });
@@ -1352,16 +1397,7 @@ impl ApplicationRuntime {
                 }
             }
         }
-        if let Some(cause) = self.application.take_controller_cleanup_diagnostic() {
-            self.diagnostic.get_or_insert(cause);
-        }
-        self.synchronize_controller_wake(&mut requests)?;
-        requests.extend(
-            self.application
-                .take_controller_io()
-                .into_iter()
-                .map(|request| ApplicationRequest::ControllerIo { request }),
-        );
+        self.collect_controller_requests(&mut requests)?;
         if io_continuation {
             return Ok(self.output(None, requests, keyboard_consumed));
         }
@@ -2504,6 +2540,52 @@ impl ApplicationRuntime {
                 at_ms,
                 realtime: true,
             });
+        }
+        Ok(())
+    }
+
+    fn collect_controller_requests(
+        &mut self,
+        requests: &mut Vec<ApplicationRequest>,
+    ) -> Result<(), ApplicationRuntimeError> {
+        if let Some(cause) = self.application.take_controller_cleanup_diagnostic() {
+            self.diagnostic.get_or_insert(cause);
+        }
+        self.synchronize_controller_wake(requests)?;
+        requests.extend(
+            self.application
+                .take_controller_io()
+                .into_iter()
+                .map(|request| ApplicationRequest::ControllerIo { request }),
+        );
+        Ok(())
+    }
+
+    // A previously received candidate precedes the current event; a new I/O reply
+    // uses this same reconciliation after its own dispatch. Sealed demand is consumed once.
+    fn reconcile_controller_observation(
+        &mut self,
+        observed_ms: f64,
+    ) -> Result<(), ApplicationRuntimeError> {
+        if !self.shutdown.closed()
+            && self.application.core_session().snapshot().phase() == SessionPhase::BriefingPreparing
+        {
+            self.application
+                .observe_readiness(self.resource_readiness)
+                .map_err(ApplicationRuntimeError::Session)?;
+        }
+        if !self.shutdown.closed()
+            && self.application.controller_realtime()
+            && self.application.controller_has_candidate()
+            && self.application.core_session().snapshot().phase() == SessionPhase::FlightRunning
+        {
+            self.application
+                .advance_flight_frame(
+                    observed_ms,
+                    &self.controller_gamepads,
+                    self.presentation_input_focused(),
+                )
+                .map_err(ApplicationRuntimeError::Flight)?;
         }
         Ok(())
     }

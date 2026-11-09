@@ -62,7 +62,9 @@ u_n=K_p e_n+I_n+K_d D_n
 
 - 入出力: Wasm・SITL・HITLは共有観測と設定を受け、水平・垂直尾翼の最終要求角を返す。hostは有限値を認可し、同じ物理stop/slewへ渡す。組込みのPID・mix・迎角/身体guardは外部出力へ重ねて適用しない。
 - 候補と履歴: Evaluateは未採用候補である。物理採用後のAcceptedに実時間と実hardwareを返し、協調sample guestが同じ区間だけ積分・D履歴をcommitする。0秒・取消ではguest履歴を保持する。任意の外部firmware内部をhostがrollbackする契約は置かない。
-- SITL: 応答待ちのtick予算を保持し、通信待ち時間を追付き物理tickへ変換しない。Wasm/SITL faultは接続を有界に終了し、以後は中立要求を共通hardwareへ渡して飛行を継続する。
+- SITL: 応答待ちのtick予算を保持し、EvaluateとAcceptedは各要求の発行から5秒以内に応答を受理する。一時停止中も発行時の期限を保ち、期限超過をDeadlineMissedとして記録する。
+- 障害処理: Wasm/SITL faultは接続を有界に終了し、中立要求を共通hardwareへ渡して飛行を継続する。
+- 実行policy: SITLの有界応答はpolicy 2、組込み・Wasm・HITLはpolicy 1で比較条件を識別する。保存済みのSITL policy 1記録は元の実行identityで読み込む。
 - HITL: Frameは描画と生観測を通知し、ownerが認可したWakeと完了だけで100 Hzの物理採用を進める。期限超過・切断は最後の採用境界で飛行を終了し、採用済みstate/recordを巻き戻さない。
 - Pauseと終了: AwaitEvaluateは同sequenceの取消Accepted/ACKで解決してから次Evaluateを送る。AwaitAcceptedは既に採用した境界の通知を完了する。Finishを一度送り、ACKまたは100 msの終了期限後にCloseを一度要求し、Closed後に資源を回収する。
 

@@ -1,4 +1,4 @@
-import { createReadStream } from "node:fs";
+import { createReadStream, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import type { ApplicationDrawingOutput, ApplicationOutput } from "../../web/src/generated/application-contracts.js";
 import assert from "node:assert/strict";
@@ -26,19 +26,17 @@ if (patch.length > 0) await writeFile(resolve(output, "source.patch"), patch, "u
 
 function run(command: string, arguments_: string[], log: string): void {
   const result = spawnSync(command, arguments_, { ...gitOptions, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
-  execLogs.push(writeFile(resolve(output, log), result.stdout + result.stderr, "utf8"));
+  writeFileSync(resolve(output, log), result.stdout + result.stderr, "utf8");
   if (result.error !== undefined) throw result.error;
   assert.equal(result.status, 0, result.stderr);
 }
 
-const execLogs: Promise<void>[] = [];
 run(process.execPath, [resolve(root, "node_modules/tsx/dist/cli.mjs"), "tools/wasm-build/main.ts"], "wasm-build.log");
 run("cargo", ["run", "-p", "birdman-game-bevy", "--locked", "--features", "verify-harness", "--",
   "--offscreen", "--verify", native, "--verify-adapter-input", "--verify-size", "1280x720", "--export-dir", resolve(native, "records")], "native.log");
 const rustPatch = execFileSync("git", ["diff", "--binary", "HEAD", "--", "crates"], gitOptions);
 await writeFile(resolve(native, "source-evidence.json"), JSON.stringify({ sourceHead: head,
   rustDiffSha256: createHash("sha256").update(rustPatch).digest("hex"), nativeExit: 0 }, null, 2) + "\n", "utf8");
-await Promise.all(execLogs);
 const wasmBytes = await readFile(resolve(root, "web/pkg/birdman_game_wasm_bg.wasm"));
 const { ApplicationRuntimeBridge, initSync } = await import("../../web/pkg/birdman_game_wasm.js");
 initSync({ module: new Uint8Array(wasmBytes) });

@@ -847,12 +847,16 @@ mod tests {
                     completion.observation,
                     ControllerIoObservation::Closed { failure: None, .. }
                 );
-                application.observe_controller_time(epoch.elapsed().as_secs_f64() * 1000.0);
                 application
-                    .observe_controller_io(completion.observation)
+                    .observe_controller_time(epoch.elapsed().as_secs_f64() * 1000.0)
+                    .unwrap();
+                application
+                    .observe_controller_io(completion.observation, true)
                     .unwrap();
             }
-            application.observe_controller_time(epoch.elapsed().as_secs_f64() * 1000.0);
+            application
+                .observe_controller_time(epoch.elapsed().as_secs_f64() * 1000.0)
+                .unwrap();
             application.observe_controller_deadline().unwrap();
             assert!(
                 application.controller_fault().is_none(),
