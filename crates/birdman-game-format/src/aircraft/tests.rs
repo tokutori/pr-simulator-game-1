@@ -210,7 +210,21 @@ fn tail_members() -> AircraftTailMembersDocument {
 
 #[test]
 fn roundtrip_preserves_external_parameters_and_uses_core_validation() {
-    let document = valid_document();
+    let mut document = valid_document();
+    for surface in &mut document.surfaces {
+        surface.actuator = match surface.role {
+            AircraftSurfaceRole::HorizontalTail => Some(AircraftActuatorDocument {
+                incidence_bounds_rad: [-0.0625, 0.125],
+                maximum_slew_rad_per_second: 0.25,
+            }),
+            AircraftSurfaceRole::VerticalTail => Some(AircraftActuatorDocument {
+                incidence_bounds_rad: [-0.25, 0.1875],
+                maximum_slew_rad_per_second: 0.5,
+            }),
+            AircraftSurfaceRole::MainWing => None,
+        };
+    }
+    document.surfaces.swap(1, 2);
     let encoded = serde_json::to_vec(&document).unwrap();
     let decoded = AircraftDocument::decode_json(&encoded).unwrap();
     assert_eq!(decoded, document);
@@ -222,6 +236,21 @@ fn roundtrip_preserves_external_parameters_and_uses_core_validation() {
     assert_eq!(model.airframe_mass_kg(), 3.0);
     assert_eq!(model.pilot_mass_kg(), 1.0);
     assert_eq!(model.pilot_vertical_offset_m(), 0.2);
+    let applied = birdman_game_core::advance_tail_actuators(
+        birdman_game_core::TailIncidence::neutral(),
+        birdman_game_core::TailIncidenceRequest::try_new(-1.0, 1.0).unwrap(),
+        model.tail_actuators(),
+        0.125,
+    )
+    .unwrap();
+    assert_eq!(
+        applied.structural_target(),
+        birdman_game_core::TailIncidence::try_new(-0.0625, 0.1875).unwrap()
+    );
+    assert_eq!(
+        applied.incidence(),
+        birdman_game_core::TailIncidence::try_new(-0.03125, 0.0625).unwrap()
+    );
     let wing = &decoded.surfaces[0];
     let sections = wing.core_sections().unwrap();
     let geometry = wing.core_geometry(&sections).unwrap();

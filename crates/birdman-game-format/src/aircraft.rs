@@ -499,6 +499,8 @@ impl AircraftFormatError {
 
 impl AircraftDocument {
     /// Resolves both structural tail actuators through the validated core constructor.
+    /// Returns horizontal-tail/elevator limits first and vertical-tail/rudder limits second,
+    /// independent of JSON surface order.
     pub fn tail_actuator_limits(
         &self,
     ) -> Result<[birdman_game_core::TailActuatorLimits; 2], AircraftFormatError> {
