@@ -453,16 +453,22 @@ impl ApplicationServer {
     }
     fn withdraw_input(&mut self) -> Result<(), ApplicationServerError> {
         if let Some(id) = self.operator {
-            if let Some(peer) = self.peers.get_mut(&id) {
-                peer.neutral_required = true;
-                peer.last_input_observed_ms = None;
-                if let PeerState::Ready(display) = &mut peer.state {
-                    display
-                        .flight_pointer
-                        .retire(&mut self.authority.application);
-                }
-            }
             self.retire_input_operations(id)?;
+        }
+        self.withdraw_flight_input()
+    }
+
+    fn withdraw_flight_input(&mut self) -> Result<(), ApplicationServerError> {
+        if let Some(id) = self.operator
+            && let Some(peer) = self.peers.get_mut(&id)
+        {
+            peer.neutral_required = true;
+            peer.last_input_observed_ms = None;
+            if let PeerState::Ready(display) = &mut peer.state {
+                display
+                    .flight_pointer
+                    .retire(&mut self.authority.application);
+            }
         }
         self.authority.application.invalidate_flight_input();
         self.authority.controller_gamepads.clear();
@@ -2014,7 +2020,7 @@ impl ApplicationServer {
                         .is_none_or(|last| now_ms - last > OPERATOR_INPUT_TIMEOUT_MS)
             });
         if input_expired {
-            self.withdraw_input()?;
+            self.withdraw_flight_input()?;
         }
         let available = self.reconcile_availability()?;
         let readiness = if available {

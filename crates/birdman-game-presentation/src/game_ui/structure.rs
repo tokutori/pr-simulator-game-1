@@ -46,11 +46,15 @@ impl GameUiStructureKey {
         selections.analysis_time_seconds = 0.0;
         Self {
             phase,
-            resume_available: context.resume_available,
+            resume_available: matches!(phase, SessionPhase::FlightPaused { .. })
+                && context.resume_available,
             flight_failure: context.flight_failure,
             controller_fault: context.controller_fault.cloned(),
             controller_fault_terminal: context.controller_fault_terminal,
-            presentation_available: context.presentation_available,
+            presentation_available: matches!(
+                phase,
+                SessionPhase::BriefingReady | SessionPhase::Replay
+            ) && context.presentation_available,
             replay_source,
             selections,
             difficulty: context.difficulty,
