@@ -22,6 +22,8 @@ export class BrowserApplication {
   private readonly timers = new Map<number, ReturnType<typeof setTimeout>>();
   private readonly renderers = new Map<number, ThreeApplicationRenderer>();
   private readonly phoneSensors = new Map<number, () => void>();
+  private readonly sockets = new Map<number, WebSocket>();
+  private readonly hostReads = new Map<number, AbortController>();
   private readonly measurement: CanvasRenderingContext2D;
   private readonly documentStyle: MutationObserver;
   private fontGeneration = 0;
@@ -162,6 +164,72 @@ export class BrowserApplication {
 
   private execute(request: ApplicationRequest, drawing: ApplicationDrawingOutput | null | undefined): void {
     switch (request.kind) {
+      case "read_host": void this.readHost(request); break;
+      case "cancel_host_read": this.hostReads.get(request.request_id)?.abort(); break;
+      case "network_open": {
+        if (this.sockets.has(request.socket_id)) {
+          this.observe({ kind: "network_opened", socket_id: request.socket_id, failure: "WebSocket resource already exists" });
+          break;
+        }
+        try {
+          const socket = new WebSocket(request.url, request.protocol);
+          socket.binaryType = "arraybuffer";
+          this.sockets.set(request.socket_id, socket);
+          socket.onopen = () => {
+            socket.onerror = () => { this.observeNetwork(request.socket_id); };
+            this.observe({ kind: "network_opened", socket_id: request.socket_id, failure: null });
+          };
+          socket.onerror = () => { this.observe({ kind: "network_opened", socket_id: request.socket_id, failure: "WebSocket opening failed" }); };
+          socket.onmessage = event => {
+            if (typeof event.data === "string") {
+              const bytes = new Uint8Array(Math.min(event.data.length * 3, request.maximum_text_bytes + 1));
+              const encoded = new TextEncoder().encodeInto(event.data, bytes);
+              const overflow = encoded.read < event.data.length || encoded.written > request.maximum_text_bytes;
+              const text = overflow ? new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, encoded.written)) : event.data;
+              this.observe({ kind: "network_message", socket_id: request.socket_id, payload: { kind: "text", text }, overflow });
+            } else {
+              const bytes = new Uint8Array(event.data as ArrayBuffer);
+              this.observe({ kind: "network_message", socket_id: request.socket_id, payload: {
+                kind: "binary", bytes: Array.from(bytes.subarray(0, request.maximum_binary_bytes + 1))
+              }, overflow: bytes.byteLength > request.maximum_binary_bytes });
+            }
+          };
+          socket.onclose = event => {
+            this.sockets.delete(request.socket_id);
+            this.detachSocket(socket);
+            this.observe({ kind: "network_closed", socket_id: request.socket_id, code: event.code, reason: event.reason, was_clean: event.wasClean });
+          };
+        } catch (cause) {
+          this.observe({ kind: "network_opened", socket_id: request.socket_id, failure: errorMessage(cause) });
+        }
+        break;
+      }
+      case "network_send": {
+        const socket = this.sockets.get(request.socket_id);
+        let queued = false;
+        let cause: string | null = null;
+        try {
+          if (socket?.readyState !== WebSocket.OPEN) throw new Error("WebSocket is not open");
+          socket.send(request.payload.kind === "text" ? request.payload.text : new Uint8Array(request.payload.bytes));
+          queued = this.sockets.get(request.socket_id)?.readyState === WebSocket.OPEN;
+          if (!queued) cause = "WebSocket closed while accepting data";
+        } catch (failure) { cause = errorMessage(failure); }
+        this.observe({ kind: "network_send_observed", socket_id: request.socket_id, send_id: request.send_id,
+          queued, ready_state: socket?.readyState ?? null, buffered_amount: socket?.bufferedAmount ?? 0, cause });
+        break;
+      }
+      case "observe_network": this.observeNetwork(request.socket_id); break;
+      case "network_close": {
+        const socket = this.sockets.get(request.socket_id);
+        let requested = false;
+        let cause: string | null = null;
+        try {
+          if (socket !== undefined) { socket.close(request.code, request.reason); requested = true; }
+        } catch (failure) { cause = errorMessage(failure); }
+        this.observe({ kind: "network_close_observed", socket_id: request.socket_id, present: socket !== undefined,
+          requested, ready_state: socket?.readyState ?? null, cause });
+        break;
+      }
       case "controller_io": {
         const generation = request.request.generation;
         const observation = request.request.kind === "close"
@@ -364,6 +432,54 @@ export class BrowserApplication {
     }
   }
 
+  private observeNetwork(socketId: number): void {
+    const socket = this.sockets.get(socketId);
+    this.observe({ kind: "network_observed", socket_id: socketId, ready_state: socket?.readyState ?? WebSocket.CLOSED,
+      buffered_amount: socket?.bufferedAmount ?? 0 });
+  }
+
+  private detachSocket(socket: WebSocket): void {
+    socket.onopen = null;
+    socket.onmessage = null;
+    socket.onerror = null;
+    socket.onclose = null;
+  }
+
+  private async readHost(request: Extract<ApplicationRequest, { kind: "read_host" }>): Promise<void> {
+    const controller = new AbortController();
+    this.hostReads.set(request.request_id, controller);
+    let status = 0;
+    let contentType: string | null = null;
+    let bytes = new Uint8Array();
+    let failure: string | null = null;
+    try {
+      const response = await fetch(request.url, { headers: { Accept: request.accept }, cache: "no-store",
+        credentials: "same-origin", redirect: "error", signal: controller.signal });
+      status = response.status;
+      contentType = response.headers.get("Content-Type");
+      const reader = response.body?.getReader();
+      if (reader !== undefined) {
+        const chunks: Uint8Array[] = [];
+        let length = 0;
+        try {
+          while (length < request.maximum_bytes + 1) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            const data = chunk.value.subarray(0, request.maximum_bytes + 1 - length);
+            chunks.push(data);
+            length += data.byteLength;
+          }
+          if (length === request.maximum_bytes + 1) await reader.cancel();
+        } finally { reader.releaseLock(); }
+        bytes = new Uint8Array(length);
+        let offset = 0;
+        for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+      }
+    } catch (cause) { failure = errorMessage(cause); }
+    finally { if (this.hostReads.get(request.request_id) === controller) this.hostReads.delete(request.request_id); }
+    this.observe({ kind: "host_read", request_id: request.request_id, status, content_type: contentType, bytes: Array.from(bytes), failure });
+  }
+
   private startPhoneSensors(id: number): void {
     if (this.phoneSensors.has(id)) {
       this.observe({ kind: "phone_sensors_started", resource_id: id, failure: "Phone sensor subscription already exists" });
@@ -483,7 +599,13 @@ export class BrowserApplication {
     const failures: unknown[] = [];
     const sensors = [...this.phoneSensors.values()];
     this.phoneSensors.clear();
-    for (const release of [...sensors, () => { this.screen.dispose(); }, () => { this.records.dispose(); }, () => { this.download.dispose(); }, () => { owner?.free(); }]) {
+    const hostReads = [...this.hostReads.values()];
+    this.hostReads.clear();
+    const sockets = [...this.sockets.values()];
+    this.sockets.clear();
+    for (const release of [...sensors, ...hostReads.map(controller => () => { controller.abort(); }),
+      ...sockets.map(socket => () => { this.detachSocket(socket); socket.close(); }),
+      () => { this.screen.dispose(); }, () => { this.records.dispose(); }, () => { this.download.dispose(); }, () => { owner?.free(); }]) {
       try { release(); } catch (cause) { failures.push(cause); }
     }
     if (failures.length > 0) console.error(new AggregateError(failures, "Browser resource cleanup failed"));

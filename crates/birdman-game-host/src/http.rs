@@ -12,7 +12,9 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use birdman_game_runtime::{ApplicationNetworkMessage, ApplicationNetworkPayload};
+use birdman_game_runtime::{
+    APPLICATION_NETWORK_PROTOCOL, ApplicationNetworkMessage, ApplicationNetworkPayload,
+};
 use futures_util::{SinkExt, StreamExt};
 use std::{
     net::{SocketAddr, TcpListener},
@@ -161,7 +163,8 @@ async fn upgrade(
     if !same_origin(&headers, state.config.tls.is_some()) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    ws.max_message_size(1_048_576)
+    ws.protocols([APPLICATION_NETWORK_PROTOCOL])
+        .max_message_size(1_048_576)
         .max_frame_size(1_048_576)
         .on_upgrade(move |socket| connection(socket, state.host, state.active))
         .into_response()
