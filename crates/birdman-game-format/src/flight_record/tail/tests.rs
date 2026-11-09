@@ -1132,74 +1132,6 @@ fn unknown_corrupt_or_surplus_control_schemas_are_rejected() {
 }
 
 #[test]
-fn model_controller_and_physics_identity_gate_reintegration() {
-    let document = current_document();
-    let mode = document.header.control_mode.unwrap().to_core().unwrap();
-    let scenario = document
-        .to_finalized_core_record()
-        .unwrap()
-        .header()
-        .scenario;
-    let archive = document.clone();
-    let different_mode = if mode == birdman_game_core::ControlMode::Manual {
-        birdman_game_core::ControlMode::Automatic
-    } else {
-        birdman_game_core::ControlMode::Manual
-    };
-    assert_eq!(
-        archive.require_tail_reintegration_compatibility(
-            &current_identity(),
-            scenario,
-            birdman_game_core::PHYSICS_MODEL_VERSION,
-            birdman_game_core::ControllerExecution::BuiltIn {
-                mode: different_mode
-            },
-        ),
-        Err(FlightRecordFormatError::IncompatibleReintegration)
-    );
-    assert_eq!(
-        archive.require_tail_reintegration_compatibility(
-            &current_identity(),
-            scenario,
-            birdman_game_core::PHYSICS_MODEL_VERSION,
-            document.recorded_execution().unwrap().unwrap(),
-        ),
-        Ok(())
-    );
-    let mut other = current_identity();
-    other.aircraft_configuration_id = "different-aircraft-configuration".into();
-    assert_eq!(
-        archive.require_tail_reintegration_compatibility(
-            &other,
-            scenario,
-            birdman_game_core::PHYSICS_MODEL_VERSION,
-            document.recorded_execution().unwrap().unwrap(),
-        ),
-        Err(FlightRecordFormatError::IncompatibleReintegration)
-    );
-    let mut other_scenario = scenario;
-    other_scenario.controller_identity = Some([9; 32]);
-    assert_eq!(
-        archive.require_tail_reintegration_compatibility(
-            &current_identity(),
-            other_scenario,
-            birdman_game_core::PHYSICS_MODEL_VERSION,
-            document.recorded_execution().unwrap().unwrap(),
-        ),
-        Err(FlightRecordFormatError::IncompatibleReintegration)
-    );
-    assert_eq!(
-        archive.require_tail_reintegration_compatibility(
-            &current_identity(),
-            scenario,
-            birdman_game_core::PHYSICS_MODEL_VERSION + 1,
-            document.recorded_execution().unwrap().unwrap(),
-        ),
-        Err(FlightRecordFormatError::IncompatibleReintegration)
-    );
-}
-
-#[test]
 fn personal_best_does_not_mix_distinct_model_controller_identity() {
     let candidate = keyed(current_document());
     let candidate_archive = candidate.clone();
@@ -1228,7 +1160,7 @@ fn personal_best_does_not_mix_distinct_model_controller_identity() {
 }
 
 #[test]
-fn previous_physics_archives_retain_original_bytes_and_use_current_model_acceptance() {
+fn previous_physics_archives_retain_original_bytes_and_exclude_personal_bests() {
     for version in [4, 6] {
         let mut previous = document();
         previous.schema_version = 7;
@@ -1252,17 +1184,6 @@ fn previous_physics_archives_retain_original_bytes_and_use_current_model_accepta
             crate::TailPersonalBestSelection::try_new(&restored)
                 .unwrap()
                 .is_none()
-        );
-        assert_eq!(
-            restored.require_tail_reintegration_compatibility(
-                &identity(),
-                restored.scenario_identity(),
-                birdman_game_core::PHYSICS_MODEL_VERSION,
-                birdman_game_core::ControllerExecution::BuiltIn {
-                    mode: birdman_game_core::ControlMode::Manual
-                },
-            ),
-            Err(FlightRecordFormatError::IncompatibleReintegration)
         );
     }
     let mut fixed_shape = document();

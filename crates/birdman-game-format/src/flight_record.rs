@@ -233,8 +233,6 @@ pub enum FlightRecordFormatError {
     RecordUnavailable,
     /// A valid in-memory record could not be encoded.
     EncodingFailed,
-    /// Saved snapshots belong to a model/controller/control layout incompatible with reintegration.
-    IncompatibleReintegration,
 }
 #[cfg(not(verus_only))]
 impl core::fmt::Display for FlightRecordFormatError {
@@ -252,9 +250,6 @@ impl core::fmt::Display for FlightRecordFormatError {
             }
             Self::RecordUnavailable => f.write_str("No complete flight record is available"),
             Self::EncodingFailed => f.write_str("Flight record document encoding failed"),
-            Self::IncompatibleReintegration => {
-                f.write_str("Flight record identity does not permit reintegration")
-            }
         }
     }
 }

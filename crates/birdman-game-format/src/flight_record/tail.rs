@@ -862,26 +862,6 @@ impl TailFlightRecordDocument {
         document.validate()?;
         Ok(document)
     }
-
-    /// Checks that saved inputs belong to the same current model, controller and scenario.
-    pub fn require_tail_reintegration_compatibility(
-        &self,
-        identity: &FlightRecordTailIdentityDocument,
-        scenario: SessionScenarioIdentity,
-        physics_model_version: u32,
-        execution: birdman_game_core::ControllerExecution,
-    ) -> Result<(), FlightRecordFormatError> {
-        self.validate()?;
-        if scenario.controller_identity.is_none()
-            || self.recorded_execution()? != Some(execution)
-            || self.control_identity != *identity
-            || self.scenario_identity() != scenario
-            || self.header.physics_model_version != physics_model_version
-        {
-            return Err(FlightRecordFormatError::IncompatibleReintegration);
-        }
-        Ok(())
-    }
 }
 
 /// Compares only eligible v6 records with matching explicit model/controller identity and keys.

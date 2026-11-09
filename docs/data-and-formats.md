@@ -357,7 +357,6 @@ keyは次の条件をSHA-256へ入力する。
 - finite f64は負zeroをpositive zeroへ正規化してbig-endian IEEE-754で符号化する。
 - 画質、presentation、build来歴は比較条件と独立して保持する。
 - 記録自身からkeyを再生成し、保存keyとの一致を検査する。
-- 過去の映像Replayは保存pose・尾翼角を使う。再積分はcontroller原文identityと実効modeが既知で、対象configurationと一致する場合に認可する。
 
 - HUD表示条件は主要telemetry、姿勢・方位、風、flight-path、迎角、基本数値群、角速度、尾翼・pilot補助数値群の有効性で比較する。Fullと同じ内容のCustomは同じ比較群となり、表示効果のないWarnings設定は中立値へ正規化する。
 - 必須異常表示はWarnings設定と独立して表示する。保存したInformationと各cue設定はそのまま保持する。
@@ -437,4 +436,4 @@ keyは次の条件をSHA-256へ入力する。
 - 同じ秒へ丸められたsampleを個別指定する場合はtick/fraction queryを使う。
 - epsilonによる時刻移動やsample削除で整合を補わない。
 
-保存入力による再積分は別の検証機能とし、利用するmodel・controller・physics・scenarioを照合する。数値・境界・容量・round-trip・adapterの検査は[検証](verification.md)、離散的な所有・保持の保証は[形式検証](formal-verification.md)に定める。
+数値・境界・容量・round-trip・adapterの検査は[検証](verification.md)、離散的な所有・保持の保証は[形式検証](formal-verification.md)に定める。
