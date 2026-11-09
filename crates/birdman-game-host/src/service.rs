@@ -21,7 +21,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
 
 /// TLS material explicitly selected by the host operator.
 #[derive(Clone, Debug)]
@@ -75,7 +75,11 @@ enum Event {
         network: Option<Arc<AtomicBool>>,
         reply: oneshot::Sender<Result<HostPeer, String>>,
     },
-    Receive(ApplicationPeerId, ApplicationNetworkMessage),
+    Receive(
+        ApplicationPeerId,
+        ApplicationNetworkMessage,
+        OwnedSemaphorePermit,
+    ),
     Transmitted(ApplicationPeerId, u64, Result<(), String>),
     Disconnect(ApplicationPeerId),
     Shutdown,
@@ -85,6 +89,7 @@ enum Event {
 #[derive(Clone)]
 pub struct HostServiceHandle {
     events: mpsc::Sender<Event>,
+    receive_budget: Arc<Semaphore>,
     snapshot: watch::Receiver<HostManagementSnapshot>,
     pub(crate) bootstrap_json: Arc<str>,
 }
@@ -127,10 +132,20 @@ impl HostServiceHandle {
         peer: ApplicationPeerId,
         message: ApplicationNetworkMessage,
     ) -> Result<(), ApplicationNetworkMessage> {
+        let Some(length) = received_length(&message) else {
+            return Err(message);
+        };
+        let Ok(permit) = self
+            .receive_budget
+            .clone()
+            .try_acquire_many_owned(length as u32)
+        else {
+            return Err(message);
+        };
         self.events
-            .try_send(Event::Receive(peer, message))
+            .try_send(Event::Receive(peer, message, permit))
             .map_err(|error| match error.into_inner() {
-                Event::Receive(_, message) => message,
+                Event::Receive(_, message, _) => message,
                 _ => unreachable!("raw receive event retained by the channel"),
             })
     }
@@ -168,8 +183,38 @@ impl HostServiceHandle {
         peer: ApplicationPeerId,
         message: ApplicationNetworkMessage,
     ) -> Result<(), String> {
+        let length =
+            received_length(&message).ok_or("Raw peer message exceeds its receive limit")?;
+        let permit = self
+            .receive_budget
+            .clone()
+            .try_acquire_many_owned(length as u32)
+            .map_err(|_| "Raw peer receive byte budget is exhausted".to_owned())?;
+        self.receive_reserved(peer, message, permit).await
+    }
+
+    pub(crate) async fn reserve_receive(&self) -> Result<OwnedSemaphorePermit, String> {
+        // One source frame and its owned Runtime message coexist during conversion.
+        let bytes = 2 * birdman_game_runtime::APPLICATION_NETWORK_SERVER_TEXT_BYTES
+            .max(birdman_game_runtime::APPLICATION_NETWORK_BINARY_BYTES);
+        self.receive_budget
+            .clone()
+            .acquire_many_owned(bytes as u32)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) async fn receive_reserved(
+        &self,
+        peer: ApplicationPeerId,
+        message: ApplicationNetworkMessage,
+        permit: OwnedSemaphorePermit,
+    ) -> Result<(), String> {
+        if received_length(&message).is_none() {
+            return Err("Raw peer message exceeds its receive limit".to_owned());
+        }
         self.events
-            .send(Event::Receive(peer, message))
+            .send(Event::Receive(peer, message, permit))
             .await
             .map_err(|error| error.to_string())
     }
@@ -244,6 +289,9 @@ impl HostService {
         });
         let handle = HostServiceHandle {
             events,
+            receive_budget: Arc::new(Semaphore::new(
+                birdman_game_runtime::APPLICATION_NETWORK_IO_BYTE_BUDGET,
+            )),
             snapshot: snapshot_receiver,
             bootstrap_json,
         };
@@ -517,10 +565,11 @@ async fn run(
                     .map_err(|error| error.to_string());
                 let _ = reply.send(response);
             }
-            Some(Event::Receive(id, message)) => {
+            Some(Event::Receive(id, message, permit)) => {
                 result = server
                     .receive(id, epoch.elapsed().as_secs_f64() * 1000.0, message)
                     .map_err(|error| error.to_string());
+                drop(permit);
             }
             Some(Event::Transmitted(id, transmission, delivery)) => {
                 if !peers.contains_key(&id) {
@@ -611,4 +660,18 @@ async fn stop_listener(
         }
     }
     result
+}
+
+fn received_length(message: &ApplicationNetworkMessage) -> Option<usize> {
+    let (length, maximum) = match message {
+        ApplicationNetworkMessage::Text(text) => (
+            text.len(),
+            birdman_game_runtime::APPLICATION_NETWORK_SERVER_TEXT_BYTES,
+        ),
+        ApplicationNetworkMessage::Binary(bytes) => (
+            bytes.len(),
+            birdman_game_runtime::APPLICATION_NETWORK_BINARY_BYTES,
+        ),
+    };
+    (length <= maximum).then_some(length)
 }

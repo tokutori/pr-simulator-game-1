@@ -192,10 +192,11 @@ async fn upgrade(
     if !same_origin(&headers, state.config.tls.is_some()) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    ws.protocols([APPLICATION_NETWORK_PROTOCOL])
-        .max_message_size(
-            APPLICATION_NETWORK_SERVER_TEXT_BYTES.max(APPLICATION_NETWORK_BINARY_BYTES),
-        )
+    let ws = ws.protocols([APPLICATION_NETWORK_PROTOCOL]);
+    if ws.selected_protocol().is_none() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    ws.max_message_size(APPLICATION_NETWORK_SERVER_TEXT_BYTES.max(APPLICATION_NETWORK_BINARY_BYTES))
         .max_frame_size(APPLICATION_NETWORK_SERVER_TEXT_BYTES.max(APPLICATION_NETWORK_BINARY_BYTES))
         .on_upgrade(move |socket| connection(socket, state.host, state.active))
         .into_response()
@@ -243,17 +244,28 @@ async fn connection(socket: WebSocket, host: HostServiceHandle, active: Arc<Atom
         return;
     };
     let (mut sink, mut stream) = socket.split();
+    let mut read_permit = None;
     loop {
         tokio::select! {
             _ = &mut peer.disconnected => break,
-            incoming = stream.next() => {
+            incoming = async {
+                if read_permit.is_none() { read_permit = Some(host.reserve_receive().await?); }
+                Ok::<_, String>(stream.next().await)
+            } => {
+                let Ok(incoming) = incoming else { break; };
                 let message = match incoming {
                     Some(Ok(Message::Text(text))) if text.len() <= APPLICATION_NETWORK_SERVER_TEXT_BYTES => ApplicationNetworkMessage::Text(text.to_string()),
                     Some(Ok(Message::Binary(bytes))) if bytes.len() <= APPLICATION_NETWORK_BINARY_BYTES => ApplicationNetworkMessage::Binary(bytes.to_vec()),
                     Some(Ok(Message::Ping(_)|Message::Pong(_))) => continue,
                     _ => break,
                 };
-                if host.receive(peer.id, message).await.is_err() { break; }
+                let permit = read_permit.take().expect("read began with a byte reservation");
+                let delivery = host.receive_reserved(peer.id, message, permit);
+                let accepted = tokio::select! {
+                    _ = &mut peer.disconnected => false,
+                    result = delivery => result.is_ok(),
+                };
+                if !accepted { break; }
             }
             outgoing = peer.transmissions.recv() => {
                 let Some(outgoing) = outgoing else { break; };
