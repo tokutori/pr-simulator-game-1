@@ -418,6 +418,44 @@ fn portrait_touch_hud_clears_the_center_band() {
             node.id
         );
     }
+    // At a 24 px root font the instruments and primary readouts alone
+    // exceed the space above the band, so the rail is scaled down after
+    // folding. Every displayed node still clears the band, and the
+    // instruments and primary readouts stay on screen.
+    platform.viewport = GameUiViewport {
+        width: 390.0,
+        height: 844.0,
+        root_font_size: 24.0,
+    };
+    let state = GameUiState::default();
+    let view = game_ui_view(&state, &context(&session, full, &platform)).unwrap();
+    let hud = view.hud.as_ref().unwrap();
+    let rail_top = 844.0 - hud.layout.offset_px[1] - hud.layout.height_px;
+    let band_top = 844.0 * 0.35;
+    let nodes: Vec<_> = hud.groups.iter().flat_map(|group| &group.nodes).collect();
+    assert!(!nodes.is_empty());
+    for node in &nodes {
+        let top = rail_top + node.bounds.y * hud.layout.height_px;
+        let bottom = top + node.bounds.height * hud.layout.height_px;
+        assert!(
+            bottom <= band_top,
+            "{}: {top}..{bottom} enters the center band starting at {band_top}",
+            node.id
+        );
+    }
+    for id in [
+        "hud-attitude",
+        "hud-heading",
+        "hud-wind",
+        "hud-angle-of-attack",
+        "hud-primary-readouts",
+        "hud-altitude",
+        "hud-groundspeed",
+        "hud-distance",
+        "hud-elapsed",
+    ] {
+        assert!(nodes.iter().any(|node| node.id == id), "{id} missing");
+    }
 }
 
 #[test]

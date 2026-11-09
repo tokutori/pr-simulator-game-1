@@ -27,6 +27,15 @@ const PORTRAIT_FOLD_ORDER: [&str; 7] = [
     "hud-accepted-keys",
 ];
 
+/// Factor steps for scaling a portrait-touch rail that still exceeds the
+/// space above the center band after every foldable readout is folded.
+/// The scale applies to the font the rail layout is derived from, so the
+/// instruments and primary readouts shrink together and stay on screen.
+/// Scaling stops at MIN_PORTRAIT_FONT_SCALE, which keeps the shrunken
+/// rail legible.
+const PORTRAIT_FONT_SCALE_STEP: f64 = 0.9;
+const MIN_PORTRAIT_FONT_SCALE: f64 = 0.5;
+
 #[derive(Clone, Copy)]
 struct GameUiHudAttitude {
     roll_degrees: f64,
@@ -170,7 +179,7 @@ pub(super) fn game_ui_hud(
     let heading_degrees = attitude_visible.then_some(heading);
     let angle_of_attack_degrees = profile.angle_of_attack().then_some(alpha).flatten();
     let menu_layout = super::view::layout(state, context, phase)?;
-    let mut layout = hud_layout(context.platform, phase, &menu_layout);
+    let mut layout = hud_layout(context.platform, phase, &menu_layout, 1.0);
     let geometry = hud_geometry(
         attitude,
         path_angle,
@@ -437,19 +446,30 @@ pub(super) fn game_ui_hud(
         // The space between the badge reserve and the center band is the
         // whole room the rail has. When the complete rail is taller than
         // that space, fold readouts in PORTRAIT_FOLD_ORDER until the rail
-        // fits, so every displayed node stays above the band.
+        // fits, so every displayed node stays above the band. When the
+        // instruments and primary readouts alone are still taller than
+        // the space, as happens at a large root font size, scale the
+        // rail's font down in PORTRAIT_FONT_SCALE_STEP steps until the
+        // rail fits.
         let available_height =
             CENTER_BAND_TOP_FRACTION * context.platform.viewport.height - gap - frame_rate_reserve;
         let mut next_fold = 0;
+        let mut font_scale = 1.0;
         while layout.height_px > available_height {
-            let Some(&victim) = PORTRAIT_FOLD_ORDER.get(next_fold) else {
+            if let Some(&victim) = PORTRAIT_FOLD_ORDER.get(next_fold) {
+                next_fold += 1;
+                let (mut readouts, instruments) = take_hud_nodes(groups);
+                readouts.retain(|node| node.id != victim);
+                layout = hud_layout(context.platform, phase, &menu_layout, font_scale);
+                groups = position_hud(&mut layout, readouts, instruments, true, 0.55, true);
+            } else if font_scale > MIN_PORTRAIT_FONT_SCALE {
+                font_scale = (font_scale * PORTRAIT_FONT_SCALE_STEP).max(MIN_PORTRAIT_FONT_SCALE);
+                let (readouts, instruments) = take_hud_nodes(groups);
+                layout = hud_layout(context.platform, phase, &menu_layout, font_scale);
+                groups = position_hud(&mut layout, readouts, instruments, true, 0.55, true);
+            } else {
                 break;
-            };
-            next_fold += 1;
-            let (mut readouts, instruments) = take_hud_nodes(groups);
-            readouts.retain(|node| node.id != victim);
-            layout = hud_layout(context.platform, phase, &menu_layout);
-            groups = position_hud(&mut layout, readouts, instruments, true, 0.55, true);
+            }
         }
         layout.offset_px[1] =
             (context.platform.viewport.height - gap - frame_rate_reserve - layout.height_px)
@@ -729,8 +749,9 @@ fn hud_layout(
     platform: &GameUiPlatformInput,
     phase: SessionPhase,
     menu: &GameUiLayout,
+    font_scale: f64,
 ) -> GameUiHudLayout {
-    let font = platform.viewport.root_font_size;
+    let font = platform.viewport.root_font_size * font_scale;
     let viewport = platform.viewport;
     let flight_bar = phase == SessionPhase::FlightRunning;
     let reserved_width = if flight_bar {
