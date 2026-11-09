@@ -2613,7 +2613,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         scene
             .geometry
             .as_ref()
-            .is_none_or(|geometry| !geometry.aircraft_visible)
+            .is_none_or(|geometry| !geometry.aircraft_visible && !geometry.main_wing_visible)
     );
     assert!(runtime.platform.analysis_available);
     assert!(!runtime.platform.replay_available);
@@ -2702,6 +2702,45 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
                 "game-title-records-failed" | "game-title-retry-records"
             ))
     );
+
+    let mut legacy = finalized_application().flight_record_document().unwrap();
+    legacy.schema_version = 6;
+    legacy.finalization.boundary_event = None;
+    legacy.control_identity.aircraft_sha256 = None;
+    legacy.control_identity.controller_sha256 = None;
+    legacy.control_identity.execution = None;
+    legacy.controller_fault = None;
+    legacy.header.control_mode = None;
+    legacy.header.requested_control_mode = None;
+    legacy.header.controller_profile_version = Some(1);
+    for sample in &mut legacy.samples {
+        sample.wing_bending_factor = None;
+        sample.tail_wrenches = None;
+    }
+    let mut application = ApplicationSession::default();
+    application
+        .open_archived_record_json(&String::from_utf8(legacy.encode_json().unwrap()).unwrap())
+        .unwrap();
+    assert!(application.replay_available());
+    let platform = screen_platform();
+    let mut legacy_runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+    let initial = legacy_runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: platform,
+        })
+        .unwrap();
+    let ready = finish_boot(&mut legacy_runtime, initial);
+    let geometry = ready
+        .drawing
+        .as_ref()
+        .unwrap()
+        .scene
+        .geometry
+        .as_ref()
+        .unwrap();
+    assert!(geometry.aircraft_visible);
+    assert!(!geometry.main_wing_visible);
+    assert!(geometry.updates.is_empty());
 }
 
 trait ObservedInput {
@@ -3203,7 +3242,11 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         .iter()
         .enumerate()
         .filter(|(_, mesh)| {
-            mesh.attachment() == birdman_game_scene::airframe_structure::StructuralAttachment::Rigid
+            matches!(
+                mesh.attachment(),
+                birdman_game_scene::airframe_structure::StructuralAttachment::Rigid
+                    | birdman_game_scene::airframe_structure::StructuralAttachment::MainWing
+            )
         })
     {
         let mesh = assets
@@ -3212,7 +3255,16 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             .iter()
             .find(|mesh| mesh.name == format!("structure-{index}"))
             .unwrap();
-        assert_eq!(mesh.attachment, ApplicationMeshAttachment::Aircraft);
+        assert_eq!(
+            mesh.attachment,
+            if physical.attachment()
+                == birdman_game_scene::airframe_structure::StructuralAttachment::MainWing
+            {
+                ApplicationMeshAttachment::MainWing
+            } else {
+                ApplicationMeshAttachment::Aircraft
+            }
+        );
         let ApplicationBufferSlice::F32(positions) =
             runtime.asset_buffer(mesh.position.buffer_id).unwrap()
         else {
@@ -3287,6 +3339,30 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         .project_geometry(Some(pose), &selected)
         .unwrap()
         .unwrap();
+    assert!(articulated.aircraft_visible && articulated.main_wing_visible);
+    let adopted = pose.wing_deformation;
+    pose.wing_deformation =
+        birdman_game_presentation::render_pose::RenderWingDeformation::Unavailable {
+            reason:
+                birdman_game_presentation::render_pose::RenderWingDeformationUnavailable::Unrecorded,
+        };
+    let unrecorded = runtime
+        .assets
+        .project_geometry(Some(pose), &selected)
+        .unwrap()
+        .unwrap();
+    assert!(unrecorded.aircraft_visible && !unrecorded.main_wing_visible);
+    assert!(unrecorded.updates.is_empty());
+    assert_eq!(unrecorded.revision, articulated.revision);
+    pose.wing_deformation = adopted;
+    let restored = runtime
+        .assets
+        .project_geometry(Some(pose), &selected)
+        .unwrap()
+        .unwrap();
+    assert!(restored.aircraft_visible && restored.main_wing_visible);
+    assert!(restored.updates.is_empty());
+    assert_eq!(restored.revision, articulated.revision);
     for (frame, incidence) in [
         (
             geometry.clone(),

@@ -82,6 +82,8 @@ pub enum ApplicationMeshAttachment {
     World,
     /// Aircraft datum frame.
     Aircraft,
+    /// Main-wing surfaces and structure in the aircraft datum frame.
+    MainWing,
     /// Horizontal-tail mesh in the aircraft frame.
     HorizontalTail,
     /// Vertical-tail mesh in the aircraft frame.
@@ -242,6 +244,8 @@ pub struct ApplicationMeshPose {
 pub struct ApplicationGeometryFrame {
     /// Whether registered aircraft geometry is available for this source.
     pub aircraft_visible: bool,
+    /// Whether an accepted structural coefficient permits main-wing imagery.
+    pub main_wing_visible: bool,
     /// Geometry upload generation, advancing only after a complete accepted update.
     pub revision: u32,
     /// Attribute replacements; empty while the accepted coefficient is unchanged.
@@ -368,7 +372,7 @@ impl GeometryOwner {
             let mesh = owner.mesh(
                 next_id,
                 format!("wing-{index}"),
-                ApplicationMeshAttachment::Aircraft,
+                ApplicationMeshAttachment::MainWing,
                 Buffer::F32(surface.positions().as_flattened().to_vec()),
                 Buffer::U32(surface.indices().to_vec()),
                 surface.indices(),
@@ -440,6 +444,10 @@ impl GeometryOwner {
         }
         for (index, mesh) in source.structure().meshes().iter().enumerate() {
             let (attachment, position_buffer) = match mesh.attachment() {
+                StructuralAttachment::MainWing => (
+                    ApplicationMeshAttachment::MainWing,
+                    Buffer::F32(mesh.positions().as_flattened().to_vec()),
+                ),
                 StructuralAttachment::HorizontalTail => (
                     ApplicationMeshAttachment::HorizontalTail,
                     Buffer::F32(
@@ -851,10 +859,8 @@ impl GeometryOwner {
             Some(RenderWingDeformation::Accepted { factor }) => Some(factor),
             _ => None,
         };
-        let available = factor.is_some()
-            && pose.is_none_or(|pose| {
-                matches!(pose.tail_geometry, RenderTailGeometry::Available { .. })
-            });
+        let available = pose
+            .is_none_or(|pose| matches!(pose.tail_geometry, RenderTailGeometry::Available { .. }));
         let mut updates = Vec::new();
         if let Some(factor) = factor
             && available
@@ -947,6 +953,7 @@ impl GeometryOwner {
         let part_poses = [part_pose(0)?, part_pose(1)?];
         Ok(ApplicationGeometryFrame {
             aircraft_visible: available,
+            main_wing_visible: available && factor.is_some(),
             revision: self.revision,
             updates,
             part_poses,
