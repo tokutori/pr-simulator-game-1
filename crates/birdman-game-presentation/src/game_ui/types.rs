@@ -640,8 +640,9 @@ pub struct GameUiContext<'view> {
     pub archived_identity: Option<&'view birdman_game_format::FlightRecordIdentityMetadata>,
     /// Registered environment briefing readout derived in Rust.
     pub environment_readout: &'view str,
-    /// Actual adapter observations and capabilities.
-    pub platform: &'view GameUiPlatformInput,
+    /// Actual adapter observations and capabilities, with the retained UI
+    /// scale already applied to the viewport root font size.
+    pub platform: GameUiPlatformInput,
 }
 
 /// Finite UI boundary, record or action-admission failure.

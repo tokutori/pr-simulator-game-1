@@ -503,6 +503,8 @@ pub struct MenuPreparationInput<'a> {
     pub font: &'a MenuFont,
     /// Platform text shaping locale.
     pub locale: &'a str,
+    /// Retained UI scale applied to the menu font size; 1.0 is standard.
+    pub font_scale: f64,
 }
 
 /// Layout result or a precise measurement failure.

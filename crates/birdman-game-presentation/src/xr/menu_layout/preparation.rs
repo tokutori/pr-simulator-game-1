@@ -7,6 +7,9 @@ use crate::xr::{
     fit_xr_text_ink,
 };
 
+/// Standard spatial menu body font size in metres at UI scale 1.0.
+pub const MENU_FONT_METERS: f64 = 0.035;
+
 /// Bounded font observations owned with the platform UI resource.
 #[derive(Debug, Default)]
 pub struct SurfaceFontCache {
@@ -55,6 +58,9 @@ pub fn prepare_game_ui_menu(
     let result = (|| {
         if input.view_revision != view.view_revision || frame.view_revision != view.view_revision {
             return Err(MenuLayoutFailure::StaleView);
+        }
+        if !input.font_scale.is_finite() || input.font_scale <= 0.0 {
+            return Err(MenuLayoutFailure::InvalidLayout);
         }
         let panel = view
             .panels
@@ -240,7 +246,7 @@ fn source_from_view(
             width: panel.size[0],
             height: panel.size[1],
         },
-        font_meters: 0.035,
+        font_meters: MENU_FONT_METERS * input.font_scale,
         font_size_px: theme.body_text.font_size_px,
         line_height_px: theme.body_text.line_height_px,
         title_text: theme.title_text,

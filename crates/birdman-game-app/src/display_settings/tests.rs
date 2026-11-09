@@ -17,6 +17,7 @@ fn validation_admits_only_the_documented_range() {
                 brightness: value,
                 contrast: value,
                 saturation: value,
+                ..Default::default()
             }
             .is_valid()
         );
@@ -54,10 +55,42 @@ fn every_offered_step_is_valid() {
                 brightness: step,
                 contrast: step,
                 saturation: step,
+                ..Default::default()
             }
             .is_valid()
         );
     }
+}
+
+#[test]
+fn ui_scale_admits_only_the_offered_steps() {
+    for step in UI_SCALE_STEPS {
+        assert!(
+            DisplaySettings {
+                ui_scale: step,
+                ..Default::default()
+            }
+            .is_valid()
+        );
+    }
+    for value in [0.5, 0.9, 1.1, 2.5, f64::NAN, f64::INFINITY] {
+        assert!(
+            !DisplaySettings {
+                ui_scale: value,
+                ..Default::default()
+            }
+            .is_valid()
+        );
+    }
+}
+
+#[test]
+fn stored_settings_without_ui_scale_read_as_the_standard_size() {
+    let settings: DisplaySettings =
+        serde_json::from_str(r#"{"brightness":1.25,"contrast":1.0,"saturation":0.75}"#)
+            .expect("legacy settings decode");
+    assert_eq!(settings.ui_scale, 1.0);
+    assert!(settings.is_valid());
 }
 
 #[test]
@@ -91,6 +124,7 @@ fn adjustment_applies_exposure_then_contrast_then_saturation() {
         brightness: 1.5,
         contrast: 1.25,
         saturation: 0.5,
+        ..Default::default()
     };
     let adjustment = settings.adjustment();
     assert_eq!(adjustment.exposure_multiplier, 1.5);

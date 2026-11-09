@@ -232,7 +232,7 @@ pub fn game_ui_view(
             );
         }
         SessionPhase::FlightRunning => {
-            if super::touch::available(context.platform, phase) {
+            if super::touch::available(&context.platform, phase) {
                 menu.section("flight-touch", "", GameUiSectionLayout::Column);
                 menu.controls.extend(super::touch::controls(
                     context,
@@ -1188,7 +1188,7 @@ fn credits(menu: &mut Menu, context: &GameUiContext<'_>) {
 }
 
 fn display_settings(menu: &mut Menu, context: &GameUiContext<'_>) {
-    use birdman_game_app::display_settings::DISPLAY_SETTING_STEPS;
+    use birdman_game_app::display_settings::{DISPLAY_SETTING_STEPS, UI_SCALE_STEPS};
     let current = context.display_settings;
     if !context.display_settings_notification.is_empty() {
         menu.status(
@@ -1220,6 +1220,28 @@ fn display_settings(menu: &mut Menu, context: &GameUiContext<'_>) {
                 value == *step,
             );
         }
+    }
+    for (code, step) in UI_SCALE_STEPS.iter().enumerate() {
+        let mut settings = current;
+        settings.ui_scale = *step;
+        menu.choice(
+            "display-ui-scale",
+            "UIスケール",
+            (ui_scale_step_label(*step), code as u32, ""),
+            SessionCommand::SetDisplaySettings { settings },
+            current.ui_scale == *step,
+        );
+    }
+}
+
+fn ui_scale_step_label(step: f64) -> &'static str {
+    match step {
+        0.75 => "75%",
+        1.0 => "標準",
+        1.25 => "125%",
+        1.5 => "150%",
+        1.75 => "175%",
+        _ => "200%",
     }
 }
 

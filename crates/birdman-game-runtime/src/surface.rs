@@ -193,6 +193,7 @@ pub(super) struct SurfaceDisplay {
         Option<u32>,
     )>,
     pub frame_rate_label: String,
+    pub ui_scale: f64,
 }
 
 impl SurfaceOwner {
@@ -433,6 +434,7 @@ impl SurfaceOwner {
         let SurfaceDisplay {
             resource: display,
             frame_rate_label,
+            ui_scale,
         } = display;
         let active = display.is_some_and(|(mode, _)| {
             mode != birdman_game_presentation::game_ui::GameUiPresentationMode::Screen
@@ -513,6 +515,7 @@ impl SurfaceOwner {
                         viewer,
                         font: &font.font,
                         locale: &font.locale,
+                        font_scale: ui_scale,
                     },
                     &mut self.cache,
                     |request, size, value| measure_pixels(request, size, value, 1536.0, measure),
@@ -638,7 +641,11 @@ impl SurfaceOwner {
                     HeadHudPreparationInput {
                         view_revision: view.view_revision,
                         viewer,
-                        profile: XrHeadHudProfile::default(),
+                        profile: {
+                            let mut profile = XrHeadHudProfile::default();
+                            profile.text_height_degrees *= ui_scale;
+                            profile
+                        },
                         font: &font.font,
                         locale: &font.locale,
                         frame_rate_label: Some(&frame_rate_label),
