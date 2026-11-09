@@ -273,6 +273,7 @@ async function fixture() {
     }, createLinearGradient: () => ({ addColorStop: () => undefined }) };
     return new Proxy(context, { get(target, key): unknown { return Reflect.get(target, key) ?? (() => undefined); } }) as unknown as ReturnType<typeof browser.HTMLCanvasElement.prototype.getContext>;
   });
+  const originalUpdate = Object.getOwnPropertyDescriptor(ApplicationRuntimeBridge.prototype, "update")?.value as ApplicationRuntimeBridge["update"];
   const updates = vi.spyOn(ApplicationRuntimeBridge.prototype, "update");
   const free = vi.spyOn(ApplicationRuntimeBridge.prototype, "free");
   const mount = browser.document.createElement("main") as unknown as HTMLElement;
@@ -299,7 +300,7 @@ async function fixture() {
     Object.defineProperty(event, "persisted", { value: false });
     browser.dispatchEvent(event);
   };
-  return { rasterPaints, browser, session, driver, free, updates, drawing, click, dispose,
+  return { rasterPaints, browser, session, driver, free, updates, originalUpdate, drawing, click, dispose,
     frame(at: number) { session.run(at); },
     select(at: number) { session.select(at); },
     async ready() {
@@ -452,17 +453,42 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       expect(state.driver.getRenderTarget()).toBeNull();
       expect(state.driver.getScissorTest()).toBe(false);
       if (state.driver.frame === null) throw new Error("Screen animation was not started");
+      const wing = state.driver.scene?.getObjectByName("wing-0");
+      const cockpit = state.driver.scene?.getObjectByName("cockpit-0");
+      if (wing?.parent == null || cockpit?.parent == null) throw new Error("Shared aircraft attachments are unavailable");
+      expect(wing.parent.parent).toBe(cockpit.parent);
+      const originalUpdate = state.originalUpdate;
+      state.updates.mockImplementation(function (this: ApplicationRuntimeBridge, json, measure) {
+        const raw = originalUpdate.call(this, json, measure);
+        const output = JSON.parse(raw) as ApplicationOutput;
+        const drawing = output.drawing;
+        const geometry = drawing?.scene.geometry;
+        if (drawing == null || geometry == null) return raw;
+        return JSON.stringify({ ...output, drawing: { ...drawing, scene: { ...drawing.scene,
+          geometry: { ...geometry, main_wing_visible: false } } } });
+      });
       state.driver.frame(1);
+      state.updates.mockImplementation(originalUpdate);
+      expect(wing.parent.visible).toBe(false);
+      expect(cockpit.parent.visible).toBe(true);
       const query = state.drawing().graphics.query;
       expect(query).not.toBeNull();
       const renderer = state.drawing().graphics.resource;
       const observed = state.updates.mock.calls.length;
       state.driver.timer.gl.getQueryParameter.mockImplementationOnce(() => true).mockImplementationOnce(() => -1_000_000);
       state.driver.frame(2);
+      expect(wing.parent.visible).toBe(true);
       const inputs = state.updates.mock.calls.slice(observed).map(([json]) => (JSON.parse(json) as ApplicationObservation).input);
       const completion = inputs.find(input => input.kind === "graphics" && input.observation.kind === "gpu_completed");
       expect(completion?.kind === "graphics" ? completion.observation : null).toEqual({ kind: "gpu_completed", query, gpu_work_ms: -1 });
       expect(inputs.some(input => input.kind === "renderer_failed")).toBe(false);
+      const invalidFrame = state.updates.mock.calls.length;
+      state.driver.frame(-1);
+      expect(state.updates.mock.results.slice(invalidFrame).some(result => result.type === "return"
+        && (JSON.parse(result.value) as ApplicationOutput).diagnostic?.includes("domain=source input=frame"))).toBe(true);
+      state.driver.frame(1);
+      expect(state.updates.mock.calls.slice(invalidFrame).map(([json]) => (JSON.parse(json) as ApplicationObservation).input)
+        .some(input => input.kind === "renderer_failed")).toBe(false);
       expect(state.drawing().graphics.resource).toEqual(renderer);
       expect(state.driver.disposed).not.toHaveBeenCalled();
       const canvas = state.browser.document.querySelector(".presentation-canvas");

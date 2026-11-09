@@ -992,12 +992,25 @@ fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_de
             }
         )));
         let drained = runtime
-            .observe_test(ApplicationInput::RendererReleased {
-                renderer_resource_id: 100,
-                failure: None,
-            })
+            .update(
+                ApplicationObservation {
+                    observed_ms: f64::NAN,
+                    input: ApplicationInput::RendererReleased {
+                        renderer_resource_id: 100,
+                        failure: None,
+                    },
+                },
+                &mut no_text_metrics,
+            )
             .unwrap();
         assert_eq!(drained.lifecycle, ApplicationLifecycle::Drained);
+        assert!(
+            drained
+                .diagnostic
+                .as_deref()
+                .unwrap()
+                .contains("domain=arrival")
+        );
         assert!(!drained.drawing.unwrap().presentation.screen_ui_visible);
         let phase = runtime.application().core_session().snapshot().phase();
         let ignored = runtime
@@ -2613,7 +2626,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         scene
             .geometry
             .as_ref()
-            .is_none_or(|geometry| !geometry.aircraft_visible)
+            .is_none_or(|geometry| !geometry.aircraft_visible && !geometry.main_wing_visible)
     );
     assert!(runtime.platform.analysis_available);
     assert!(!runtime.platform.replay_available);
@@ -2702,6 +2715,45 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
                 "game-title-records-failed" | "game-title-retry-records"
             ))
     );
+
+    let mut legacy = finalized_application().flight_record_document().unwrap();
+    legacy.schema_version = 6;
+    legacy.finalization.boundary_event = None;
+    legacy.control_identity.aircraft_sha256 = None;
+    legacy.control_identity.controller_sha256 = None;
+    legacy.control_identity.execution = None;
+    legacy.controller_fault = None;
+    legacy.header.control_mode = None;
+    legacy.header.requested_control_mode = None;
+    legacy.header.controller_profile_version = Some(1);
+    for sample in &mut legacy.samples {
+        sample.wing_bending_factor = None;
+        sample.tail_wrenches = None;
+    }
+    let mut application = ApplicationSession::default();
+    application
+        .open_archived_record_json(&String::from_utf8(legacy.encode_json().unwrap()).unwrap())
+        .unwrap();
+    assert!(application.replay_available());
+    let platform = screen_platform();
+    let mut legacy_runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+    let initial = legacy_runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: platform,
+        })
+        .unwrap();
+    let ready = finish_boot(&mut legacy_runtime, initial);
+    let geometry = ready
+        .drawing
+        .as_ref()
+        .unwrap()
+        .scene
+        .geometry
+        .as_ref()
+        .unwrap();
+    assert!(geometry.aircraft_visible);
+    assert!(!geometry.main_wing_visible);
+    assert!(geometry.updates.is_empty());
 }
 
 trait ObservedInput {
@@ -2971,6 +3023,23 @@ fn phone_start_deadline_requests_screen_recovery_without_an_adapter_timer_policy
         })
         .unwrap();
     assert!(!runtime.phone.projection().available);
+    let rejected = runtime
+        .update(
+            ApplicationObservation {
+                observed_ms: f64::NAN,
+                input: ApplicationInput::Wake {
+                    request_id: wake_id,
+                },
+            },
+            &mut no_text_metrics,
+        )
+        .unwrap();
+    assert!(
+        matches!(rejected.requests.as_slice(), [ApplicationRequest::ScheduleWake {
+        request_id, at_ms: 13_000.0, realtime: false,
+    }] if *request_id == wake_id)
+    );
+    assert_eq!(runtime.phone_wake, Some(wake_id));
     let recovery = runtime
         .update(
             ApplicationObservation {
@@ -3013,103 +3082,277 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             ControllerIoObservation, ControllerIoRequest, SelectedControllerExecution,
         };
         use birdman_game_format::external_controller::{
-            ControllerFrame, NativeControllerConnection, NativeControllerDocument,
+            ControllerFault, ControllerFrame, NativeControllerConnection, NativeControllerDocument,
         };
-        let mut application = ApplicationSession::default();
-        let source = serde_json::to_vec(&NativeControllerDocument {
-            schema_version: 1,
-            connection: NativeControllerConnection::Sitl {
-                program: "controller-sample-stdio".to_owned(),
-                arguments: Vec::new(),
-                program_id: "readiness".to_owned(),
-                version: "1".to_owned(),
-                binary_sha256: "a".repeat(64),
-            },
-        })
-        .unwrap();
-        application
-            .select_controller_execution(SelectedControllerExecution::decode(source).unwrap())
-            .unwrap();
-        let platform = screen_platform();
-        let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
-        let initial = runtime
-            .observe_test(ApplicationInput::Platform {
-                observation: platform,
-            })
-            .unwrap();
-        let title = structure(finish_boot(&mut runtime, initial));
-        let setup = structure(activate(&mut runtime, &title, SessionCommand::OpenSetup {}));
-        let preparing = activate(&mut runtime, &setup, SessionCommand::Prepare {});
-        let generation = preparing
-            .requests
-            .iter()
-            .find_map(|request| match request {
-                ApplicationRequest::ControllerIo {
-                    request: ControllerIoRequest::Open { generation, .. },
-                } => Some(*generation),
-                _ => None,
-            })
-            .unwrap();
-        if let Some(id) = preparing.requests.iter().find_map(|request| match request {
-            ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
-            _ => None,
-        }) {
-            resources_ready(&mut runtime, id).unwrap();
-        }
-        assert!(matches!(
-            runtime.resource_readiness,
-            BackendReadiness::Ready
-        ));
-        assert_eq!(
-            runtime.application().core_session().snapshot().phase(),
-            SessionPhase::BriefingPreparing
-        );
-        let opened = runtime
-            .observe_test(ApplicationInput::ControllerIo {
-                observation: ControllerIoObservation::Opened {
-                    generation,
-                    failure: None,
-                },
-            })
-            .unwrap();
-        let (write_id, init) = opened
-            .requests
-            .iter()
-            .find_map(|request| match request {
-                ApplicationRequest::ControllerIo {
-                    request:
-                        ControllerIoRequest::Write {
-                            write_id, bytes, ..
+        fn reply(
+            runtime: &mut ApplicationRuntime,
+            output: &ApplicationOutput,
+            time: f64,
+            arrival: f64,
+        ) -> ApplicationOutput {
+            let (generation, write_id, request) = output
+                .requests
+                .iter()
+                .find_map(|request| match request {
+                    ApplicationRequest::ControllerIo {
+                        request:
+                            ControllerIoRequest::Write {
+                                generation,
+                                write_id,
+                                bytes,
+                            },
+                    } => Some((
+                        *generation,
+                        *write_id,
+                        ControllerFrame::decode(bytes).unwrap(),
+                    )),
+                    _ => None,
+                })
+                .unwrap();
+            let response = if request.header().kind
+                == birdman_game_format::external_controller::ExchangeKind::Evaluate
+            {
+                ControllerFrame::angles(request.header(), [0.0; 2]).unwrap()
+            } else {
+                ControllerFrame::acknowledgement(request.header()).unwrap()
+            };
+            runtime
+                .update(
+                    ApplicationObservation {
+                        observed_ms: arrival,
+                        input: ApplicationInput::ControllerIo {
+                            observation: ControllerIoObservation::Written {
+                                generation,
+                                write_id,
+                                sent_ms: time,
+                            },
                         },
-                } => Some((*write_id, ControllerFrame::decode(bytes).unwrap())),
+                    },
+                    &mut no_text_metrics,
+                )
+                .unwrap();
+            runtime
+                .update(
+                    ApplicationObservation {
+                        observed_ms: arrival,
+                        input: ApplicationInput::ControllerIo {
+                            observation: ControllerIoObservation::Received {
+                                generation,
+                                bytes: response.as_bytes().to_vec(),
+                                received_ms: time,
+                            },
+                        },
+                    },
+                    &mut no_text_metrics,
+                )
+                .unwrap()
+        }
+        for (hitl, next_arrival) in [(false, 2.0), (false, 1.5), (true, 2.0)] {
+            let connection = if hitl {
+                NativeControllerConnection::Hitl {
+                    port: "software-observations".into(),
+                    baud_rate: 2_000_000,
+                    hardware_id: "software-fixture".into(),
+                    firmware_id: "1".into(),
+                }
+            } else {
+                NativeControllerConnection::Sitl {
+                    program: "controller-sample-stdio".into(),
+                    arguments: Vec::new(),
+                    program_id: "readiness".into(),
+                    version: "1".into(),
+                    binary_sha256: "a".repeat(64),
+                }
+            };
+            let source = serde_json::to_vec(&NativeControllerDocument {
+                schema_version: 1,
+                connection,
+            })
+            .unwrap();
+            let mut application = ApplicationSession::default();
+            application
+                .select_controller_execution(SelectedControllerExecution::decode(source).unwrap())
+                .unwrap();
+            let platform = screen_platform();
+            let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+            let initial = runtime
+                .observe_test(ApplicationInput::Platform {
+                    observation: platform.clone(),
+                })
+                .unwrap();
+            let title = structure(finish_boot(&mut runtime, initial));
+            let setup = structure(activate(&mut runtime, &title, SessionCommand::OpenSetup {}));
+            let preparing = activate(&mut runtime, &setup, SessionCommand::Prepare {});
+            let generation = preparing
+                .requests
+                .iter()
+                .find_map(|r| match r {
+                    ApplicationRequest::ControllerIo {
+                        request: ControllerIoRequest::Open { generation, .. },
+                    } => Some(*generation),
+                    _ => None,
+                })
+                .unwrap();
+            if let Some(id) = preparing.requests.iter().find_map(|r| match r {
+                ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
                 _ => None,
-            })
-            .unwrap();
-        runtime
-            .observe_test(ApplicationInput::ControllerIo {
-                observation: ControllerIoObservation::Written {
-                    generation,
-                    write_id,
-                    sent_ms: runtime.observed_ms,
-                },
-            })
-            .unwrap();
-        runtime
-            .observe_test(ApplicationInput::ControllerIo {
-                observation: ControllerIoObservation::Received {
-                    generation,
-                    bytes: ControllerFrame::acknowledgement(init.header())
+            }) {
+                resources_ready(&mut runtime, id).unwrap();
+            }
+            assert!(matches!(
+                runtime.resource_readiness,
+                BackendReadiness::Ready
+            ));
+            let held_open = runtime
+                .update(
+                    ApplicationObservation {
+                        observed_ms: f64::NAN,
+                        input: ApplicationInput::ControllerIo {
+                            observation: ControllerIoObservation::Opened {
+                                generation,
+                                failure: None,
+                            },
+                        },
+                    },
+                    &mut no_text_metrics,
+                )
+                .unwrap();
+            assert!(held_open.requests.iter().all(|r| !matches!(
+                r,
+                ApplicationRequest::ControllerIo {
+                    request: ControllerIoRequest::Write { .. }
+                }
+            )));
+            let opened = runtime
+                .update(
+                    ApplicationObservation {
+                        observed_ms: 1.0,
+                        input: ApplicationInput::Platform {
+                            observation: platform.clone(),
+                        },
+                    },
+                    &mut no_text_metrics,
+                )
+                .unwrap();
+            let held = reply(&mut runtime, &opened, 2.0, 0.0);
+            assert!(
+                held.diagnostic
+                    .as_deref()
+                    .unwrap()
+                    .contains("domain=arrival")
+            );
+            assert_eq!(runtime.observed_ms, 1.0);
+            assert_eq!(
+                runtime.application().core_session().snapshot().phase(),
+                SessionPhase::BriefingPreparing
+            );
+            let wake = runtime.controller_wake.unwrap().0;
+            let mut output = runtime
+                .update(
+                    ApplicationObservation {
+                        observed_ms: next_arrival,
+                        input: ApplicationInput::Wake { request_id: wake },
+                    },
+                    &mut no_text_metrics,
+                )
+                .unwrap();
+            if next_arrival < 2.0 {
+                assert_eq!(
+                    runtime.application().controller_fault().unwrap().fault,
+                    ControllerFault::BadFrame
+                );
+                continue;
+            }
+            if hitl {
+                output = reply(&mut runtime, &output, 3.0, 3.0);
+                reply(&mut runtime, &output, 4.0, 4.0);
+            }
+            assert_eq!(
+                runtime.application().core_session().snapshot().phase(),
+                SessionPhase::BriefingReady
+            );
+            if hitl {
+                runtime
+                    .application
+                    .execute(SessionCommand::StartCountdown {}, BackendReadiness::Ready)
+                    .unwrap();
+                let token = runtime
+                    .application
+                    .core_session()
+                    .countdown_token()
+                    .unwrap();
+                runtime
+                    .application
+                    .observe_countdown(token, 3.0, true)
+                    .unwrap();
+                runtime
+                    .update(
+                        ApplicationObservation {
+                            observed_ms: 10.0,
+                            input: ApplicationInput::Frame {
+                                display_resource_id: None,
+                                timestamp_ms: 10_000.0,
+                                gamepads: Vec::new(),
+                                xr: None,
+                                spatial: Default::default(),
+                            },
+                        },
+                        &mut no_text_metrics,
+                    )
+                    .unwrap();
+                let wake = runtime.controller_wake.unwrap().0;
+                let rearmed = runtime
+                    .update(
+                        ApplicationObservation {
+                            observed_ms: 9.0,
+                            input: ApplicationInput::Wake { request_id: wake },
+                        },
+                        &mut no_text_metrics,
+                    )
+                    .unwrap();
+                assert!(
+                    matches!(rearmed.requests.as_slice(), [ApplicationRequest::ScheduleWake {
+                    request_id, at_ms: 20.0, realtime: true,
+                }] if *request_id == wake)
+                );
+                let evaluate = runtime
+                    .update(
+                        ApplicationObservation {
+                            observed_ms: 20.0,
+                            input: ApplicationInput::Wake { request_id: wake },
+                        },
+                        &mut no_text_metrics,
+                    )
+                    .unwrap();
+                reply(&mut runtime, &evaluate, 21.0, 19.0);
+                assert_eq!(
+                    runtime
+                        .application
+                        .core_session()
+                        .snapshot()
+                        .tail_flight_state()
                         .unwrap()
-                        .as_bytes()
-                        .to_vec(),
-                    received_ms: runtime.observed_ms,
-                },
-            })
-            .unwrap();
-        assert_eq!(
-            runtime.application().core_session().snapshot().phase(),
-            SessionPhase::BriefingReady
-        );
+                        .tick_index(),
+                    0
+                );
+                let wake = runtime.controller_wake.unwrap().0;
+                runtime
+                    .update(
+                        ApplicationObservation {
+                            observed_ms: 30.0,
+                            input: ApplicationInput::Wake { request_id: wake },
+                        },
+                        &mut no_text_metrics,
+                    )
+                    .unwrap();
+                let record = runtime.application.core_session().flight_record().unwrap();
+                assert_eq!(record.samples().last().unwrap().tick_index, 1);
+                assert_eq!(
+                    runtime.application.controller_fault().unwrap().fault,
+                    ControllerFault::DeadlineMissed
+                );
+            }
+        }
     }
     use birdman_game_presentation::camera::{Pose, Vector3, compose_pose};
     let platform = ApplicationPlatformObservation {
@@ -3203,7 +3446,11 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         .iter()
         .enumerate()
         .filter(|(_, mesh)| {
-            mesh.attachment() == birdman_game_scene::airframe_structure::StructuralAttachment::Rigid
+            matches!(
+                mesh.attachment(),
+                birdman_game_scene::airframe_structure::StructuralAttachment::Rigid
+                    | birdman_game_scene::airframe_structure::StructuralAttachment::MainWing
+            )
         })
     {
         let mesh = assets
@@ -3212,7 +3459,16 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             .iter()
             .find(|mesh| mesh.name == format!("structure-{index}"))
             .unwrap();
-        assert_eq!(mesh.attachment, ApplicationMeshAttachment::Aircraft);
+        assert_eq!(
+            mesh.attachment,
+            if physical.attachment()
+                == birdman_game_scene::airframe_structure::StructuralAttachment::MainWing
+            {
+                ApplicationMeshAttachment::MainWing
+            } else {
+                ApplicationMeshAttachment::Aircraft
+            }
+        );
         let ApplicationBufferSlice::F32(positions) =
             runtime.asset_buffer(mesh.position.buffer_id).unwrap()
         else {
@@ -3287,6 +3543,30 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         .project_geometry(Some(pose), &selected)
         .unwrap()
         .unwrap();
+    assert!(articulated.aircraft_visible && articulated.main_wing_visible);
+    let adopted = pose.wing_deformation;
+    pose.wing_deformation =
+        birdman_game_presentation::render_pose::RenderWingDeformation::Unavailable {
+            reason:
+                birdman_game_presentation::render_pose::RenderWingDeformationUnavailable::Unrecorded,
+        };
+    let unrecorded = runtime
+        .assets
+        .project_geometry(Some(pose), &selected)
+        .unwrap()
+        .unwrap();
+    assert!(unrecorded.aircraft_visible && !unrecorded.main_wing_visible);
+    assert!(unrecorded.updates.is_empty());
+    assert_eq!(unrecorded.revision, articulated.revision);
+    pose.wing_deformation = adopted;
+    let restored = runtime
+        .assets
+        .project_geometry(Some(pose), &selected)
+        .unwrap()
+        .unwrap();
+    assert!(restored.aircraft_visible && restored.main_wing_visible);
+    assert!(restored.updates.is_empty());
+    assert_eq!(restored.revision, articulated.revision);
     for (frame, incidence) in [
         (
             geometry.clone(),

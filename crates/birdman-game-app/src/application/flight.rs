@@ -123,7 +123,6 @@ impl ApplicationSession {
         gamepads: &[FlightGamepadObservation],
         frame_available: bool,
     ) -> Result<FlightFrameReport, FlightFrameError> {
-        self.observe_controller_time(timestamp_ms);
         self.controller_execution
             .check_deadline(self.controller_observed_ms);
         self.synchronize_controller_fault();

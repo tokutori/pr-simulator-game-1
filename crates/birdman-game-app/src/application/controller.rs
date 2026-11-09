@@ -44,19 +44,31 @@ impl ApplicationSession {
         self.controller_execution.drain()
     }
     /// Publishes the common monotonic observation time without advancing physical time.
-    pub fn observe_controller_time(&mut self, observed_ms: f64) {
+    pub fn observe_controller_time(&mut self, observed_ms: f64) -> Result<(), ApplicationError> {
         if observed_ms.is_finite() && observed_ms >= self.controller_observed_ms {
             self.controller_observed_ms = observed_ms;
+            if self.controller_execution.admit_time(observed_ms) {
+                self.progress_controller_preparation()?;
+            }
         }
+        Ok(())
     }
     /// Admits a Native transport completion against its preparation and pending request.
     pub fn observe_controller_io(
         &mut self,
         observation: ControllerIoObservation,
+        arrival_admitted: bool,
     ) -> Result<(), ApplicationError> {
-        self.controller_execution
-            .observe(observation, self.controller_observed_ms);
-        self.progress_controller_preparation()
+        self.controller_execution.observe(
+            observation,
+            self.controller_observed_ms,
+            arrival_admitted,
+        );
+        if arrival_admitted {
+            self.progress_controller_preparation()
+        } else {
+            Ok(())
+        }
     }
     /// Returns the first bounded cleanup diagnostic once, independently of the immutable flight fault.
     pub fn take_controller_cleanup_diagnostic(&mut self) -> Option<String> {
