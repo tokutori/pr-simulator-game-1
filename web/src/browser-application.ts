@@ -115,38 +115,44 @@ export class BrowserApplication {
         renderingFailures.set(id, previous);
       };
       if (drawing != null) {
-        for (const [id, renderer] of this.renderers) {
-          try { renderer.apply(drawing); } catch (cause) { failed(id, cause); }
-        }
         try {
-          if (drawing.ui.kind === "view") {
-            this.view = drawing.ui.view;
-            const theme = drawing.ui.view.theme;
-            Object.assign(this.frameRate.style, {
-              fontSize: `${String(theme.frame_rate_text.font_size_px)}px`,
-              fontWeight: String(theme.frame_rate_text.font_weight),
-              lineHeight: `${String(theme.frame_rate_text.line_height_px)}px`,
-              color: theme.text,
-              backgroundColor: `color-mix(in srgb, ${theme.frame_rate_background} calc(${String(theme.frame_rate_opacity)} * 100%), transparent)`,
-              padding: `${String(theme.frame_rate_padding_px[1])}px ${String(theme.frame_rate_padding_px[0])}px`,
-              top: `max(${String(theme.frame_rate_inset_px)}px, env(safe-area-inset-top))`,
-              right: `max(${String(theme.frame_rate_inset_px)}px, env(safe-area-inset-right))`,
-            });
-            this.screen.render(drawing.ui.view, drawing.presentation.screen_ui_visible);
-          } else this.screen.renderFrame(drawing.ui.frame, drawing.presentation.screen_ui_visible);
-        } catch (cause) { failed(drawing.graphics.renderer_resource_id, cause); }
-        const hud = drawing.ui.kind === "view" ? drawing.ui.view.hud : drawing.ui.frame.hud;
-        const countdown = drawing.ui.kind === "view" ? drawing.ui.view.countdown : drawing.ui.frame.countdown;
-        try {
-          if (this.view !== null) this.hud.render(hud ?? null, this.view.theme);
-          this.hud.setVisible(drawing.presentation.screen_hud_visible && hud != null);
-          if (this.view !== null) this.countdown.render(countdown ?? null, this.view.theme);
-          this.countdown.setVisible(drawing.presentation.screen_ui_visible && countdown != null);
-          this.frameRate.hidden = !drawing.presentation.screen_ui_visible;
-          if (this.frameRate.textContent !== drawing.presentation.frame_rate_label) {
-            this.frameRate.textContent = drawing.presentation.frame_rate_label;
+          for (const [id, renderer] of this.renderers) {
+            try { renderer.apply(drawing); } catch (cause) { failed(id, cause); }
           }
-        } catch (cause) { failed(drawing.graphics.renderer_resource_id, cause); }
+          try {
+            if (drawing.ui.kind === "view") {
+              this.view = drawing.ui.view;
+              const theme = drawing.ui.view.theme;
+              Object.assign(this.frameRate.style, {
+                fontSize: `${String(theme.frame_rate_text.font_size_px)}px`,
+                fontWeight: String(theme.frame_rate_text.font_weight),
+                lineHeight: `${String(theme.frame_rate_text.line_height_px)}px`,
+                color: theme.text,
+                backgroundColor: `color-mix(in srgb, ${theme.frame_rate_background} calc(${String(theme.frame_rate_opacity)} * 100%), transparent)`,
+                padding: `${String(theme.frame_rate_padding_px[1])}px ${String(theme.frame_rate_padding_px[0])}px`,
+                top: `max(${String(theme.frame_rate_inset_px)}px, env(safe-area-inset-top))`,
+                right: `max(${String(theme.frame_rate_inset_px)}px, env(safe-area-inset-right))`,
+              });
+              this.screen.render(drawing.ui.view, drawing.presentation.screen_ui_visible);
+            } else this.screen.renderFrame(drawing.ui.frame, drawing.presentation.screen_ui_visible);
+          } catch (cause) { failed(drawing.graphics.renderer_resource_id, cause); }
+          const hud = drawing.ui.kind === "view" ? drawing.ui.view.hud : drawing.ui.frame.hud;
+          const countdown = drawing.ui.kind === "view" ? drawing.ui.view.countdown : drawing.ui.frame.countdown;
+          try {
+            if (this.view !== null) this.hud.render(hud ?? null, this.view.theme);
+            this.hud.setVisible(drawing.presentation.screen_hud_visible && hud != null);
+            if (this.view !== null) this.countdown.render(countdown ?? null, this.view.theme);
+            this.countdown.setVisible(drawing.presentation.screen_ui_visible && countdown != null);
+            this.frameRate.hidden = !drawing.presentation.screen_ui_visible;
+            if (this.frameRate.textContent !== drawing.presentation.frame_rate_label) {
+              this.frameRate.textContent = drawing.presentation.frame_rate_label;
+            }
+          } catch (cause) { failed(drawing.graphics.renderer_resource_id, cause); }
+        } finally {
+          const lease = drawing.asset_lease;
+          if (lease != null) this.observe({ kind: "buffers_consumed", lease_id: lease.lease_id,
+            renderer_resource_id: lease.renderer_resource_id, resource_epoch: lease.resource_epoch });
+        }
       }
       if (output.diagnostic != null) console.error(output.diagnostic);
       const failures: unknown[] = [];
@@ -330,9 +336,9 @@ export class BrowserApplication {
         this.stage.prepend(canvas);
         try {
           renderer = new ThreeApplicationRenderer(canvas, request.request_id,
-            id => {
+            (leaseId, id, revision) => {
               if (this.owner === null) throw new Error("Drawing buffer owner is released");
-              return this.owner.asset_bytes(id);
+              return this.owner.asset_bytes(leaseId, id, revision);
             }, input => { this.observe(input); }, this.onPlatform);
           observation = renderer.observation();
         } catch (cause) {

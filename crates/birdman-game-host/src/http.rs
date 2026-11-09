@@ -13,7 +13,8 @@ use axum::{
     routing::get,
 };
 use birdman_game_runtime::{
-    APPLICATION_NETWORK_PROTOCOL, ApplicationNetworkMessage, ApplicationNetworkPayload,
+    APPLICATION_NETWORK_BINARY_BYTES, APPLICATION_NETWORK_PROTOCOL,
+    APPLICATION_NETWORK_SERVER_TEXT_BYTES, ApplicationNetworkMessage, ApplicationNetworkPayload,
 };
 use futures_util::{SinkExt, StreamExt};
 use std::{
@@ -192,8 +193,10 @@ async fn upgrade(
         return StatusCode::FORBIDDEN.into_response();
     }
     ws.protocols([APPLICATION_NETWORK_PROTOCOL])
-        .max_message_size(1_048_576)
-        .max_frame_size(1_048_576)
+        .max_message_size(
+            APPLICATION_NETWORK_SERVER_TEXT_BYTES.max(APPLICATION_NETWORK_BINARY_BYTES),
+        )
+        .max_frame_size(APPLICATION_NETWORK_SERVER_TEXT_BYTES.max(APPLICATION_NETWORK_BINARY_BYTES))
         .on_upgrade(move |socket| connection(socket, state.host, state.active))
         .into_response()
 }
@@ -245,8 +248,8 @@ async fn connection(socket: WebSocket, host: HostServiceHandle, active: Arc<Atom
             _ = &mut peer.disconnected => break,
             incoming = stream.next() => {
                 let message = match incoming {
-                    Some(Ok(Message::Text(text))) if text.len() <= 1_048_576 => ApplicationNetworkMessage::Text(text.to_string()),
-                    Some(Ok(Message::Binary(bytes))) if bytes.len() <= 262_144 => ApplicationNetworkMessage::Binary(bytes.to_vec()),
+                    Some(Ok(Message::Text(text))) if text.len() <= APPLICATION_NETWORK_SERVER_TEXT_BYTES => ApplicationNetworkMessage::Text(text.to_string()),
+                    Some(Ok(Message::Binary(bytes))) if bytes.len() <= APPLICATION_NETWORK_BINARY_BYTES => ApplicationNetworkMessage::Binary(bytes.to_vec()),
                     Some(Ok(Message::Ping(_)|Message::Pong(_))) => continue,
                     _ => break,
                 };
