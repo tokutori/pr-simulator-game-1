@@ -87,6 +87,10 @@ jobs:
       - run: cargo clippy --workspace --all-targets --features birdman-game-host/server-ui --locked -- -D warnings
         env:
           RUSTC_WRAPPER: ''
+      - name: Lint the named optimized Host integration target
+        run: cargo clippy -p birdman-game-host --test remote_session --features server-ui --locked -- -D warnings
+        env:
+          RUSTC_WRAPPER: ''
       - name: Lint native verification and OpenXR features
         run: cargo clippy -p birdman-game-bevy --all-targets --features verify-harness,openxr --locked -- -D warnings
         env:
