@@ -500,8 +500,8 @@ impl RemoteSession {
             .peer
             .ok_or(WireError::Invalid("view arrived before welcome"))?;
         if view.view_revision == 0
-            || endpoint
-                .retained
+            || self
+                .canonical_view
                 .as_ref()
                 .is_some_and(|previous| previous.view_revision > view.view_revision)
         {
@@ -2182,6 +2182,7 @@ impl RemoteSession {
         self.sequence = 0;
         self.retired_transfer = 0;
         self.adopted_frame = None;
+        self.canonical_view = None;
         self.endpoint_status = None;
         self.keyboard_consumption = None;
         self.last_received_ms = self.observed_ms;
