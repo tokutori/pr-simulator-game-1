@@ -168,16 +168,26 @@ impl ApplicationEndpoint {
         Ok(true)
     }
 
-    pub(super) fn complete_boot(&mut self, io_pending: bool) {
+    pub(super) fn complete_boot(
+        &mut self,
+        io_pending: bool,
+        observed_ms: f64,
+        closed: bool,
+        requests: &mut Vec<ApplicationRequest>,
+    ) -> Result<(), ApplicationRuntimeError> {
         if matches!(self.boot, boot::BootOwner::Preparing) {
             match self.resource_readiness {
-                BackendReadiness::Ready if !io_pending => self.boot = boot::BootOwner::Ready,
+                BackendReadiness::Ready if !io_pending => {
+                    self.boot = boot::BootOwner::Ready;
+                    self.synchronize_phone(observed_ms, closed, requests)?;
+                }
                 BackendReadiness::Failed(_) => {
                     self.boot.fail(self.platform.renderer_failure.as_deref())
                 }
                 _ => {}
             }
         }
+        Ok(())
     }
 
     pub(super) fn observe_surface_frame(

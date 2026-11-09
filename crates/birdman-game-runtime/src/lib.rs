@@ -999,7 +999,10 @@ impl LocalRuntime {
             self.authority.storage.configuration_loading()
                 || self.authority.storage.keyboard_loading()
                 || self.authority.storage.display_loading(),
-        );
+            self.authority.observed_ms,
+            self.authority.shutdown.closed(),
+            &mut requests,
+        )?;
         if !self.endpoint.spatial_input_focused() {
             self.endpoint.surface.retire_input();
         } else if let Some((spatial, timestamp_ms)) = spatial_frame

@@ -269,7 +269,7 @@ pub struct ApplicationGeometryFrame {
     pub main_wing_visible: bool,
     /// Geometry upload generation, advancing only after a complete accepted update.
     pub revision: u32,
-    /// Attribute replacements; empty while the accepted coefficient is unchanged.
+    /// Complete accepted attribute descriptors for this immutable geometry revision.
     pub updates: Vec<ApplicationMeshUpdate>,
     /// Final horizontal and vertical tail transforms.
     pub part_poses: [ApplicationMeshPose; 2],

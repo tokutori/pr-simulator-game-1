@@ -3719,7 +3719,7 @@ export interface ApplicationGeometryFrame {
      */
     readonly revision: number;
     /**
-     * Attribute replacements; empty while the accepted coefficient is unchanged.
+     * Complete accepted attribute descriptors for this immutable geometry revision.
      */
     readonly updates: readonly ApplicationMeshUpdate[];
     readonly [k: string]: unknown | undefined;

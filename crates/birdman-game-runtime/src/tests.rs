@@ -3684,6 +3684,13 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         .unwrap()
         .unwrap();
     assert!(articulated.aircraft_visible && articulated.main_wing_visible);
+    let retained_buffers: Vec<_> = articulated
+        .updates
+        .iter()
+        .flat_map(|update| [update.position.buffer_id, update.normal.buffer_id])
+        .map(|id| runtime.authority.assets.snapshot(id).unwrap())
+        .collect();
+    assert!(!retained_buffers.is_empty());
     let adopted = pose.wing_deformation;
     pose.wing_deformation =
         birdman_game_presentation::render_pose::RenderWingDeformation::Unavailable {
@@ -3706,8 +3713,20 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         .unwrap()
         .unwrap();
     assert!(restored.aircraft_visible && restored.main_wing_visible);
-    assert!(restored.updates.is_empty());
+    assert_eq!(
+        serde_json::to_value(&restored.updates).unwrap(),
+        serde_json::to_value(&articulated.updates).unwrap()
+    );
     assert_eq!(restored.revision, articulated.revision);
+    for previous in retained_buffers {
+        let current = runtime
+            .authority
+            .assets
+            .snapshot(previous.buffer_id)
+            .unwrap();
+        assert_eq!(current.revision, previous.revision);
+        assert!(Arc::ptr_eq(&current.bytes, &previous.bytes));
+    }
     for (frame, incidence) in [
         (
             geometry.clone(),
@@ -3988,11 +4007,9 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         .unwrap()
         .drawing
         .unwrap()
-        .scene
-        .camera
-        .unwrap()
-        .world_from_head;
-    assert_ne!(moved, camera);
+        .scene;
+    assert_ne!(moved.camera.as_ref().unwrap().world_from_head, camera);
+    let previous_geometry = moved.geometry.unwrap();
     let fractional = runtime
         .observe_test(ApplicationInput::Frame {
             display_resource_id: None,
@@ -4002,15 +4019,11 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             spatial: Default::default(),
         })
         .unwrap();
-    assert!(
-        fractional
-            .drawing
-            .unwrap()
-            .scene
-            .geometry
-            .unwrap()
-            .updates
-            .is_empty()
+    let fractional_geometry = fractional.drawing.unwrap().scene.geometry.unwrap();
+    assert_eq!(fractional_geometry.revision, previous_geometry.revision);
+    assert_eq!(
+        serde_json::to_value(&fractional_geometry.updates).unwrap(),
+        serde_json::to_value(&previous_geometry.updates).unwrap()
     );
     let fraction = runtime.application().flight_interpolation_fraction();
     assert!(runtime.application().flight_interpolation_ready() && fraction > 0.0);

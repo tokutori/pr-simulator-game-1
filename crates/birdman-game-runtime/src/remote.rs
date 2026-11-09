@@ -1451,7 +1451,7 @@ impl RemoteSession {
         if !self.shutdown.closed() {
             endpoint.synchronize_phone(self.observed_ms, false, &mut requests)?;
             endpoint.synchronize_graphics(scope, self.observed_ms)?;
-            endpoint.complete_boot(false);
+            endpoint.complete_boot(false, self.observed_ms, false, &mut requests)?;
             endpoint.project_platform();
             if matches!(endpoint.boot, super::boot::BootOwner::Initial) {
                 let request_id = endpoint.allocate_request()?;

@@ -48,11 +48,12 @@ pub(super) fn observe(
     {
         return None;
     }
+    // The chart is decorative; its seek target and enabled Range admit the operation.
     let (target, value) = view
         .panels
         .iter()
         .flat_map(|panel| &panel.controls)
-        .find(|control| control.id == *control_id && control.enabled)
+        .find(|control| control.id == *control_id)
         .and_then(|control| match &control.content {
             GameUiControlContent::Chart { plot, .. } => Some((
                 plot.seek_target?,
