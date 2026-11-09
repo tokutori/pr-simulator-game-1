@@ -23,7 +23,7 @@
 ## 2. 標準検査と実行コマンド
 
 Rust toolchain、Node.js、依存ライブラリとVerusはリポジトリの固定設定を使用する。
-通常CIはUbuntuとWindows、および独立したWindows形式検証ジョブで実行する。
+通常CIはUbuntu・Windowsの共有検査、macOS Intel・Apple SiliconのNative CLI検査、独立したWindows形式検証の5ジョブで実行する。
 
 ~~~sh
 cargo fmt --check
@@ -43,7 +43,7 @@ npm run verify
 - 新規保存のJSONは実build来歴のtarget/profileを個別に記録し、それ以外の内容を比較する。公開Title操作からNativeの保存原文を読み戻し、同原文のJSON/CSV出力をbyte一致で検査する。
 - cross-targetの浮動小数点値は絶対許容差 $10^{-9}$ と相対許容差 $10^{-10}$ の和で比較する。identity・比較key・source fingerprint・終了分類は完全一致、保存原文とそのCSV再出力はbyte一致とする。実行結果にはsourceとWASMのhashを記録する。
 - Rustdocでは `RUSTDOCFLAGS=-D warnings` を設定する。
-- Windows CIは共有・Web側のworkspace試験とNative単独試験を分離し、Native実行ファイルもビルドする。
+- Windows CIは共有・Web側のworkspace試験とNative単独試験を分離する。Ubuntu・Windows・macOS両architectureでは通常featureのNative実行ファイルをビルドし、`--help`・`--version`の成功と、`--verify unused --offscreen`の`requires --features verify-harness`による拒否を検査する。このCPU CLI検査は描画・ウィンドウ起動の受入と区分する。
 - WASIはビルドと実行の結果を分ける。
 - `npm run verify` はWASM生成を一度行い、型検査・lint・試験・資産/依存境界・本番ビルドを実行する。
 

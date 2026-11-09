@@ -482,6 +482,13 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       const completion = inputs.find(input => input.kind === "graphics" && input.observation.kind === "gpu_completed");
       expect(completion?.kind === "graphics" ? completion.observation : null).toEqual({ kind: "gpu_completed", query, gpu_work_ms: -1 });
       expect(inputs.some(input => input.kind === "renderer_failed")).toBe(false);
+      const invalidFrame = state.updates.mock.calls.length;
+      state.driver.frame(-1);
+      expect(state.updates.mock.results.slice(invalidFrame).some(result => result.type === "return"
+        && (JSON.parse(result.value) as ApplicationOutput).diagnostic?.includes("domain=source input=frame"))).toBe(true);
+      state.driver.frame(1);
+      expect(state.updates.mock.calls.slice(invalidFrame).map(([json]) => (JSON.parse(json) as ApplicationObservation).input)
+        .some(input => input.kind === "renderer_failed")).toBe(false);
       expect(state.drawing().graphics.resource).toEqual(renderer);
       expect(state.driver.disposed).not.toHaveBeenCalled();
       const canvas = state.browser.document.querySelector(".presentation-canvas");

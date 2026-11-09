@@ -363,7 +363,8 @@ export type ApplicationInput = {
      */
     readonly spatial: ApplicationSpatialObservation;
     /**
-     * Monotonic presentation timestamp in milliseconds.
+     * Raw presentation callback timestamp in milliseconds, retained for frame-rate measurement.
+     * Source discontinuities restart the FPS measurement; physical time uses the envelope's receipt time.
      */
     readonly timestamp_ms: number;
     /**
@@ -2502,7 +2503,8 @@ export interface ApplicationObservation {
      */
     readonly input: ApplicationInput;
     /**
-     * Monotonic receipt time in milliseconds; source clocks are converted to this origin at I/O.
+     * Monotonic receipt time in milliseconds on the platform's common epoch.
+     * Drives application deadlines and physical frame budgets independently of source sample clocks.
      */
     readonly observed_ms: number;
 }

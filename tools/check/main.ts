@@ -5,7 +5,7 @@ import { parse } from "smol-toml";
 import { checkAssets } from "../asset-check/index.js";
 import { assertRenderImportBoundary } from "../presentation-check/render-boundary.js";
 import { record } from "../shared/validation.js";
-import { assertDependencyBoundary, assertNativeTextPatch } from "./dependency-boundary.js";
+import { assertDependencyBoundary, assertNativePatches } from "./dependency-boundary.js";
 import { repositoryPaths } from "./repository-paths.js";
 
 const count = await checkAssets(process.cwd());
@@ -18,7 +18,7 @@ if (rustNotice?.source_version !== `Cargo.lock SHA-256 ${lockSha256}`) {
   throw new Error("Regenerate the registered Web Rust license notice for the current Cargo.lock");
 }
 
-assertNativeTextPatch(parse(await readFile("Cargo.toml", "utf8")));
+assertNativePatches(parse(await readFile("Cargo.toml", "utf8")));
 
 const metadata = record(JSON.parse(execFileSync("cargo", ["metadata", "--format-version", "1", "--no-deps", "--locked"], { encoding: "utf8" })) as unknown);
 if (!Array.isArray(metadata.packages)) throw new Error("Invalid cargo metadata");

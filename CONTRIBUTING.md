@@ -59,7 +59,7 @@
 ## 検査と公開
 
 - 変更箇所のlint・型検査・関連試験を先行し、Rust UI/ABIの生成は必要な範囲でまとめて行う。
-- 検査コマンドは [README](README.md) と[検証仕様](docs/verification.md)を参照する。最終CIのUbuntu・Windows・Verusの3ゲートを確認する。
+- 検査コマンドは [README](README.md) と[検証仕様](docs/verification.md)を参照する。最終CIのUbuntu・Windows・macOS Intel・macOS Apple Silicon・Verusの5ゲートを確認する。
 - compiler/linter警告を解消してからmergeする。外部サービスの未解消警告は原因・影響・追跡先を記録する。
 - ソフトウェア試験、GPU描画、物理キー・HMD操作、実機妥当性を区別し、実施済み・失敗・未実施を報告する。
 - UI・描画は可能な範囲を再現可能なCUI/headless/offscreen試験で確認する。

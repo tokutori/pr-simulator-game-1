@@ -91,9 +91,20 @@ jobs:
       - name: Test Bevy native Screen (Windows)
         if: runner.os == 'Windows'
         run: cargo test -p birdman-game-bevy --features verify-harness,openxr --locked
-      - name: Build Bevy native Screen executable (Windows)
-        if: runner.os == 'Windows'
+      - name: Build ordinary Bevy native Screen executable
         run: cargo build -p birdman-game-bevy --locked
+      - name: Verify ordinary native CLI without the harness (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=./target/debug/birdman-game-bevy
+          "$binary" --help
+          "$binary" --version
+          if output=$("$binary" --verify unused --offscreen 2>&1); then
+            echo 'Native harness flag unexpectedly succeeded'; exit 1
+          fi
+          grep -F -- 'requires --features verify-harness' <<< "$output"
       - name: Verify ordinary native CLI without the harness (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -183,6 +194,55 @@ jobs:
         with:
           path: web/dist
 
+  native-macos:
+    name: Native CLI (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '1'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install pinned native-host Rust toolchain
+        run: |
+          set -euo pipefail
+          channel=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          export RUSTUP_TOOLCHAIN="$channel-${{ matrix.target }}"
+          echo "RUSTUP_TOOLCHAIN=$RUSTUP_TOOLCHAIN" >> "$GITHUB_ENV"
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+          rustc -vV
+          actual_host=$(rustc -vV | sed -n 's/^host: //p' | tr -d '\r')
+          test "$actual_host" = '${{ matrix.target }}'
+      - name: Cache native Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: . -> target
+          key: check-native-${{ matrix.target }}-${{ hashFiles('Cargo.toml') }}
+          save-if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.deploy_pages)) }}
+      - name: Build ordinary Bevy native Screen executable
+        run: cargo build -p birdman-game-bevy --locked
+      - name: Verify ordinary native CLI without the harness
+        run: |
+          set -euo pipefail
+          binary=./target/debug/birdman-game-bevy
+          "$binary" --help
+          "$binary" --version
+          if output=$("$binary" --verify unused --offscreen 2>&1); then
+            echo 'Native harness flag unexpectedly succeeded'; exit 1
+          fi
+          grep -F -- 'requires --features verify-harness' <<< "$output"
+
   verus-proof:
     name: Verus proof (Windows)
     runs-on: windows-2022
@@ -196,7 +256,7 @@ jobs:
   deploy:
     name: Deploy GitHub Pages
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.deploy_pages
-    needs: [verify, verus-proof]
+    needs: [verify, native-macos, verus-proof]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
