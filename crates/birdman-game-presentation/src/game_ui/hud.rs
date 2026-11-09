@@ -8,6 +8,34 @@ use super::types::*;
 
 pub(super) const HUD_OPACITY: f64 = 0.48;
 
+/// Top edge of the vertical center band as a fraction of the viewport
+/// height. A portrait-touch HUD rail stays above this edge so the forward
+/// view stays clear.
+const CENTER_BAND_TOP_FRACTION: f64 = 0.35;
+
+/// Readouts folded, in this order, when a portrait-touch rail would enter
+/// the center band. The order runs from the least flight-critical readout
+/// toward the pilot position, which carries the control target and folds
+/// last. Instruments and primary readouts never fold.
+const PORTRAIT_FOLD_ORDER: [&str; 7] = [
+    "hud-tail-force",
+    "hud-tail-incidence-rate",
+    "hud-angular-rates",
+    "hud-tail-incidence",
+    "hud-pilot-velocity",
+    "hud-pilot-position",
+    "hud-accepted-keys",
+];
+
+/// Factor steps for scaling a portrait-touch rail that still exceeds the
+/// space above the center band after every foldable readout is folded.
+/// The scale applies to the font the rail layout is derived from, so the
+/// instruments and primary readouts shrink together and stay on screen.
+/// Scaling stops at MIN_PORTRAIT_FONT_SCALE, which keeps the shrunken
+/// rail legible.
+const PORTRAIT_FONT_SCALE_STEP: f64 = 0.9;
+const MIN_PORTRAIT_FONT_SCALE: f64 = 0.5;
+
 #[derive(Clone, Copy)]
 struct GameUiHudAttitude {
     roll_degrees: f64,
@@ -151,7 +179,7 @@ pub(super) fn game_ui_hud(
     let heading_degrees = attitude_visible.then_some(heading);
     let angle_of_attack_degrees = profile.angle_of_attack().then_some(alpha).flatten();
     let menu_layout = super::view::layout(state, context, phase)?;
-    let mut layout = hud_layout(context.platform, phase, &menu_layout);
+    let mut layout = hud_layout(context.platform, phase, &menu_layout, 1.0);
     let geometry = hud_geometry(
         attitude,
         path_angle,
@@ -396,7 +424,7 @@ pub(super) fn game_ui_hud(
     }
     let portrait_touch = super::touch::available(context.platform, phase)
         && context.platform.viewport.width < context.platform.viewport.height;
-    let groups = position_hud(
+    let mut groups = position_hud(
         &mut layout,
         primary,
         instruments,
@@ -415,6 +443,34 @@ pub(super) fn game_ui_hud(
         let font = context.platform.viewport.root_font_size;
         let gap = 0.75 * font;
         let frame_rate_reserve = super::view::theme(font).frame_rate_badge_bottom_px();
+        // The space between the badge reserve and the center band is the
+        // whole room the rail has. When the complete rail is taller than
+        // that space, fold readouts in PORTRAIT_FOLD_ORDER until the rail
+        // fits, so every displayed node stays above the band. When the
+        // instruments and primary readouts alone are still taller than
+        // the space, as happens at a large root font size, scale the
+        // rail's font down in PORTRAIT_FONT_SCALE_STEP steps until the
+        // rail fits.
+        let available_height =
+            CENTER_BAND_TOP_FRACTION * context.platform.viewport.height - gap - frame_rate_reserve;
+        let mut next_fold = 0;
+        let mut font_scale = 1.0;
+        while layout.height_px > available_height {
+            if let Some(&victim) = PORTRAIT_FOLD_ORDER.get(next_fold) {
+                next_fold += 1;
+                let (mut readouts, instruments) = take_hud_nodes(groups);
+                readouts.retain(|node| node.id != victim);
+                layout = hud_layout(context.platform, phase, &menu_layout, font_scale);
+                groups = position_hud(&mut layout, readouts, instruments, true, 0.55, true);
+            } else if font_scale > MIN_PORTRAIT_FONT_SCALE {
+                font_scale = (font_scale * PORTRAIT_FONT_SCALE_STEP).max(MIN_PORTRAIT_FONT_SCALE);
+                let (readouts, instruments) = take_hud_nodes(groups);
+                layout = hud_layout(context.platform, phase, &menu_layout, font_scale);
+                groups = position_hud(&mut layout, readouts, instruments, true, 0.55, true);
+            } else {
+                break;
+            }
+        }
         layout.offset_px[1] =
             (context.platform.viewport.height - gap - frame_rate_reserve - layout.height_px)
                 .max(0.0);
@@ -693,8 +749,9 @@ fn hud_layout(
     platform: &GameUiPlatformInput,
     phase: SessionPhase,
     menu: &GameUiLayout,
+    font_scale: f64,
 ) -> GameUiHudLayout {
-    let font = platform.viewport.root_font_size;
+    let font = platform.viewport.root_font_size * font_scale;
     let viewport = platform.viewport;
     let flight_bar = phase == SessionPhase::FlightRunning;
     let reserved_width = if flight_bar {
@@ -779,6 +836,23 @@ fn hud_layout(
         line_height_px: (0.875 * font).max(14.0) * 1.5,
         opacity: HUD_OPACITY,
     }
+}
+
+/// Splits positioned groups back into readout and instrument nodes, in
+/// their original order, so the rail can be laid out again with a
+/// different node set.
+fn take_hud_nodes(groups: Vec<GameUiHudGroup>) -> (Vec<GameUiHudNode>, Vec<GameUiHudNode>) {
+    let mut readouts = Vec::new();
+    let mut instruments = Vec::new();
+    for group in groups {
+        let target = if group.placement == GameUiHudPlacement::Readouts {
+            &mut readouts
+        } else {
+            &mut instruments
+        };
+        target.extend(group.nodes);
+    }
+    (readouts, instruments)
 }
 
 pub(super) fn position_hud(
