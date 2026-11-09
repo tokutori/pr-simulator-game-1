@@ -71,7 +71,7 @@ Verusの実行方法は[形式検証](docs/formal-verification.md)、
 | 全体構成・データ | [アーキテクチャ](docs/architecture.md) · [出典・環境・記録形式](docs/data-and-formats.md) |
 | 物理・操縦 | [飛行力学・空力・風・接触](docs/flight-dynamics.md) · [操縦制御](docs/flight-control.md) |
 | ゲーム・表示 | [ゲーム進行・UI・カメラ](docs/gameplay-and-ui.md) · [描画とプラットフォーム](docs/rendering-and-platforms.md) |
-| 利用案内 | [Nativeガイド](docs/native-guide.md) |
+| 利用案内 | [Nativeガイド](docs/native-guide.md) · [機体JSON作成ガイド](docs/aircraft-json-guide.md) |
 | 検証 | [試験・数値・CUI描画](docs/verification.md) · [形式検証](docs/formal-verification.md) |
 
 - ソースコード: [MIT License](LICENSE)。
