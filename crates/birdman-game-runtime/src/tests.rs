@@ -208,6 +208,7 @@ fn display_preferences_validate_restore_and_drain_only_the_latest_accepted_write
         brightness: 1.25,
         contrast: 0.75,
         saturation: 1.5,
+        ui_scale: 1.5,
     };
     let json = serde_json::json!({ "schema_version": 1, "display_settings": settings }).to_string();
     let mut runtime =
@@ -270,6 +271,8 @@ fn display_preferences_validate_restore_and_drain_only_the_latest_accepted_write
         )
     });
     let title = structure(finish_boot(&mut runtime, initial));
+    // The restored UI scale multiplies the platform root font behind the theme.
+    assert_eq!(title.theme.body_text.font_size_px, 24.0);
     let setup = structure(activate(&mut runtime, &title, SessionCommand::OpenSetup {}));
     let changed = DisplaySettings {
         brightness: 0.5,
@@ -294,6 +297,7 @@ fn display_preferences_validate_restore_and_drain_only_the_latest_accepted_write
                 assert_eq!(document["display_settings"]["brightness"], 0.5);
                 assert_eq!(document["display_settings"]["contrast"], 0.75);
                 assert_eq!(document["display_settings"]["saturation"], 1.5);
+                assert_eq!(document["display_settings"]["ui_scale"], 1.5);
                 Some(*request_id)
             }
             _ => None,

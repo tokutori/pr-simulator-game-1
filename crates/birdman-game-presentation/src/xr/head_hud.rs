@@ -185,92 +185,111 @@ pub fn project_xr_head_hud(
             }
         }
     }
-    let padding = text_height * 0.5;
-    let gap = text_height * 0.6;
-    let menu = XrFlightMenuGeometry::default();
-    for step in 0..=24 {
-        let height = profile.maximum_height_meters * (1.0 - f64::from(step) / 32.0);
-        let top_band_height = height / 2.0 - clear_top - gap - padding;
-        let menu_top = -distance * (menu.center_y + menu.height / 2.0) / menu.distance_meters;
-        let bottom_band_height =
-            (height / 2.0 + clear_bottom - gap - padding).min(menu_top + clear_bottom - 2.0 * gap);
-        if top_band_height <= 0.0 || bottom_band_height <= 0.0 {
-            break;
-        }
-        if !views.plane_fits(local_pose, text_height, height, profile.clip_margin) {
-            continue;
-        }
-        let mut lower = 0.0;
-        let mut upper = profile.maximum_width_meters;
-        let maximum_fits = views.plane_fits(local_pose, upper, height, profile.clip_margin);
-        if maximum_fits {
-            lower = upper;
-        } else {
-            for _iteration in 0..28 {
-                let candidate = (lower + upper) / 2.0;
-                if views.plane_fits(local_pose, candidate, height, profile.clip_margin) {
-                    lower = candidate;
-                } else {
-                    upper = candidate;
+    // The profile text height is the requested size. When the complete HUD
+    // cannot fit at that size, the search retries with the text height
+    // reduced in steps of 0.9 down to half the requested size, mirroring the
+    // shared portrait HUD shrink rule; the HUD is never partially omitted.
+    let attempt = |text_height: f64| -> Option<XrHeadHudProjection> {
+        let padding = text_height * 0.5;
+        let gap = text_height * 0.6;
+        let menu = XrFlightMenuGeometry::default();
+        for step in 0..=24 {
+            let height = profile.maximum_height_meters * (1.0 - f64::from(step) / 32.0);
+            let top_band_height = height / 2.0 - clear_top - gap - padding;
+            let menu_top = -distance * (menu.center_y + menu.height / 2.0) / menu.distance_meters;
+            let bottom_band_height = (height / 2.0 + clear_bottom - gap - padding)
+                .min(menu_top + clear_bottom - 2.0 * gap);
+            if top_band_height <= 0.0 || bottom_band_height <= 0.0 {
+                return None;
+            }
+            if !views.plane_fits(local_pose, text_height, height, profile.clip_margin) {
+                continue;
+            }
+            let mut lower = 0.0;
+            let mut upper = profile.maximum_width_meters;
+            let maximum_fits = views.plane_fits(local_pose, upper, height, profile.clip_margin);
+            if maximum_fits {
+                lower = upper;
+            } else {
+                for _iteration in 0..28 {
+                    let candidate = (lower + upper) / 2.0;
+                    if views.plane_fits(local_pose, candidate, height, profile.clip_margin) {
+                        lower = candidate;
+                    } else {
+                        upper = candidate;
+                    }
                 }
             }
+            let width = lower;
+            let card_width = width - 2.0 * padding;
+            if card_width < 8.0 * text_height {
+                continue;
+            }
+            let frame_rate_height = if frame_rate_label.is_some() {
+                2.5 * text_height
+            } else {
+                0.0
+            };
+            let frame_rate_offset = if frame_rate_height == 0.0 {
+                0.0
+            } else {
+                frame_rate_height + gap
+            };
+            if frame_rate_height > top_band_height {
+                return None;
+            }
+            let space = GameUiHeadHudSpace {
+                size_m: [width, height],
+                text_height_m: text_height,
+                top_band_m: [padding, (top_band_height - frame_rate_offset).max(0.0)],
+                bottom_band_m: [height / 2.0 - clear_bottom + gap, bottom_band_height],
+            };
+            let fit = hud.map_or_else(
+                || GameUiHeadHudFit::Fitted { nodes: Vec::new() },
+                |hud| fit_game_ui_head_hud(hud, space),
+            );
+            let GameUiHeadHudFit::Fitted { nodes } = fit else {
+                if maximum_fits {
+                    return None;
+                }
+                continue;
+            };
+            let frame_rate_bounds = frame_rate_label.map(|label| {
+                let label_width =
+                    card_width.min((label.chars().count() as f64 + 2.0) * text_height);
+                GameUiRect {
+                    x: (width - padding - label_width) / width,
+                    y: (height / 2.0 - clear_top - gap - frame_rate_height) / height,
+                    width: label_width / width,
+                    height: frame_rate_height / height,
+                }
+            });
+            return Some(XrHeadHudProjection::Visible {
+                local_pose,
+                size_m: [width, height],
+                text_height_meters: text_height,
+                clear_region: GameUiRect {
+                    x: 0.5 + (-width / 2.0).max(clear_left) / width,
+                    y: 0.5 - clear_top / height,
+                    width: ((width / 2.0).min(clear_right) - (-width / 2.0).max(clear_left))
+                        / width,
+                    height: (clear_top - clear_bottom) / height,
+                },
+                frame_rate_bounds,
+                nodes,
+            });
         }
-        let width = lower;
-        let card_width = width - 2.0 * padding;
-        if card_width < 8.0 * text_height {
-            continue;
+        None
+    };
+    let mut text_factor = 1.0;
+    loop {
+        if let Some(projection) = attempt(text_height * text_factor) {
+            return Ok(projection);
         }
-        let frame_rate_height = if frame_rate_label.is_some() {
-            2.5 * text_height
-        } else {
-            0.0
-        };
-        let frame_rate_offset = if frame_rate_height == 0.0 {
-            0.0
-        } else {
-            frame_rate_height + gap
-        };
-        if frame_rate_height > top_band_height {
+        text_factor *= 0.9;
+        if text_factor < 0.5 {
             break;
         }
-        let space = GameUiHeadHudSpace {
-            size_m: [width, height],
-            text_height_m: text_height,
-            top_band_m: [padding, (top_band_height - frame_rate_offset).max(0.0)],
-            bottom_band_m: [height / 2.0 - clear_bottom + gap, bottom_band_height],
-        };
-        let fit = hud.map_or_else(
-            || GameUiHeadHudFit::Fitted { nodes: Vec::new() },
-            |hud| fit_game_ui_head_hud(hud, space),
-        );
-        let GameUiHeadHudFit::Fitted { nodes } = fit else {
-            if maximum_fits {
-                break;
-            }
-            continue;
-        };
-        let frame_rate_bounds = frame_rate_label.map(|label| {
-            let label_width = card_width.min((label.chars().count() as f64 + 2.0) * text_height);
-            GameUiRect {
-                x: (width - padding - label_width) / width,
-                y: (height / 2.0 - clear_top - gap - frame_rate_height) / height,
-                width: label_width / width,
-                height: frame_rate_height / height,
-            }
-        });
-        return Ok(XrHeadHudProjection::Visible {
-            local_pose,
-            size_m: [width, height],
-            text_height_meters: text_height,
-            clear_region: GameUiRect {
-                x: 0.5 + (-width / 2.0).max(clear_left) / width,
-                y: 0.5 - clear_top / height,
-                width: ((width / 2.0).min(clear_right) - (-width / 2.0).max(clear_left)) / width,
-                height: (clear_top - clear_bottom) / height,
-            },
-            frame_rate_bounds,
-            nodes,
-        });
     }
     Ok(unavailable(XrFitReason::InsufficientViewArea))
 }

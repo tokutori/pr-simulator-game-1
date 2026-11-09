@@ -57,6 +57,7 @@ mod tests {
                 brightness: 0.5,
                 contrast: 1.5,
                 saturation: 0.75,
+                ..Default::default()
             },
         ] {
             let adjustment = settings.adjustment();

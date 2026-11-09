@@ -1679,6 +1679,7 @@ impl ApplicationRuntime {
                         .active_mode()
                         .map(|mode| (mode, self.display.active_resource())),
                     frame_rate_label: self.frame_rate.label(),
+                    ui_scale: self.application.display_settings().ui_scale,
                 },
             )
         });
@@ -2801,6 +2802,11 @@ impl ApplicationRuntime {
                 .components(),
             display_settings: self.application.display_settings(),
             display_settings_notification: self.storage.display_notification(),
+            platform: {
+                let mut platform = self.platform.clone();
+                platform.viewport.root_font_size *= self.application.display_settings().ui_scale;
+                platform
+            },
             accepted_flight_keys: self.application.accepted_flight_keys(),
             preset: self.application.display_preset(),
             identity: self.identity()?,
@@ -2810,7 +2816,6 @@ impl ApplicationRuntime {
                 .archive()
                 .map(|archive| archive.identity_metadata()),
             environment_readout: environment,
-            platform: &self.platform,
         })
     }
 

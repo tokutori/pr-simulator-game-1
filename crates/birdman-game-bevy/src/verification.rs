@@ -417,6 +417,7 @@ impl Verification {
                             brightness,
                             contrast,
                             saturation,
+                            ..DisplaySettings::default()
                         },
                     }),
                     Check::QualityCapture(

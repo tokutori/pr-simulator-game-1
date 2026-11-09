@@ -8,6 +8,12 @@ pub const DISPLAY_SETTING_MINIMUM: f64 = 0.5;
 pub const DISPLAY_SETTING_MAXIMUM: f64 = 1.5;
 /// Discrete choices offered for every display adjustment item.
 pub const DISPLAY_SETTING_STEPS: [f64; 5] = [0.5, 0.75, 1.0, 1.25, 1.5];
+/// Discrete choices offered for the UI scale; 1.0 keeps the standard size.
+pub const UI_SCALE_STEPS: [f64; 6] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+
+fn default_ui_scale() -> f64 {
+    1.0
+}
 /// Linear middle gray that anchors the shared contrast adjustment.
 pub const DISPLAY_CONTRAST_PIVOT: f64 = 0.18;
 
@@ -22,6 +28,10 @@ pub struct DisplaySettings {
     pub contrast: f64,
     /// Saturation mix from linear luminance; 1.0 keeps the existing saturation.
     pub saturation: f64,
+    /// Scale of every UI text and layout size relative to the platform root
+    /// font; stored settings written before this field existed read as 1.0.
+    #[serde(default = "default_ui_scale")]
+    pub ui_scale: f64,
 }
 
 impl Default for DisplaySettings {
@@ -30,6 +40,7 @@ impl Default for DisplaySettings {
             brightness: 1.0,
             contrast: 1.0,
             saturation: 1.0,
+            ui_scale: 1.0,
         }
     }
 }
@@ -43,6 +54,7 @@ impl DisplaySettings {
                 value.is_finite()
                     && (DISPLAY_SETTING_MINIMUM..=DISPLAY_SETTING_MAXIMUM).contains(&value)
             })
+            && UI_SCALE_STEPS.contains(&self.ui_scale)
     }
 
     /// Derives the single color adjustment definition shared by every adapter.

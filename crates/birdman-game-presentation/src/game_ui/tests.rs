@@ -85,7 +85,7 @@ pub(super) fn context<'view>(
         identity: session.configuration_identity(),
         record: session.playback_record(),
         environment_readout: "気象試験値",
-        platform,
+        platform: platform.clone(),
     }
 }
 fn control<'view>(view: &'view GameUiView, id: &str) -> &'view GameUiControl {
@@ -1301,6 +1301,7 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
                     generation: 1,
                 },
                 locale: "ja",
+                font_scale: 1.0,
             },
             &mut SurfaceFontCache::default(),
             |request, _, value| {
@@ -2518,6 +2519,7 @@ fn analysis_sections_preserve_order_and_typed_values_across_targets() {
                             generation: 0,
                         },
                         locale: "ja",
+                        font_scale: 1.0,
                     };
                     let measure = |request: &MenuTextRequest, _: MenuSize, value: &str| {
                         let width = value.chars().count() as f64 * request.font_meters * 0.6;
@@ -5498,21 +5500,175 @@ fn flight_camera_choices_share_selection_and_admission_in_all_modes() {
 }
 
 #[test]
+fn ui_scale_enlarges_spatial_menu_and_head_hud_text() {
+    use crate::xr::*;
+    let font = MenuFont {
+        family: "sans-serif".into(),
+        weight: 400,
+        style: MenuFontStyle::Normal,
+        generation: 0,
+    };
+    let make_measure = || {
+        |request: &MenuTextRequest, _: MenuSize, value: &str| {
+            let advance = value.chars().count() as f64 * request.font_meters * 0.5;
+            Ok(MenuGlyphMetrics {
+                advance,
+                left: 0.0,
+                right: advance,
+                ascent: request.font_meters * 0.8,
+                descent: request.font_meters * 0.2,
+            })
+        }
+    };
+    fn collect_text_sizes(
+        items: &[SurfacePaintItem],
+        sizes: &mut std::collections::BTreeMap<String, f64>,
+    ) {
+        for item in items {
+            match item {
+                SurfacePaintItem::Text {
+                    value, font_meters, ..
+                } => {
+                    sizes.insert(value.clone(), *font_meters);
+                }
+                SurfacePaintItem::Plot { items, .. } => collect_text_sizes(items, sizes),
+                _ => {}
+            }
+        }
+    }
+    let text_sizes = |items: &[SurfacePaintItem]| {
+        let mut sizes = std::collections::BTreeMap::new();
+        collect_text_sizes(items, &mut sizes);
+        sizes
+    };
+
+    // Spatial menu: font_scale multiplies every painted text size.
+    let session = GameSession::new();
+    let platform = platform();
+    let state = GameUiState::default();
+    let menu_context = context(&session, difficulty(), &platform);
+    let view = game_ui_view(&state, &menu_context).unwrap();
+    let frame = game_ui_frame(&state, &menu_context, &view, view.view_revision).unwrap();
+    let viewer = crate::xr::tests::viewer(XrDepthRange::NegativeOneToOne);
+    let menu_sizes = |font_scale: f64| {
+        let reply = prepare_game_ui_menu(
+            &view,
+            &frame,
+            MenuPreparationInput {
+                progress: 0.0,
+                generation: 1,
+                view_revision: view.view_revision,
+                panel_id: &view.panels[0].id,
+                viewer: &viewer,
+                font: &font,
+                locale: "ja",
+                font_scale,
+            },
+            &mut SurfaceFontCache::default(),
+            make_measure(),
+        );
+        let MenuLayoutReply::Ready { projection } = reply else {
+            panic!("spatial menu did not fit at font_scale {font_scale}: {reply:?}")
+        };
+        text_sizes(&projection.content.items)
+    };
+    let standard = menu_sizes(1.0);
+    let enlarged = menu_sizes(2.0);
+    assert!(!standard.is_empty());
+    let mut compared = 0;
+    for (value, size) in &standard {
+        if let Some(enlarged_size) = enlarged.get(value) {
+            assert!(
+                (enlarged_size - size * 2.0).abs() < 1.0e-9,
+                "menu text {value:?}: {size} -> {enlarged_size}"
+            );
+            compared += 1;
+        }
+    }
+    assert!(compared > 0);
+
+    // Head HUD: the same factor on the profile text angle scales its text.
+    let session = launched();
+    let hud_context = context(&session, difficulty(), &platform);
+    let view = game_ui_view(&state, &hud_context).unwrap();
+    let frame = game_ui_frame(&state, &hud_context, &view, view.view_revision).unwrap();
+    let hud_sizes = |text_height_degrees: f64| {
+        let reply = prepare_game_ui_head_hud(
+            &view,
+            &frame,
+            HeadHudPreparationInput {
+                view_revision: view.view_revision,
+                viewer: &viewer,
+                profile: XrHeadHudProfile {
+                    text_height_degrees,
+                    ..XrHeadHudProfile::default()
+                },
+                font: &font,
+                locale: "ja",
+                frame_rate_label: Some("FPS: 60"),
+            },
+            &mut SurfaceFontCache::default(),
+            make_measure(),
+        );
+        let HeadHudPaintReply::Ready { projection } = reply else {
+            panic!("head HUD did not fit at text height {text_height_degrees}: {reply:?}")
+        };
+        text_sizes(&projection.items)
+    };
+    let standard = hud_sizes(XrHeadHudProfile::default().text_height_degrees);
+    let enlarged = hud_sizes(XrHeadHudProfile::default().text_height_degrees * 2.0);
+    let standard_fps = standard["FPS: 60"];
+    // The complete HUD still fits at twice the requested text height by
+    // stepping the effective height down (0.9 steps, 0.5 floor), so the
+    // painted size grows but never reaches the full factor here.
+    assert!(
+        enlarged["FPS: 60"] > standard_fps * 1.5
+            && enlarged["FPS: 60"] <= standard_fps * 2.0 + 1.0e-9,
+        "head HUD frame rate text: {standard_fps} -> {}",
+        enlarged["FPS: 60"]
+    );
+}
+
+#[test]
 fn display_settings_choices_show_the_current_selection_in_setup_and_pause_settings() {
-    use birdman_game_app::display_settings::{DISPLAY_SETTING_STEPS, DisplaySettings};
+    use birdman_game_app::display_settings::{
+        DISPLAY_SETTING_STEPS, DisplaySettings, UI_SCALE_STEPS,
+    };
     let selected = DisplaySettings {
         brightness: 1.25,
         contrast: 0.75,
         saturation: 1.5,
+        ui_scale: 1.5,
     };
     let platform = platform();
     let assert_choices = |view: &GameUiView| {
-        for (group, group_label, value) in [
-            ("display-brightness", "明るさ", selected.brightness),
-            ("display-contrast", "コントラスト", selected.contrast),
-            ("display-saturation", "彩度", selected.saturation),
+        for (group, group_label, value, steps) in [
+            (
+                "display-brightness",
+                "明るさ",
+                selected.brightness,
+                DISPLAY_SETTING_STEPS.as_slice(),
+            ),
+            (
+                "display-contrast",
+                "コントラスト",
+                selected.contrast,
+                DISPLAY_SETTING_STEPS.as_slice(),
+            ),
+            (
+                "display-saturation",
+                "彩度",
+                selected.saturation,
+                DISPLAY_SETTING_STEPS.as_slice(),
+            ),
+            (
+                "display-ui-scale",
+                "UIスケール",
+                selected.ui_scale,
+                UI_SCALE_STEPS.as_slice(),
+            ),
         ] {
-            for (code, step) in DISPLAY_SETTING_STEPS.iter().enumerate() {
+            for (code, step) in steps.iter().enumerate() {
                 let found = control(view, &format!("game-setup-select-{group}-{code}"));
                 assert!(!found.label.is_empty());
                 let GameUiControlContent::Button {
@@ -5547,6 +5703,10 @@ fn display_settings_choices_show_the_current_selection_in_setup_and_pause_settin
                     },
                     "display-contrast" => DisplaySettings {
                         contrast: *step,
+                        ..selected
+                    },
+                    "display-ui-scale" => DisplaySettings {
+                        ui_scale: *step,
                         ..selected
                     },
                     _ => DisplaySettings {
