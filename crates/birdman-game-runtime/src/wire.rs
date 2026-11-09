@@ -354,6 +354,7 @@ pub(super) struct PublishedFrame {
     pub frame: GameUiFrame,
     pub scene: SceneSource,
     pub display: DisplayAdjustment,
+    pub ui_scale: f64,
     pub buffers: Vec<BufferManifest>,
 }
 

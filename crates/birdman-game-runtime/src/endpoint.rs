@@ -670,14 +670,13 @@ impl ApplicationEndpoint {
             }
             ApplicationInput::Frame {
                 display_resource_id,
-                timestamp_ms,
                 xr,
                 ..
             } => {
                 if self.display.state().active_mode().is_some()
                     && self.display.active_resource() == display_resource_id
                 {
-                    self.frame_rate.observe(timestamp_ms);
+                    self.frame_rate.observe(observed_ms);
                     if self.xr_resource.is_some() {
                         self.xr_viewer = Some(match xr {
                             Some(xr) => {
@@ -1160,6 +1159,7 @@ impl ApplicationEndpoint {
         mut projection: ApplicationUiProjection,
         mut frame: birdman_game_presentation::game_ui::GameUiFrame,
         adjustment: birdman_game_app::display_settings::DisplayAdjustment,
+        ui_scale: f64,
         asset_lease: Option<ApplicationAssetLease>,
         observed_ms: f64,
         closed: bool,
@@ -1203,6 +1203,7 @@ impl ApplicationEndpoint {
                     .active_mode()
                     .map(|mode| (mode, self.display.active_resource())),
                 frame_rate_label: self.frame_rate.label(),
+                ui_scale,
             };
             let drawing = ApplicationDrawingOutput {
                 asset_lease,

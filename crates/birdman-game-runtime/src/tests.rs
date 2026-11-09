@@ -733,8 +733,7 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
 
 #[test]
 fn frame_rate_label_follows_the_arrival_clock_when_the_frame_source_time_is_unstable() {
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
     let initial = runtime
         .update(
             ApplicationObservation {

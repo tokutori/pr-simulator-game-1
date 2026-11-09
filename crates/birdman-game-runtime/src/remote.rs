@@ -101,6 +101,7 @@ impl PendingFrame {
             || publication.assets_generation == 0
             || !publication.server_time_ms.is_finite()
             || publication.server_time_ms < 0.0
+            || !birdman_game_app::display_settings::UI_SCALE_STEPS.contains(&publication.ui_scale)
             || publication.view_revision != publication.frame.view_revision
         {
             return Err(WireError::Invalid(
@@ -1674,6 +1675,7 @@ impl RemoteSession {
             projection,
             accepted.publication.frame.clone(),
             accepted.publication.display,
+            accepted.publication.ui_scale,
             lease,
             self.observed_ms,
             self.shutdown.closed(),

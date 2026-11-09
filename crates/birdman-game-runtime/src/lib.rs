@@ -1175,6 +1175,7 @@ impl LocalRuntime {
             projection,
             frame,
             self.authority.application.display_settings().adjustment(),
+            self.authority.application.display_settings().ui_scale,
             asset_lease,
             observed_ms,
             self.authority.shutdown.closed(),

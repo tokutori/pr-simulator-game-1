@@ -562,7 +562,7 @@ impl ApplicationAuthority {
     pub(super) fn context<'view>(
         &'view self,
         environment: &'view str,
-        platform: &'view GameUiPlatformInput,
+        platform: &GameUiPlatformInput,
     ) -> Result<GameUiContext<'view>, ApplicationRuntimeError> {
         Ok(GameUiContext {
             record_notification: self.storage.save_notification(&self.application),
@@ -667,7 +667,11 @@ impl ApplicationAuthority {
                 .archive()
                 .map(|archive| archive.identity_metadata()),
             environment_readout: environment,
-            platform,
+            platform: {
+                let mut platform = platform.clone();
+                platform.viewport.root_font_size *= self.application.display_settings().ui_scale;
+                platform
+            },
         })
     }
 }

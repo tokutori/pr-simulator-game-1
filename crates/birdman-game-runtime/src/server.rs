@@ -1978,6 +1978,7 @@ impl ApplicationServer {
             frame,
             scene: source.clone(),
             display: self.authority.application.display_settings().adjustment(),
+            ui_scale: self.authority.application.display_settings().ui_scale,
             buffers: manifests,
         };
         if let PeerState::Ready(display) = &mut self.peers.get_mut(&id).unwrap().state {
