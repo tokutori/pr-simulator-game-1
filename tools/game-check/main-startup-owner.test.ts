@@ -102,7 +102,7 @@ async function browserFixture(phoneSensors: "probe" | "permission" | null = null
   const update = vi.spyOn(ApplicationRuntimeBridge.prototype, "update");
   new BrowserApplication(mount, { ...applicationPlatformFixture().capabilities,
     phone_sensors: phoneSensors === null ? null : { permission_required: phoneSensors === "permission", screen_angle_degrees: 0 } });
-  await vi.waitFor(() => expect(capture.driver).not.toBeNull());
+  await vi.waitFor(() => { expect(capture.driver).not.toBeNull(); });
   const driver = capture.driver;
   if (driver === null) throw new Error("Main did not execute CreateRenderer");
   const page = (type: "pagehide" | "pageshow", persisted: boolean) => {
@@ -149,7 +149,7 @@ describe("Single browser runtime ownership", () => {
       const { BrowserApplication } = await import("../../web/src/browser-application.js");
       const previous = capture.driver;
       new BrowserApplication(mount as unknown as HTMLElement, applicationPlatformFixture().capabilities);
-      await vi.waitFor(() => expect(capture.driver).not.toBe(previous));
+      await vi.waitFor(() => { expect(capture.driver).not.toBe(previous); });
       const restarted = capture.driver;
       if (restarted === null) throw new Error("Reloaded renderer missing");
       restarted.finish();
