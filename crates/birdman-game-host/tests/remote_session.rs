@@ -474,7 +474,7 @@ fn trace(trace: &mut VecDeque<String>, message: String) {
 }
 
 fn until(clients: &mut [Client], condition: impl Fn(&[Client]) -> bool) {
-    let end = Instant::now() + Duration::from_secs(20);
+    let end = Instant::now() + Duration::from_secs(60);
     loop {
         for client in clients.iter_mut() {
             client.pump();

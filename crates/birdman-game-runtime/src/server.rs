@@ -180,6 +180,14 @@ struct FrameCandidate {
     publication: PublishedFrame,
     buffers: Vec<assets::BufferSnapshot>,
 }
+struct PendingAssetPreparation {
+    id: u64,
+    generation: u64,
+    source: (EnvironmentIdentity, [u8; 32]),
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+    work: Option<ApplicationAssetPreparationWork>,
+    requests: BTreeMap<(ApplicationPeerId, u32), ApplicationGraphicsTarget>,
+}
 struct ResourcePin {
     aircraft_identity: [u8; 32],
     generation: u64,
@@ -246,6 +254,8 @@ pub struct ApplicationServer {
     assets_generation: u64,
     asset_selection: Option<(EnvironmentIdentity, [u8; 32])>,
     io_requests: Vec<ApplicationRequest>,
+    next_asset_preparation: u64,
+    asset_preparation: Option<PendingAssetPreparation>,
     downloads: BTreeMap<u32, transfers::PendingDownload>,
     pickers: BTreeMap<u32, transfers::PendingPicker>,
     uploads: BTreeMap<(ApplicationPeerId, u64), transfers::PendingUpload>,
@@ -281,6 +291,8 @@ impl ApplicationServer {
             assets_generation: 0,
             asset_selection: None,
             io_requests: Vec::new(),
+            next_asset_preparation: 1,
+            asset_preparation: None,
             downloads: BTreeMap::new(),
             pickers: BTreeMap::new(),
             uploads: BTreeMap::new(),
@@ -402,6 +414,7 @@ impl ApplicationServer {
         Ok(())
     }
     fn retire_peer(&mut self, id: ApplicationPeerId) -> Result<(), ApplicationServerError> {
+        self.retire_asset_requests(id, None);
         if self.operator == Some(id) {
             self.operator = None;
             self.withdraw_input()?;
@@ -460,6 +473,7 @@ impl ApplicationServer {
         now_ms: f64,
     ) -> Result<(), ApplicationServerError> {
         self.admit_time(now_ms)?;
+        self.retire_asset_requests(peer, None);
         if self.operator == Some(peer) {
             self.operator = None;
             self.withdraw_input()?;
@@ -858,6 +872,7 @@ impl ApplicationServer {
                 resource_epoch,
             } => {
                 self.check_peer(id, peer)?;
+                self.retire_asset_requests(id, Some(resource_epoch));
                 let item = self.peers.get_mut(&id).unwrap();
                 if let Some(pin) = item.resource_pins.remove(&resource_epoch) {
                     for transfer in pin.transfers {
@@ -1419,6 +1434,123 @@ impl ApplicationServer {
         std::mem::take(&mut self.io_requests)
     }
 
+    /// Moves the unique queued CPU image work to the bounded native executor.
+    pub fn take_asset_preparation(&mut self) -> Option<ApplicationAssetPreparationWork> {
+        self.asset_preparation
+            .as_mut()
+            .and_then(|job| job.work.take())
+    }
+    /// Reauthorizes an actual CPU completion before assigning any image buffer identity.
+    pub fn complete_asset_preparation(
+        &mut self,
+        now_ms: f64,
+        result: ApplicationAssetPreparationResult,
+    ) -> Result<(), ApplicationServerError> {
+        self.admit_time(now_ms)?;
+        if self.authority.shutdown.closed() {
+            return Ok(());
+        }
+        self.update_assets_generation()?;
+        if self
+            .asset_preparation
+            .as_ref()
+            .is_none_or(|job| job.id != result.id)
+        {
+            return Ok(());
+        }
+        let job = self.asset_preparation.take().unwrap();
+        if self.authority.shutdown.closed()
+            || job.generation != self.assets_generation
+            || self.asset_selection != Some(job.source)
+        {
+            return Ok(());
+        }
+        let requests: Vec<_> = job
+            .requests
+            .into_iter()
+            .filter(|((peer, _), _)| {
+                self.peers
+                    .get(peer)
+                    .is_some_and(|peer| matches!(peer.state, PeerState::Ready(_)))
+            })
+            .collect();
+        if requests.is_empty() {
+            return Ok(());
+        }
+        let admitted = result.images.and_then(|images| {
+            self.authority
+                .assets
+                .admit_images(images)
+                .map_err(|cause| cause.to_string())
+        });
+        for ((peer, request_id), target) in requests {
+            if self
+                .peers
+                .get(&peer)
+                .is_none_or(|item| !matches!(item.state, PeerState::Ready(_)))
+            {
+                continue;
+            }
+            let delivered = if let Err(cause) = &admitted {
+                self.queue_message(
+                    peer,
+                    ServerMessage::AssetsFailed {
+                        peer: self.peers[&peer].scope,
+                        request_id,
+                        cause: cause.clone(),
+                    },
+                )
+            } else {
+                self.prepare_assets(peer, request_id, target)
+            };
+            if let Err(cause) = delivered {
+                self.authority.diagnostic = Some(cause.to_string());
+                if let Err(cause) = self.retire_peer(peer) {
+                    self.authority.diagnostic = Some(cause.to_string());
+                }
+            }
+        }
+        Ok(())
+    }
+    fn retire_asset_requests(&mut self, peer: ApplicationPeerId, request: Option<u32>) {
+        if let Some(job) = self.asset_preparation.as_mut() {
+            job.requests.retain(|(current, id), _| {
+                *current != peer || request.is_some_and(|request| request != *id)
+            });
+            if job.requests.is_empty() {
+                job.cancelled
+                    .store(true, std::sync::atomic::Ordering::Release);
+                self.asset_preparation = None;
+            }
+        }
+    }
+    fn cancel_asset_preparation(&mut self, cause: &str) {
+        if let Some(job) = self.asset_preparation.take() {
+            job.cancelled
+                .store(true, std::sync::atomic::Ordering::Release);
+            for ((peer, request_id), _) in job.requests {
+                if let Some(item) = self.peers.get(&peer)
+                    && matches!(item.state, PeerState::Ready(_))
+                {
+                    let scope = item.scope;
+                    if let Err(cause) = self.queue_message(
+                        peer,
+                        ServerMessage::AssetsFailed {
+                            peer: scope,
+                            request_id,
+                            cause: cause.to_owned(),
+                        },
+                    ) {
+                        self.authority.diagnostic = Some(cause.to_string());
+                        if let Err(cause) = self.retire_peer(peer) {
+                            self.authority.diagnostic = Some(cause.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn update_assets_generation(&mut self) -> Result<EnvironmentSelection, ApplicationServerError> {
         let mut selection = EnvironmentSelection::for_session(&self.authority.application)
             .map_err(ApplicationRuntimeError::Environment)?;
@@ -1443,6 +1575,7 @@ impl ApplicationServer {
             .identity();
         let key = (selection.identity, aircraft_identity);
         if self.asset_selection != Some(key) {
+            self.cancel_asset_preparation("Asset preparation source changed");
             self.assets_generation = self
                 .assets_generation
                 .checked_add(1)
@@ -1531,12 +1664,20 @@ impl ApplicationServer {
                 "preparation request has an invalid lifetime or extent",
             ));
         }
-        if self.peers[&id].resource_pins.contains_key(&request_id) {
+        if self.peers[&id].resource_pins.contains_key(&request_id)
+            || self
+                .asset_preparation
+                .as_ref()
+                .is_some_and(|job| job.requests.contains_key(&(id, request_id)))
+        {
             return Err(ApplicationServerError::Admission(
                 "preparation identity was already issued",
             ));
         }
-        if self.peers[&id].resource_pins.len() >= 8 {
+        let preparing = self.asset_preparation.as_ref().map_or(0, |job| {
+            job.requests.keys().filter(|(peer, _)| *peer == id).count()
+        });
+        if self.peers[&id].resource_pins.len() + preparing >= 8 {
             return self.queue_message(
                 id,
                 ServerMessage::AssetsFailed {
@@ -1548,6 +1689,30 @@ impl ApplicationServer {
         }
 
         let selection = self.update_assets_generation()?;
+        if let Some(job) = self.asset_preparation.as_mut() {
+            job.requests.insert((id, request_id), target);
+            return Ok(());
+        }
+        let work = self
+            .authority
+            .assets
+            .prepare_image_work(self.next_asset_preparation, selection)
+            .map_err(ApplicationRuntimeError::Assets)?;
+        if let Some(work) = work {
+            let job_id = self.next_asset_preparation;
+            self.next_asset_preparation = job_id
+                .checked_add(1)
+                .ok_or(ApplicationServerError::Capacity)?;
+            self.asset_preparation = Some(PendingAssetPreparation {
+                id: job_id,
+                generation: self.assets_generation,
+                source: self.asset_selection.expect("selected asset source"),
+                cancelled: work.cancellation(),
+                work: Some(work),
+                requests: BTreeMap::from([((id, request_id), target)]),
+            });
+            return Ok(());
+        }
         let aircraft = self.authority.application.aircraft().map_err(|error| {
             ApplicationRuntimeError::Application(ApplicationError::Preparation(
                 birdman_game_app::HybridSessionPreparationError::Aircraft(error),

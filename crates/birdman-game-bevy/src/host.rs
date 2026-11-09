@@ -26,7 +26,6 @@ struct Socket {
     peer: Option<HostPeer>,
     acknowledgement: Option<(u64, Result<(), String>)>,
     pending_transmission: Option<ApplicationTransmission>,
-    initial_operator: bool,
     closing: Option<(u16, String)>,
     accepted: VecDeque<(usize, oneshot::Receiver<()>)>,
     maximum_text: usize,
@@ -41,6 +40,7 @@ struct State {
     diagnostic: Option<String>,
     expanded: bool,
     panel_signature: String,
+    initial_operator: bool,
 }
 
 impl NativeHost {
@@ -58,6 +58,7 @@ impl NativeHost {
             diagnostic: None,
             expanded: true,
             panel_signature: String::new(),
+            initial_operator: true,
         })))
     }
 
@@ -137,7 +138,6 @@ pub(crate) fn execute(
                         peer: None,
                         acknowledgement: None,
                         pending_transmission: None,
-                        initial_operator: true,
                         closing: None,
                         accepted: VecDeque::new(),
                         maximum_text: *maximum_text_bytes as usize,
@@ -339,7 +339,7 @@ fn poll_socket(
         }
     }
     if let Some(peer) = &mut socket.peer {
-        if socket.initial_operator
+        if state.initial_operator
             && socket.closing.is_none()
             && handle
                 .snapshot()
@@ -353,7 +353,7 @@ fn poll_socket(
                     peer: Some(peer.id),
                 },
             )) {
-                Ok(()) => socket.initial_operator = false,
+                Ok(()) => state.initial_operator = false,
                 Err(cause) => state.diagnostic = Some(cause),
             }
         }

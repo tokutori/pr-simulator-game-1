@@ -4,6 +4,10 @@
 #[cfg(not(verus_only))]
 mod asset_leases;
 #[cfg(not(verus_only))]
+mod asset_preparation;
+#[cfg(not(verus_only))]
+pub use asset_preparation::{ApplicationAssetPreparationResult, ApplicationAssetPreparationWork};
+#[cfg(not(verus_only))]
 mod assets;
 #[cfg(not(verus_only))]
 mod authority;

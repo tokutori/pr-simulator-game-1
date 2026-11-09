@@ -4,6 +4,7 @@
 pub const SHUTDOWN_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 use crate::{
+    asset_preparation_worker::NativeAssetPreparationWorker,
     native_io::{NativeApplicationIo, NativeIoSubmitError},
     web_distribution::WebDistribution,
 };
@@ -441,6 +442,15 @@ async fn run(
         }
     };
     let signal = io.notification_signal();
+    let mut preparation = match NativeAssetPreparationWorker::new(signal.clone()) {
+        Ok(worker) => worker,
+        Err(cause) => {
+            return Err(match io.shutdown() {
+                Ok(()) => cause,
+                Err(cleanup) => format!("{cause}; {cleanup}"),
+            });
+        }
+    };
     let mut shutdown_error = None;
     let mut peers = BTreeMap::<ApplicationPeerId, PeerDelivery>::new();
     let mut listener: Option<crate::http::HostListener> = None;
@@ -505,8 +515,31 @@ async fn run(
                 result = Err(error.to_string());
             }
         }
+        match preparation.poll() {
+            Ok(Some(completion)) => {
+                let started = Instant::now();
+                let admitted = server
+                    .complete_asset_preparation(epoch.elapsed().as_secs_f64() * 1000.0, completion);
+                let elapsed = started.elapsed();
+                if elapsed > Duration::from_millis(100) {
+                    eprintln!(
+                        "Host asset CPU admission: {:.1} ms",
+                        elapsed.as_secs_f64() * 1000.0
+                    );
+                }
+                if let Err(cause) = admitted {
+                    result = Err(cause.to_string());
+                }
+            }
+            Ok(None) => {}
+            Err(cause) => {
+                shutdown_error = Some(cause.clone());
+                result = Err(cause);
+            }
+        }
         match event {
             Some(Event::Shutdown) => {
+                preparation.stop();
                 peers.clear();
                 if let Err(error) = stop_listener(listener.take(), starting.take()).await {
                     snapshot.send_modify(|state| state.diagnostic = Some(error.clone()));
@@ -523,6 +556,18 @@ async fn run(
                 }
                 let deadline = tokio::time::Instant::now() + SHUTDOWN_DRAIN_TIMEOUT;
                 loop {
+                    match preparation.poll() {
+                        Ok(Some(completion)) => {
+                            if let Err(cause) = server.complete_asset_preparation(
+                                epoch.elapsed().as_secs_f64() * 1000.0,
+                                completion,
+                            ) {
+                                shutdown_error = Some(cause.to_string());
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(cause) => shutdown_error = Some(cause),
+                    }
                     for request in server.take_io_requests() {
                         if let Err(error) = io.submit(request) {
                             let message = error.to_string();
@@ -687,6 +732,19 @@ async fn run(
                 result = Err(message);
             }
         }
+        if preparation.is_idle()
+            && let Some(work) = server.take_asset_preparation()
+            && let Err(work) = preparation.submit(work)
+        {
+            let cause = "Native asset preparation executor did not accept the job".to_owned();
+            let completion = birdman_game_runtime::ApplicationAssetPreparationResult::failed(
+                work.id(),
+                cause.clone(),
+            );
+            let _ = server
+                .complete_asset_preparation(epoch.elapsed().as_secs_f64() * 1000.0, completion);
+            shutdown_error = Some(cause);
+        }
         let application = server.snapshot();
         peers.retain(|id, _| application.peers.iter().any(|peer| peer.id == *id));
         let mut closed = Vec::new();
@@ -719,6 +777,9 @@ async fn run(
         });
     }
     drop(listener);
+    if let Err(error) = preparation.shutdown() {
+        shutdown_error = Some(error);
+    }
     if let Err(error) = io.shutdown() {
         shutdown_error = Some(error);
     }

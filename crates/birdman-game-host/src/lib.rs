@@ -27,3 +27,5 @@ mod http;
 pub mod server_cli;
 /// Native HTTP/WebSocket service and management handle.
 pub mod service;
+
+mod asset_preparation_worker;

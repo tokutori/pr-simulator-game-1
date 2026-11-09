@@ -628,6 +628,79 @@ pub(super) struct BufferSnapshot {
 }
 
 impl AssetCatalog {
+    pub(super) fn prepare_image_work(
+        &self,
+        id: u64,
+        selection: EnvironmentSelection,
+    ) -> Result<Option<crate::ApplicationAssetPreparationWork>, ApplicationAssetError> {
+        let EnvironmentProjection::Available { metadata, .. } = selection
+            .resolve()
+            .map_err(ApplicationAssetError::Environment)?
+        else {
+            return Err(ApplicationAssetError::UnavailableEnvironment);
+        };
+        let sky_condition =
+            LakeSkyRenderCondition::try_from(metadata.sky).map_err(ApplicationAssetError::Sky)?;
+        let sky =
+            (!self.skies.iter().any(|sky| sky.condition == sky_condition)).then_some(sky_condition);
+        let wave = metadata.waves;
+        let detail = if wave.wind_velocity_ne_mps[0].hypot(wave.wind_velocity_ne_mps[1]) < 0.05 {
+            None
+        } else {
+            let condition = LakeVisualCondition::try_new(
+                wave.wind_velocity_ne_mps[0],
+                wave.wind_velocity_ne_mps[1],
+                wave.fetch_m,
+                wave.detail_amplitude_scale,
+                u64::from(wave.pattern_seed),
+            )
+            .map_err(ApplicationAssetError::Water)?;
+            let configs =
+                production_lake_detail_configs(condition).map_err(ApplicationAssetError::Water)?;
+            (!self
+                .details
+                .iter()
+                .any(|detail| detail.configuration == configs))
+            .then_some(configs)
+        };
+        Ok((sky.is_some() || detail.is_some())
+            .then(|| crate::ApplicationAssetPreparationWork::new(id, sky, detail)))
+    }
+
+    pub(super) fn admit_images(
+        &mut self,
+        images: crate::asset_preparation::GeneratedImages,
+    ) -> Result<(), ApplicationAssetError> {
+        if let Some((condition, image)) = images.sky
+            && !self.skies.iter().any(|sky| sky.condition == condition)
+        {
+            let image = self.image(image.size, ApplicationImageEncoding::SrgbRgba8, image.bytes)?;
+            self.skies.push(Arc::new(SkyAsset { condition, image }));
+        }
+        if let Some((configuration, raw)) = images.detail
+            && !self
+                .details
+                .iter()
+                .any(|detail| detail.configuration == configuration)
+        {
+            let mut images = Vec::with_capacity(2);
+            for image in raw {
+                images.push(self.image(
+                    image.size,
+                    ApplicationImageEncoding::LinearRgba8,
+                    image.bytes,
+                )?);
+            }
+            self.details.push(Arc::new(DetailAssets {
+                configuration,
+                images: images
+                    .try_into()
+                    .unwrap_or_else(|_| unreachable!("two detail images")),
+            }));
+        }
+        Ok(())
+    }
+
     pub(super) fn prepare(
         &mut self,
         revision: u32,
