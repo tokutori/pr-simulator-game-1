@@ -7,7 +7,8 @@ use birdman_game_host::{
     web_distribution::{WebDistribution, write_web_bundle_manifest},
 };
 use birdman_game_presentation::game_ui::{
-    GameUiControlInput, GameUiOverlay, GameUiScene, GameUiView, GameUiViewport,
+    GameUiControlContent, GameUiControlInput, GameUiOverlay, GameUiScene, GameUiView,
+    GameUiViewport,
 };
 use birdman_game_runtime::*;
 use sha2::{Digest, Sha256};
@@ -134,6 +135,18 @@ impl Client {
             self.aircraft_position = Some([position.x, position.y, position.z]);
             match drawing.ui {
                 ApplicationUiProjection::View { view } => {
+                    if view.active_overlay == Some(GameUiOverlay::Pause)
+                        && self
+                            .view
+                            .as_ref()
+                            .is_none_or(|old| old.view_revision != view.view_revision)
+                    {
+                        eprintln!(
+                            "Remote Pause view {}: {}",
+                            view.view_revision,
+                            pause_reason(&view)
+                        );
+                    }
                     self.view = Some(view);
                     self.consumed_frame_revision = None;
                 }
@@ -490,6 +503,23 @@ fn trace(trace: &mut VecDeque<String>, message: String) {
     trace.push_back(message);
 }
 
+fn pause_reason(view: &GameUiView) -> String {
+    let reason = if view.description.is_empty() {
+        view.panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .filter(|control| matches!(control.id.as_str(), "game-state" | "game-flight-recovery"))
+            .find_map(|control| match &control.content {
+                GameUiControlContent::Status { value, .. } => Some(value.as_str()),
+                _ => None,
+            })
+            .unwrap_or("")
+    } else {
+        &view.description
+    };
+    reason.chars().take(256).collect()
+}
+
 #[track_caller]
 fn until(clients: &mut [Client], condition: impl Fn(&[Client]) -> bool) {
     let end = Instant::now() + Duration::from_secs(60);
@@ -512,11 +542,7 @@ fn until(clients: &mut [Client], condition: impl Fn(&[Client]) -> bool) {
                         view.active_overlay,
                         view.view_revision
                     )),
-                    client.view.as_ref().map(|view| view
-                        .description
-                        .chars()
-                        .take(256)
-                        .collect::<String>()),
+                    client.view.as_ref().map(|view| pause_reason(view)),
                     client.consumed_frame_revision,
                     client.aircraft_position,
                     &client.diagnostic,
@@ -799,7 +825,20 @@ fn shared_host_scopes_two_actual_native_connections_and_software_buffers() {
                 .is_some_and(|view| view.scene == GameUiScene::Countdown)
         })
     });
-    until(&mut clients, |clients| clients.iter().all(Client::flying));
+    until(&mut clients, |clients| {
+        for client in clients {
+            assert!(
+                !client.paused(),
+                "Unexpected Pause before flight: {}",
+                client
+                    .view
+                    .as_ref()
+                    .map(|view| pause_reason(view))
+                    .unwrap_or_default()
+            );
+        }
+        clients.iter().all(Client::flying)
+    });
     let launch_position = clients[operator].aircraft_position.unwrap();
     until(&mut clients, |clients| {
         clients[operator]
