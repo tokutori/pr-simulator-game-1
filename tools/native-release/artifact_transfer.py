@@ -63,7 +63,7 @@ def build_reference(archive: Path, artifact, source: Path):
                           source_sha=source_sha, lock_hash=digest(source / "Cargo.lock"),
                           targets=[item["target"] for item in matrix["include"]],
                           features=sorted({feature for item in matrix["include"]
-                                           for feature in item["features"].split(",") if feature}),
+                                           for feature in item.get("notice_features", item["features"]).split(",") if feature}),
                           licenses_hash=hashes["THIRD-PARTY-LICENSES.html"])
     return {"artifact_id": artifact["id"], "run_id": artifact["workflow_run"]["id"],
             "source_sha": source_sha, "archive_sha256": artifact["digest"][7:], "files": hashes}
