@@ -3907,6 +3907,11 @@ export interface DisplaySettings {
      * Saturation mix from linear luminance; 1.0 keeps the existing saturation.
      */
     readonly saturation: number;
+    /**
+     * Scale of every UI text and layout size relative to the platform root
+     * font; stored settings written before this field existed read as 1.0.
+     */
+    readonly ui_scale?: number;
 }
 /**
  * Game-side countdown display. Unlike a menu readout it has no panel and

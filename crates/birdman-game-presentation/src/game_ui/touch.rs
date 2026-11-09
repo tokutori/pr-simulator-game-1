@@ -153,7 +153,7 @@ pub(super) fn controls(
     menu: &GameUiLayout,
 ) -> Result<[GameUiControl; 2], GameUiError> {
     let target = held_target(context)?;
-    let [stick, slider] = regions(context.platform, menu);
+    let [stick, slider] = regions(&context.platform, menu);
     Ok([
         (
             "game-flight-stick",

@@ -179,7 +179,7 @@ pub(super) fn game_ui_hud(
     let heading_degrees = attitude_visible.then_some(heading);
     let angle_of_attack_degrees = profile.angle_of_attack().then_some(alpha).flatten();
     let menu_layout = super::view::layout(state, context, phase)?;
-    let mut layout = hud_layout(context.platform, phase, &menu_layout, 1.0);
+    let mut layout = hud_layout(&context.platform, phase, &menu_layout, 1.0);
     let geometry = hud_geometry(
         attitude,
         path_angle,
@@ -422,7 +422,7 @@ pub(super) fn game_ui_hud(
             },
         ));
     }
-    let portrait_touch = super::touch::available(context.platform, phase)
+    let portrait_touch = super::touch::available(&context.platform, phase)
         && context.platform.viewport.width < context.platform.viewport.height;
     let mut groups = position_hud(
         &mut layout,
@@ -460,12 +460,12 @@ pub(super) fn game_ui_hud(
                 next_fold += 1;
                 let (mut readouts, instruments) = take_hud_nodes(groups);
                 readouts.retain(|node| node.id != victim);
-                layout = hud_layout(context.platform, phase, &menu_layout, font_scale);
+                layout = hud_layout(&context.platform, phase, &menu_layout, font_scale);
                 groups = position_hud(&mut layout, readouts, instruments, true, 0.55, true);
             } else if font_scale > MIN_PORTRAIT_FONT_SCALE {
                 font_scale = (font_scale * PORTRAIT_FONT_SCALE_STEP).max(MIN_PORTRAIT_FONT_SCALE);
                 let (readouts, instruments) = take_hud_nodes(groups);
-                layout = hud_layout(context.platform, phase, &menu_layout, font_scale);
+                layout = hud_layout(&context.platform, phase, &menu_layout, font_scale);
                 groups = position_hud(&mut layout, readouts, instruments, true, 0.55, true);
             } else {
                 break;

@@ -997,6 +997,7 @@ fn display_settings_are_admitted_on_title_setup_pause_and_replay() {
         brightness: 1.25,
         contrast: 0.75,
         saturation: 1.5,
+        ..Default::default()
     };
     let mut application = ApplicationSession::new(ControlMode::Manual, 3, 42);
     assert_eq!(application.display_settings(), DisplaySettings::default());
