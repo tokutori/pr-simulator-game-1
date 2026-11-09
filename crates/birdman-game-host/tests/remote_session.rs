@@ -558,6 +558,100 @@ fn until(clients: &mut [Client], condition: impl Fn(&[Client]) -> bool) {
     }
 }
 
+fn browser_io_journey(handle: &HostServiceHandle, url: &str) {
+    if std::env::var_os("BPG_VERIFY_BROWSER_IO").is_none() {
+        return;
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut child = std::process::Command::new("node")
+        .current_dir(root)
+        .args([
+            "node_modules/vitest/vitest.mjs", "run", "--pool=threads", "--maxWorkers=1",
+            "tools/game-check/main-startup-owner.test.ts", "--testNamePattern", "actual Host browser I/O",
+        ])
+        .env("BPG_BROWSER_HOST_URL", url)
+        .spawn().expect("Explicit Browser I/O verification requires Node, npm dependencies, and fresh matching Wasm");
+    let deadline = Instant::now() + Duration::from_secs(95);
+    let result = (|| -> Result<(), String> {
+        let mut granted = false;
+        loop {
+            if !granted {
+                let peers = handle.snapshot().application.peers;
+                if let [peer] = peers.as_slice()
+                    && peer.ready
+                {
+                    handle
+                        .administer(HostManagementCommand::Application(
+                            ApplicationServerCommand::AssignOperator {
+                                peer: Some(peer.id),
+                            },
+                        ))
+                        .map_err(|error| format!("Browser operator assignment failed: {error}"))?;
+                    granted = true;
+                }
+            }
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|error| format!("Browser process observation failed: {error}"))?
+            {
+                if !status.success() {
+                    return Err(format!("Actual Browser I/O failed: {status}"));
+                }
+                if !granted {
+                    return Err(
+                        "Actual Browser peer never completed its shared handshake".to_owned()
+                    );
+                }
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err("Actual Browser I/O exceeded its bounded wait".to_owned());
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    })();
+    // try_wait(Some) has collected the child; failed paths get a bounded termination attempt.
+    let cleanup = if result.is_err() {
+        match child.try_wait() {
+            Ok(Some(_)) => Ok(()),
+            observation => {
+                let killed = child.kill();
+                let cleanup_deadline = Instant::now() + Duration::from_secs(2);
+                let terminal = loop {
+                    match child.try_wait() {
+                        Ok(Some(status)) => break Ok(status),
+                        Ok(None) if Instant::now() < cleanup_deadline => {
+                            std::thread::sleep(Duration::from_millis(2));
+                        }
+                        pending => {
+                            break Err(format!("Browser terminal was not confirmed: {pending:?}"));
+                        }
+                    }
+                };
+                match (observation, killed, terminal) {
+                    (Ok(None), Ok(()), Ok(_)) => Ok(()),
+                    (observed, killed, terminal) => Err(format!(
+                        "Browser process cleanup: observation={observed:?}, kill={killed:?}, terminal={terminal:?}"
+                    )),
+                }
+            }
+        }
+    } else {
+        Ok(())
+    };
+    assert!(
+        result.is_ok() && cleanup.is_ok(),
+        "Browser I/O result={result:?}; terminal={cleanup:?}"
+    );
+    while !handle.snapshot().application.peers.is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "Browser Dispose did not retire its real peer before Native consumers start"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
 #[test]
 fn shared_host_scopes_two_actual_native_connections_and_software_buffers() {
     let source = APPLICATION_SOURCE_SHA.expect("Run this fixed-source integration test with BPG_APPLICATION_SOURCE_SHA or BPG_NATIVE_SOURCE_SHA");
@@ -609,6 +703,7 @@ fn shared_host_scopes_two_actual_native_connections_and_software_buffers() {
         std::thread::sleep(Duration::from_millis(2));
     };
     let url = format!("http://{address}/");
+    browser_io_journey(&handle, &url);
     let mut clients = [
         Client::new(epoch, &url, 100, handle.clone()),
         Client::new(epoch, &url, 200, handle.clone()),

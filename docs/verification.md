@@ -46,6 +46,8 @@ npm run verify
 - Windows CIは共有・Web側のworkspace試験とNative単独試験を分離する。Ubuntu・Windows・macOS両architectureでは通常featureのNative実行ファイルをビルドし、`--help`・`--version`の成功と、`--verify unused --offscreen`の`requires --features verify-harness`による拒否を検査する。このCPU CLI検査は描画・ウィンドウ起動の受入と区分する。
 - WASIはビルドと実行の結果を分ける。
 - `npm run verify` はWASM生成を一度行い、型検査・lint・試験・資産/依存境界・本番ビルドを実行する。
+- 共有Hostの実時間接続: `cargo test -p birdman-game-host --test remote_session --release --locked -- --nocapture`で、実HTTP/WebSocket、操作権、2接続の資源、飛行・切断・再接続と終了を検査する。この旅程は配布と同じrelease profileで明示実行し、通常のworkspace単体試験と区分する。
+- Browserの実I/O接続: cleanな同一sourceで`npm ci`と`npm run verify`を完了し、`BPG_VERIFY_BROWSER_IO=1`を設定して上記Host旅程を実行する。親旅程が実listenerのURLをNodeへ渡し、既存startup試験の`actual Host browser I/O`を実行する。Node・依存・同版WASMの不足は失敗として扱い、CPUによる描画資源の消費と実GPU描画の受入を区分する。
 
 追加の既存検査は次のとおりである。
 

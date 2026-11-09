@@ -155,6 +155,11 @@ jobs:
         run: cargo run -p birdman-game-cli --locked -- verify-hybrid-flight all
       - run: npm ci
       - run: npm run verify
+      - name: Verify actual Host, Native and Browser I/O in optimized execution
+        timeout-minutes: 20
+        env:
+          BPG_VERIFY_BROWSER_IO: '1'
+        run: cargo test -p birdman-game-host --test remote_session --release --locked -- --nocapture
       - name: Compare Native and WASM application traces with software Vulkan
         if: runner.os == 'Linux'
         timeout-minutes: 15

@@ -13,6 +13,12 @@ name = "birdman-game-server"
 path = "src/bin/server.rs"
 required-features = ["server-ui"]
 
+# The live-clock journey runs explicitly with the production release profile.
+[[test]]
+name = "remote_session"
+path = "tests/remote_session.rs"
+test = false
+
 [features]
 server-ui = ["dep:eframe"]
 
