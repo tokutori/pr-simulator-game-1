@@ -7,7 +7,7 @@ use crate::{
     },
     web_distribution::WebDistribution,
 };
-use birdman_game_app::ApplicationSession;
+use birdman_game_app::application::ApplicationSession;
 use birdman_game_runtime::{
     APPLICATION_CONTRACT_SHA256, ApplicationHostIdentity, ApplicationServer,
     ApplicationServerCommand,

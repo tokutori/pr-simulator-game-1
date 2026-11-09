@@ -34,6 +34,15 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: '1'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Declare the clean checkout source for native and remote contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha=$(git rev-parse --verify HEAD)
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          test -z "$(git status --porcelain --untracked-files=normal)"
+          printf 'BPG_APPLICATION_SOURCE_SHA=%s\nBPG_NATIVE_SOURCE_SHA=%s\n' "$source_sha" "$source_sha" >> "$GITHUB_ENV"
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24.14.1'
@@ -75,7 +84,7 @@ jobs:
             "SCCACHE_GHA_RW_MODE=$env:CACHE_MODE"
           ) | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - run: cargo fmt --check
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features birdman-game-host/server-ui --locked -- -D warnings
         env:
           RUSTC_WRAPPER: ''
       - name: Lint native verification and OpenXR features
@@ -84,15 +93,15 @@ jobs:
           RUSTC_WRAPPER: ''
       - name: Test workspace packages (Linux)
         if: runner.os == 'Linux'
-        run: cargo test --workspace --features birdman-game-bevy/verify-harness,birdman-game-bevy/openxr --locked
+        run: cargo test --workspace --features birdman-game-bevy/verify-harness,birdman-game-bevy/openxr,birdman-game-host/server-ui --locked
       - name: Test shared and Web packages (Windows)
         if: runner.os == 'Windows'
-        run: cargo test --workspace --exclude birdman-game-bevy --locked
+        run: cargo test --workspace --exclude birdman-game-bevy --features birdman-game-host/server-ui --locked
       - name: Test Bevy native Screen (Windows)
         if: runner.os == 'Windows'
         run: cargo test -p birdman-game-bevy --features verify-harness,openxr --locked
-      - name: Build ordinary Bevy native Screen executable
-        run: cargo build -p birdman-game-bevy --locked
+      - name: Build ordinary native Screen and server executables
+        run: cargo build -p birdman-game-bevy -p birdman-game-host --bins --features birdman-game-host/server-ui --locked
       - name: Verify ordinary native CLI without the harness (Linux)
         if: runner.os == 'Linux'
         shell: bash
@@ -101,6 +110,8 @@ jobs:
           binary=./target/debug/birdman-game-bevy
           "$binary" --help
           "$binary" --version
+          ./target/debug/birdman-game-server --help
+          ./target/debug/birdman-game-server --version
           if output=$("$binary" --verify unused --offscreen 2>&1); then
             echo 'Native harness flag unexpectedly succeeded'; exit 1
           fi
@@ -113,6 +124,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native help failed' }
           & ./target/debug/birdman-game-bevy.exe --version
           if ($LASTEXITCODE -ne 0) { throw 'Native version failed' }
+          & ./target/debug/birdman-game-server.exe --help
+          if ($LASTEXITCODE -ne 0) { throw 'Server help failed' }
+          & ./target/debug/birdman-game-server.exe --version
+          if ($LASTEXITCODE -ne 0) { throw 'Server version failed' }
           $output = & ./target/debug/birdman-game-bevy.exe --verify unused --offscreen 2>&1 | Out-String
           if ($LASTEXITCODE -eq 0 -or $output -notmatch 'requires --features verify-harness') {
             throw "Native harness flag was not rejected: $output"
@@ -214,6 +229,15 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Declare the clean checkout source for native and remote contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha=$(git rev-parse --verify HEAD)
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          test -z "$(git status --porcelain --untracked-files=normal)"
+          printf 'BPG_APPLICATION_SOURCE_SHA=%s\nBPG_NATIVE_SOURCE_SHA=%s\n' "$source_sha" "$source_sha" >> "$GITHUB_ENV"
+
       - name: Install pinned native-host Rust toolchain
         run: |
           set -euo pipefail
@@ -230,14 +254,16 @@ jobs:
           workspaces: . -> target
           key: check-native-${{ matrix.target }}-${{ hashFiles('Cargo.toml') }}
           save-if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.deploy_pages)) }}
-      - name: Build ordinary Bevy native Screen executable
-        run: cargo build -p birdman-game-bevy --locked
+      - name: Build ordinary native Screen and server executables
+        run: cargo build -p birdman-game-bevy -p birdman-game-host --bins --features birdman-game-host/server-ui --locked
       - name: Verify ordinary native CLI without the harness
         run: |
           set -euo pipefail
           binary=./target/debug/birdman-game-bevy
           "$binary" --help
           "$binary" --version
+          ./target/debug/birdman-game-server --help
+          ./target/debug/birdman-game-server --version
           if output=$("$binary" --verify unused --offscreen 2>&1); then
             echo 'Native harness flag unexpectedly succeeded'; exit 1
           fi

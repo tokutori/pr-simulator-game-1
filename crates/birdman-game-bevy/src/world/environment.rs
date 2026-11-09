@@ -1,4 +1,4 @@
-use super::super::native_runtime::{NativeBuffer, NativeRuntime};
+use super::super::native_runtime::NativeBuffers;
 use bevy::{
     asset::RenderAssetUsages,
     image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
@@ -14,7 +14,7 @@ use birdman_game_runtime::{
 };
 
 pub(super) fn floats<const COMPONENTS: usize>(
-    runtime: &NativeRuntime,
+    runtime: &NativeBuffers,
     descriptor: ApplicationBufferDescriptor,
 ) -> Result<Vec<[f32; COMPONENTS]>, String> {
     Ok(float_values(runtime, descriptor, COMPONENTS)?
@@ -24,16 +24,23 @@ pub(super) fn floats<const COMPONENTS: usize>(
 }
 
 fn float_values(
-    runtime: &NativeRuntime,
+    runtime: &NativeBuffers,
     descriptor: ApplicationBufferDescriptor,
     components: usize,
 ) -> Result<Vec<f32>, String> {
-    let Some(NativeBuffer::F32(values)) = runtime.asset_buffer(descriptor.buffer_id) else {
+    let Some(bytes) = runtime.bytes(descriptor.buffer_id) else {
         return Err(format!(
             "Float32 upload {} is unavailable",
             descriptor.buffer_id
         ));
     };
+    if bytes.len() % 4 != 0 {
+        return Err("Float32 upload has an incomplete scalar".into());
+    }
+    let values: Vec<f32> = bytes
+        .chunks_exact(4)
+        .map(|value| f32::from_le_bytes(value.try_into().unwrap()))
+        .collect();
     if descriptor.components as usize != components
         || descriptor.stride_bytes as usize != components * 4
         || values.len() != descriptor.count as usize * components
@@ -47,7 +54,7 @@ fn float_values(
 }
 
 pub(super) fn update_mesh(
-    runtime: &NativeRuntime,
+    runtime: &NativeBuffers,
     mesh: &mut Mesh,
     position: ApplicationBufferDescriptor,
     normal: ApplicationBufferDescriptor,
@@ -76,15 +83,22 @@ pub(super) fn update_mesh(
 }
 
 fn indices(
-    runtime: &NativeRuntime,
+    runtime: &NativeBuffers,
     descriptor: ApplicationBufferDescriptor,
 ) -> Result<Vec<u32>, String> {
-    let Some(NativeBuffer::U32(values)) = runtime.asset_buffer(descriptor.buffer_id) else {
+    let Some(bytes) = runtime.bytes(descriptor.buffer_id) else {
         return Err(format!(
             "UInt32 upload {} is unavailable",
             descriptor.buffer_id
         ));
     };
+    if bytes.len() % 4 != 0 {
+        return Err("UInt32 upload has an incomplete scalar".into());
+    }
+    let values: Vec<u32> = bytes
+        .chunks_exact(4)
+        .map(|value| u32::from_le_bytes(value.try_into().unwrap()))
+        .collect();
     if descriptor.components != 1
         || descriptor.stride_bytes != 4
         || values.len() != descriptor.count as usize
@@ -98,7 +112,7 @@ fn indices(
 }
 
 pub(super) fn mesh(
-    runtime: &NativeRuntime,
+    runtime: &NativeBuffers,
     asset: &ApplicationMeshAsset,
     start: u32,
     count: u32,
@@ -132,7 +146,7 @@ pub(super) fn mesh(
 }
 
 pub(super) fn water_mesh(
-    runtime: &NativeRuntime,
+    runtime: &NativeBuffers,
     asset: &ApplicationWaterChunkAsset,
 ) -> Result<Mesh, String> {
     Ok(Mesh::new(
@@ -156,11 +170,11 @@ pub(super) fn water_mesh(
 }
 
 pub(super) fn image(
-    runtime: &NativeRuntime,
+    runtime: &NativeBuffers,
     asset: ApplicationImageAsset,
     anisotropy_clamp: u16,
 ) -> Result<Image, String> {
-    let Some(NativeBuffer::U8(bytes)) = runtime.asset_buffer(asset.buffer_id) else {
+    let Some(bytes) = runtime.bytes(asset.buffer_id) else {
         return Err("Image upload is unavailable".into());
     };
     let [width, height] = asset.size;
@@ -226,10 +240,10 @@ pub(super) fn image(
 }
 
 pub(super) fn wing_image(
-    runtime: &NativeRuntime,
+    runtime: &NativeBuffers,
     asset: &ApplicationGeometryTexture,
 ) -> Result<Image, String> {
-    let Some(NativeBuffer::U8(bytes)) = runtime.asset_buffer(asset.buffer.buffer_id) else {
+    let Some(bytes) = runtime.bytes(asset.buffer.buffer_id) else {
         return Err("Wing image upload is unavailable".into());
     };
     let [width, height] = asset.size;
@@ -250,7 +264,7 @@ pub(super) fn wing_image(
         RenderAssetUsages::default(),
     );
     image.texture_descriptor.mip_level_count = asset.mip_level_count;
-    image.data = Some(bytes);
+    image.data = Some(bytes.to_vec());
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
         anisotropy_clamp: 8,
         ..ImageSamplerDescriptor::linear()

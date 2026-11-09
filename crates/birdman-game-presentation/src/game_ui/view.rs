@@ -538,7 +538,7 @@ pub fn game_ui_view(
         },
         countdown: super::hud::game_ui_countdown(context),
     };
-    view.back_action = view.back_action();
+    view.back_action = view.resolve_back_action();
     view.interaction_scope = match scene {
         GameUiScene::Result => format!(
             "{scene:?}:{:?}:{:?}:{:?}",

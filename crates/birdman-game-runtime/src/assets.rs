@@ -19,10 +19,10 @@ use birdman_game_scene::lake_water::{
     LakeDetailConfig, LakeRenderModelError, LakeVisualCondition, LakeWaveProjection,
     generate_lake_detail, production_lake_detail_configs, water_quality_profile,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Pixel encoding submitted directly to a graphics API.
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ApplicationImageEncoding {
@@ -33,7 +33,7 @@ pub enum ApplicationImageEncoding {
 }
 
 /// An immutable image descriptor; bytes travel through the common asset-buffer channel.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationImageAsset {
     /// Owner-issued buffer identity, stable while the same image is reused.
@@ -45,7 +45,7 @@ pub struct ApplicationImageAsset {
 }
 
 /// One prepared periodic normal/variance/height image.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationWaterDetailAsset {
     /// Linear-data RGBA texture.
@@ -55,7 +55,7 @@ pub struct ApplicationWaterDetailAsset {
 }
 
 /// Final display-light and distance-fog values in the shared render convention.
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationLightingAssets {
     /// Ambient sRGB 0xRRGGBB colour.
@@ -77,7 +77,7 @@ pub struct ApplicationLightingAssets {
 }
 
 /// Prepared wave uniforms and immutable detail images.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationWaterAssets {
     /// Dark, mid-tone and bright colours for direct material submission.
@@ -99,7 +99,7 @@ pub struct ApplicationWaterAssets {
 }
 
 /// Revision-scoped drawing resources prepared by the shared application owner.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationEnvironmentAssets {
     /// Complete descriptor batch for this candidate; raw buffers upload on cache misses.
@@ -114,6 +114,123 @@ pub struct ApplicationEnvironmentAssets {
     pub water: ApplicationWaterAssets,
     /// Shared registration decision for venue geometry.
     pub venue: EnvironmentVenueProjection,
+}
+
+impl ApplicationEnvironmentAssets {
+    pub(super) fn buffer_layouts(
+        &self,
+    ) -> Result<BTreeMap<u32, (crate::ApplicationBufferType, usize)>, ApplicationAssetError> {
+        use crate::ApplicationBufferType;
+        let mut layouts = BTreeMap::new();
+        let mut add = |id: u32, data_type: ApplicationBufferType, length: usize| {
+            if id == 0 || length == 0 || length > crate::APPLICATION_RENDER_BUFFER_BYTES {
+                return Err(ApplicationAssetError::BufferUnavailable);
+            }
+            if let Some(previous) = layouts.insert(id, (data_type, length))
+                && previous != (data_type, length)
+            {
+                return Err(ApplicationAssetError::BufferUnavailable);
+            }
+            Ok(())
+        };
+        for image in [
+            &self.sky,
+            &self.water.detail[0].image,
+            &self.water.detail[1].image,
+        ] {
+            let length = u64::from(image.size[0]) * u64::from(image.size[1]) * 4;
+            let length =
+                usize::try_from(length).map_err(|_| ApplicationAssetError::BufferUnavailable)?;
+            add(image.buffer_id, ApplicationBufferType::U8, length)?;
+        }
+        for texture in &self.scene.wing_textures {
+            texture.buffer.validate()?;
+            let [width, height] = texture.size;
+            if width == 0
+                || height == 0
+                || texture.mip_level_count == 0
+                || texture.mip_level_count > width.max(height).ilog2() + 1
+            {
+                return Err(ApplicationAssetError::BufferUnavailable);
+            }
+            let length: u64 = (0..texture.mip_level_count)
+                .map(|level| {
+                    u64::from((width >> level).max(1)) * u64::from((height >> level).max(1)) * 4
+                })
+                .sum();
+            let descriptor_length =
+                u64::from(texture.buffer.count) * u64::from(texture.buffer.stride_bytes);
+            if texture.buffer.data_type != ApplicationBufferType::U8 || descriptor_length != length
+            {
+                return Err(ApplicationAssetError::BufferUnavailable);
+            }
+            add(
+                texture.buffer.buffer_id,
+                ApplicationBufferType::U8,
+                length as usize,
+            )?;
+        }
+        for mesh in &self.scene.meshes {
+            birdman_game_presentation::camera::compose_pose(
+                birdman_game_presentation::camera::Pose::IDENTITY,
+                mesh.local_pose,
+            )
+            .map_err(|_| ApplicationAssetError::BufferUnavailable)?;
+            for descriptor in [
+                Some(mesh.position),
+                Some(mesh.normal),
+                Some(mesh.index),
+                mesh.uv,
+                mesh.color,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                descriptor.validate()?;
+                add(
+                    descriptor.buffer_id,
+                    descriptor.data_type,
+                    descriptor.count as usize * descriptor.stride_bytes as usize,
+                )?;
+            }
+        }
+        for chunk in self
+            .water
+            .geometry
+            .near
+            .iter()
+            .chain(std::iter::once(&self.water.geometry.far))
+        {
+            for descriptor in [
+                chunk.position,
+                chunk.normal,
+                chunk.uv,
+                chunk.grid_spacing,
+                chunk.index,
+            ] {
+                descriptor.validate()?;
+                add(
+                    descriptor.buffer_id,
+                    descriptor.data_type,
+                    descriptor.count as usize * descriptor.stride_bytes as usize,
+                )?;
+            }
+        }
+        for mesh in &self.scene.meshes {
+            for material in &mesh.materials {
+                if let Some(id) = material.texture_buffer_id
+                    && !layouts.contains_key(&id)
+                {
+                    return Err(ApplicationAssetError::BufferUnavailable);
+                }
+            }
+        }
+        Ok(layouts)
+    }
+
+    pub(super) fn buffer_ids(&self) -> Result<BTreeSet<u32>, ApplicationAssetError> {
+        Ok(self.buffer_layouts()?.into_keys().collect())
+    }
 }
 
 /// Failures from registered environment resolution or immutable CPU resource generation.
@@ -144,6 +261,10 @@ pub enum ApplicationAssetError {
     Water(LakeRenderModelError),
     /// Buffer identities have been consumed.
     IdentifiersExhausted,
+    /// A render buffer exceeds its byte limit or the live immutable snapshot budget.
+    SnapshotBudgetExceeded,
+    /// A published render descriptor no longer names a retained source buffer.
+    BufferUnavailable,
 }
 #[cfg(not(verus_only))]
 impl core::fmt::Display for ApplicationAssetError {
@@ -166,6 +287,10 @@ impl core::fmt::Display for ApplicationAssetError {
             }
             Self::Sky(_) => f.write_str("Sky metadata validation failed"),
             Self::Water(_) => f.write_str("Water resource generation failed"),
+            Self::SnapshotBudgetExceeded => {
+                f.write_str("Immutable drawing buffer budget is exhausted")
+            }
+            Self::BufferUnavailable => f.write_str("Published drawing buffer is unavailable"),
             Self::IdentifiersExhausted => {
                 f.write_str("Drawing asset buffer identities are exhausted")
             }
@@ -208,8 +333,7 @@ struct PreparedAssets {
     aircraft_identity: [u8; 32],
     sunlight: LakeSunlight,
     venue_visible: bool,
-    sky: Arc<SkyAsset>,
-    detail: Option<Arc<DetailAssets>>,
+    image_ids: [u32; 3],
 }
 
 enum PreparationStage {
@@ -254,16 +378,25 @@ impl PendingAssets {
 #[derive(Default)]
 pub(super) struct AssetCompletion {
     pub invalidated_renderer: Option<u32>,
+    pub prepared: Option<(u32, u32)>,
     pub committed: Option<AssetCommit>,
     pub failed: Option<AssetFailure>,
     pub requests: Vec<ApplicationRequest>,
 }
 
 #[derive(Default)]
-pub(super) struct AssetsOwner {
+pub(super) struct AssetCatalog {
     neutral_detail: Option<ImageBuffer>,
     geometry: BTreeMap<[u8; 32], Box<crate::geometry::GeometryOwner>>,
     next_buffer_id: u32,
+    skies: Vec<Arc<SkyAsset>>,
+    details: Vec<Arc<DetailAssets>>,
+    complete_updates: BTreeMap<[u8; 32], (u32, Vec<crate::ApplicationMeshUpdate>)>,
+    snapshots: BTreeMap<(u32, u32), SnapshotCacheEntry>,
+}
+
+#[derive(Default)]
+pub(super) struct AssetsOwner {
     active: Option<PreparedAssets>,
     active_resource: Option<u32>,
     desired: Option<u32>,
@@ -281,13 +414,226 @@ impl AssetsOwner {
             .as_ref()
             .is_some_and(|active| active.venue_visible)
     }
+    pub(super) fn offer(
+        &mut self,
+        revision: u32,
+        aircraft_identity: [u8; 32],
+        target: ApplicationGraphicsTarget,
+        policy_request: Option<ScreenRenderResourceRequest>,
+        assets: &ApplicationEnvironmentAssets,
+    ) {
+        let [x, y, z, daylight] = assets.lighting.sunlight_direction;
+        self.pending.insert(
+            revision,
+            PendingAssets {
+                bundle: PreparedAssets {
+                    aircraft_identity,
+                    sunlight: LakeSunlight {
+                        direction: [x, y, z],
+                        daylight: daylight > 0.0,
+                    },
+                    venue_visible: assets.venue.is_visible(),
+                    image_ids: [
+                        assets.sky.buffer_id,
+                        assets.water.detail[0].image.buffer_id,
+                        assets.water.detail[1].image.buffer_id,
+                    ],
+                },
+                stage: PreparationStage::Building,
+                target,
+                policy_request,
+            },
+        );
+    }
+
+    pub(super) fn aircraft_identity(&self) -> Option<[u8; 32]> {
+        self.active.as_ref().map(|bundle| bundle.aircraft_identity)
+    }
+
+    pub(super) fn select(&mut self, desired: Option<u32>) -> Vec<ApplicationRequest> {
+        self.desired = desired;
+        let mut requests = Vec::new();
+        let mut released = Vec::new();
+        for (&request_id, pending) in &mut self.pending {
+            if Some(request_id) == desired {
+                continue;
+            }
+            match pending.stage {
+                PreparationStage::Building => {
+                    pending.stage = PreparationStage::Cancelling;
+                    requests.push(ApplicationRequest::CancelResources { request_id });
+                }
+                PreparationStage::Candidate(resource_id) => {
+                    requests.push(ApplicationRequest::ReleaseResources { resource_id });
+                    released.push(request_id);
+                }
+                PreparationStage::Cancelling | PreparationStage::Committing(_) => {}
+            }
+        }
+        for request_id in released {
+            self.pending.remove(&request_id);
+        }
+        if desired.is_none()
+            && let Some(resource_id) = self.active_resource.take()
+        {
+            requests.push(ApplicationRequest::ReleaseResources { resource_id });
+        }
+        self.schedule_commit(&mut requests);
+        self.track_releases(&requests);
+        requests
+    }
+
+    pub(super) fn observe(
+        &mut self,
+        request_id: u32,
+        observation: ApplicationResourceObservation,
+    ) -> AssetCompletion {
+        let mut output = AssetCompletion::default();
+        match observation {
+            ApplicationResourceObservation::BindingLost { resource_id, cause } => {
+                if self.committing == Some(request_id) && self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Committing(id) if id == resource_id)) {
+                    let pending = self.pending.remove(&request_id).unwrap();
+                    self.committing = None;
+                    output.invalidated_renderer = Some(pending.target.renderer_resource_id);
+                    output.requests.push(ApplicationRequest::ReleaseResources { resource_id });
+                    output.failed = Some(pending.failed(request_id, cause));
+                }
+            }
+            ApplicationResourceObservation::Prepared { resource_id } => {
+                let protected = self.retired.contains(&resource_id) || self.active_resource == Some(resource_id) || self.pending.values().any(|pending| matches!(pending.stage, PreparationStage::Candidate(id) | PreparationStage::Committing(id) if id == resource_id));
+                if resource_id == 0 || protected {
+                    if self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Building)) {
+                        let pending = self.pending.remove(&request_id).unwrap();
+                        output.failed = Some(pending.failed(request_id, "描画資源の識別子が無効または重複している".to_owned()));
+                    }
+                    return output;
+                }
+                if self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Building | PreparationStage::Cancelling)) {
+                    output.prepared = Some((request_id, resource_id));
+                }
+                if let Some(pending) = self.pending.get_mut(&request_id) && matches!(pending.stage, PreparationStage::Building) && self.desired == Some(request_id) {
+                    pending.stage = PreparationStage::Candidate(resource_id);
+                } else {
+                    output.requests.push(ApplicationRequest::ReleaseResources { resource_id });
+                    if self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Building | PreparationStage::Cancelling)) { self.pending.remove(&request_id); }
+                }
+            }
+            ApplicationResourceObservation::Committed { resource_id, actual } => {
+                if self.committing == Some(request_id) && self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Committing(id) if id == resource_id)) {
+                    let pending = self.pending.remove(&request_id).unwrap();
+                    output.committed = Some(AssetCommit { request_id, target: pending.target, policy_request: pending.policy_request, actual });
+                    self.active = Some(pending.bundle);
+                    if let Some(previous) = self.active_resource.replace(resource_id) && previous != resource_id {
+                        output.requests.push(ApplicationRequest::ReleaseResources { resource_id: previous });
+                    }
+                    self.committing = None;
+                    if self.desired.is_none() {
+                        self.active_resource = None;
+                        output.requests.push(ApplicationRequest::ReleaseResources { resource_id });
+                    }
+                }
+            }
+            ApplicationResourceObservation::Failed { cause } => {
+                if let Some(pending) = self.pending.remove(&request_id) {
+                    if let PreparationStage::Candidate(resource_id) | PreparationStage::Committing(resource_id) = pending.stage {
+                        output.requests.push(ApplicationRequest::ReleaseResources { resource_id });
+                    }
+                    if self.committing == Some(request_id) { self.committing = None; }
+                    output.failed = Some(pending.failed(request_id, cause));
+                }
+            }
+            ApplicationResourceObservation::Cancelled => {
+                if self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Building | PreparationStage::Cancelling)) {
+                    let pending = self.pending.remove(&request_id).unwrap();
+                    output.failed = Some(pending.failed(request_id, "描画資源の準備が中止された".to_owned()));
+                }
+            }
+        }
+        self.track_releases(&output.requests);
+        output
+    }
+
+    pub(super) fn continue_commit(&mut self) -> Vec<ApplicationRequest> {
+        let mut requests = Vec::new();
+        self.schedule_commit(&mut requests);
+        requests
+    }
+
+    pub(super) fn has_policy_request(
+        &self,
+        target: ApplicationGraphicsTarget,
+        request: Option<ScreenRenderResourceRequest>,
+    ) -> bool {
+        self.pending.values().any(|pending| {
+            pending.target.renderer_resource_id == target.renderer_resource_id
+                && pending.policy_request == request
+                && !matches!(pending.stage, PreparationStage::Cancelling)
+        })
+    }
+
+    pub(super) fn released(&mut self, resource_id: u32, failed: bool) -> bool {
+        if !self.retired.contains(&resource_id) {
+            return false;
+        }
+        if !failed {
+            self.retired.remove(&resource_id);
+        }
+        true
+    }
+
+    fn track_releases(&mut self, requests: &[ApplicationRequest]) {
+        for request in requests {
+            if let ApplicationRequest::ReleaseResources { resource_id } = request {
+                self.retired.insert(*resource_id);
+            }
+        }
+    }
+
+    fn schedule_commit(&mut self, requests: &mut Vec<ApplicationRequest>) {
+        if self.committing.is_some() {
+            return;
+        }
+        if let Some(request_id) = self.desired
+            && let Some(pending) = self.pending.get_mut(&request_id)
+            && let PreparationStage::Candidate(resource_id) = pending.stage
+        {
+            pending.stage = PreparationStage::Committing(resource_id);
+            self.committing = Some(request_id);
+            requests.push(ApplicationRequest::CommitResources {
+                request_id,
+                resource_id,
+            });
+        }
+    }
+
+    fn bundles(&self) -> impl Iterator<Item = &PreparedAssets> {
+        self.active
+            .iter()
+            .chain(self.pending.values().map(|pending| &pending.bundle))
+    }
+}
+
+struct SnapshotCacheEntry {
+    byte_length: usize,
+    bytes: std::sync::Weak<[u8]>,
+}
+
+/// An owned immutable transfer view, tied to the exact CPU buffer revision.
+#[derive(Clone)]
+pub(super) struct BufferSnapshot {
+    pub buffer_id: u32,
+    pub revision: u32,
+    pub data_type: crate::ApplicationBufferType,
+    pub bytes: Arc<[u8]>,
+}
+
+impl AssetCatalog {
     pub(super) fn prepare(
         &mut self,
         revision: u32,
         selection: EnvironmentSelection,
         aircraft: &birdman_game_app::SelectedAircraft,
         target: ApplicationGraphicsTarget,
-        policy_request: Option<ScreenRenderResourceRequest>,
     ) -> Result<ApplicationEnvironmentAssets, ApplicationAssetError> {
         let aircraft_identity = aircraft.identity();
         if let std::collections::btree_map::Entry::Vacant(entry) =
@@ -312,22 +658,25 @@ impl AssetsOwner {
         let sky_condition =
             LakeSkyRenderCondition::try_from(metadata.sky).map_err(ApplicationAssetError::Sky)?;
         let existing_sky = self
-            .bundles()
-            .find(|bundle| bundle.sky.condition == sky_condition)
-            .map(|bundle| Arc::clone(&bundle.sky));
+            .skies
+            .iter()
+            .find(|sky| sky.condition == sky_condition)
+            .cloned();
         let sky = match existing_sky {
             Some(sky) => sky,
             None => {
                 let image = generate_lake_sky(sky_condition);
                 let size = [image.width(), image.height()];
-                Arc::new(SkyAsset {
+                let sky = Arc::new(SkyAsset {
                     condition: sky_condition,
                     image: self.image(
                         size,
                         ApplicationImageEncoding::SrgbRgba8,
                         image.into_rgba(),
                     )?,
-                })
+                });
+                self.skies.push(Arc::clone(&sky));
+                sky
             }
         };
         let wave = metadata.waves;
@@ -353,8 +702,8 @@ impl AssetsOwner {
             let configuration =
                 production_lake_detail_configs(condition).map_err(ApplicationAssetError::Water)?;
             let existing_detail = self
-                .bundles()
-                .filter_map(|bundle| bundle.detail.as_ref())
+                .details
+                .iter()
                 .find(|detail| detail.configuration == configuration)
                 .cloned();
             match existing_detail {
@@ -372,10 +721,12 @@ impl AssetsOwner {
                             image.into_rgba(),
                         )?);
                     }
-                    Some(Arc::new(DetailAssets {
+                    let detail = Arc::new(DetailAssets {
                         configuration,
                         images: images.try_into().unwrap_or_else(|_| unreachable!()),
-                    }))
+                    });
+                    self.details.push(Arc::clone(&detail));
+                    Some(detail)
                 }
             }
         };
@@ -444,178 +795,7 @@ impl AssetsOwner {
             },
             venue,
         };
-        self.pending.insert(
-            revision,
-            PendingAssets {
-                bundle: PreparedAssets {
-                    aircraft_identity,
-                    sunlight,
-                    sky,
-                    detail,
-                    venue_visible: venue.is_visible(),
-                },
-                stage: PreparationStage::Building,
-                target,
-                policy_request,
-            },
-        );
         Ok(output)
-    }
-
-    pub(super) fn select(&mut self, desired: Option<u32>) -> Vec<ApplicationRequest> {
-        self.desired = desired;
-        let mut requests = Vec::new();
-        let mut released = Vec::new();
-        for (&request_id, pending) in &mut self.pending {
-            if Some(request_id) == desired {
-                continue;
-            }
-            match pending.stage {
-                PreparationStage::Building => {
-                    pending.stage = PreparationStage::Cancelling;
-                    requests.push(ApplicationRequest::CancelResources { request_id });
-                }
-                PreparationStage::Candidate(resource_id) => {
-                    requests.push(ApplicationRequest::ReleaseResources { resource_id });
-                    released.push(request_id);
-                }
-                PreparationStage::Cancelling | PreparationStage::Committing(_) => {}
-            }
-        }
-        for request_id in released {
-            self.pending.remove(&request_id);
-        }
-        if desired.is_none()
-            && let Some(resource_id) = self.active_resource.take()
-        {
-            requests.push(ApplicationRequest::ReleaseResources { resource_id });
-        }
-        self.schedule_commit(&mut requests);
-        self.track_releases(&requests);
-        self.prune_geometry();
-        requests
-    }
-
-    pub(super) fn observe(
-        &mut self,
-        request_id: u32,
-        observation: ApplicationResourceObservation,
-    ) -> AssetCompletion {
-        let mut output = AssetCompletion::default();
-        match observation {
-            ApplicationResourceObservation::BindingLost { resource_id, cause } => {
-                if self.committing == Some(request_id) && self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Committing(id) if id == resource_id)) {
-                    let pending = self.pending.remove(&request_id).unwrap();
-                    self.committing = None;
-                    output.invalidated_renderer = Some(pending.target.renderer_resource_id);
-                    output.requests.push(ApplicationRequest::ReleaseResources { resource_id });
-                    output.failed = Some(pending.failed(request_id, cause));
-                }
-            }
-            ApplicationResourceObservation::Prepared { resource_id } => {
-                let protected = self.retired.contains(&resource_id) || self.active_resource == Some(resource_id) || self.pending.values().any(|pending| matches!(pending.stage, PreparationStage::Candidate(id) | PreparationStage::Committing(id) if id == resource_id));
-                if resource_id == 0 || protected {
-                    if self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Building)) {
-                        let pending = self.pending.remove(&request_id).unwrap();
-                        output.failed = Some(pending.failed(request_id, "描画資源の識別子が無効または重複している".to_owned()));
-                    }
-                    return output;
-                }
-                if let Some(pending) = self.pending.get_mut(&request_id) && matches!(pending.stage, PreparationStage::Building) && self.desired == Some(request_id) {
-                    pending.stage = PreparationStage::Candidate(resource_id);
-                } else {
-                    output.requests.push(ApplicationRequest::ReleaseResources { resource_id });
-                    if self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Building | PreparationStage::Cancelling)) { self.pending.remove(&request_id); }
-                }
-            }
-            ApplicationResourceObservation::Committed { resource_id, actual } => {
-                if self.committing == Some(request_id) && self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Committing(id) if id == resource_id)) {
-                    let pending = self.pending.remove(&request_id).unwrap();
-                    if let Some(geometry) = self.geometry.get_mut(&pending.bundle.aircraft_identity) { geometry.rebind(); }
-                    output.committed = Some(AssetCommit { request_id, target: pending.target, policy_request: pending.policy_request, actual });
-                    self.active = Some(pending.bundle);
-                    if let Some(previous) = self.active_resource.replace(resource_id) && previous != resource_id {
-                        output.requests.push(ApplicationRequest::ReleaseResources { resource_id: previous });
-                    }
-                    self.committing = None;
-                    if self.desired.is_none() {
-                        self.active_resource = None;
-                        output.requests.push(ApplicationRequest::ReleaseResources { resource_id });
-                    }
-                }
-            }
-            ApplicationResourceObservation::Failed { cause } => {
-                if let Some(pending) = self.pending.remove(&request_id) {
-                    if let PreparationStage::Candidate(resource_id) | PreparationStage::Committing(resource_id) = pending.stage {
-                        output.requests.push(ApplicationRequest::ReleaseResources { resource_id });
-                    }
-                    if self.committing == Some(request_id) { self.committing = None; }
-                    output.failed = Some(pending.failed(request_id, cause));
-                }
-            }
-            ApplicationResourceObservation::Cancelled => {
-                if self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Building | PreparationStage::Cancelling)) {
-                    let pending = self.pending.remove(&request_id).unwrap();
-                    output.failed = Some(pending.failed(request_id, "描画資源の準備が中止された".to_owned()));
-                }
-            }
-        }
-        self.track_releases(&output.requests);
-        self.prune_geometry();
-        output
-    }
-
-    pub(super) fn continue_commit(&mut self) -> Vec<ApplicationRequest> {
-        let mut requests = Vec::new();
-        self.schedule_commit(&mut requests);
-        requests
-    }
-
-    pub(super) fn has_policy_request(
-        &self,
-        target: ApplicationGraphicsTarget,
-        request: Option<ScreenRenderResourceRequest>,
-    ) -> bool {
-        self.pending.values().any(|pending| {
-            pending.target.renderer_resource_id == target.renderer_resource_id
-                && pending.policy_request == request
-                && !matches!(pending.stage, PreparationStage::Cancelling)
-        })
-    }
-
-    pub(super) fn released(&mut self, resource_id: u32, failed: bool) -> bool {
-        if !self.retired.contains(&resource_id) {
-            return false;
-        }
-        if !failed {
-            self.retired.remove(&resource_id);
-        }
-        true
-    }
-
-    fn track_releases(&mut self, requests: &[ApplicationRequest]) {
-        for request in requests {
-            if let ApplicationRequest::ReleaseResources { resource_id } = request {
-                self.retired.insert(*resource_id);
-            }
-        }
-    }
-
-    fn schedule_commit(&mut self, requests: &mut Vec<ApplicationRequest>) {
-        if self.committing.is_some() {
-            return;
-        }
-        if let Some(request_id) = self.desired
-            && let Some(pending) = self.pending.get_mut(&request_id)
-            && let PreparationStage::Candidate(resource_id) = pending.stage
-        {
-            pending.stage = PreparationStage::Committing(resource_id);
-            self.committing = Some(request_id);
-            requests.push(ApplicationRequest::CommitResources {
-                request_id,
-                resource_id,
-            });
-        }
     }
 
     pub(super) fn bytes(&self, buffer_id: u32) -> Option<&[u8]> {
@@ -624,19 +804,12 @@ impl AssetsOwner {
         {
             return Some(&image.bytes);
         }
-        for bundle in self.bundles() {
-            if bundle.sky.image.descriptor.buffer_id == buffer_id {
-                return Some(&bundle.sky.image.bytes);
-            }
-            if let Some(detail) = &bundle.detail {
-                for image in &detail.images {
-                    if image.descriptor.buffer_id == buffer_id {
-                        return Some(&image.bytes);
-                    }
-                }
-            }
-        }
-        None
+        self.skies
+            .iter()
+            .map(|sky| &sky.image)
+            .chain(self.details.iter().flat_map(|detail| &detail.images))
+            .find(|image| image.descriptor.buffer_id == buffer_id)
+            .map(|image| image.bytes.as_slice())
     }
 
     pub(super) fn buffer(&self, buffer_id: u32) -> Option<crate::ApplicationBufferSlice<'_>> {
@@ -651,33 +824,123 @@ impl AssetsOwner {
         pose: Option<birdman_game_presentation::render_pose::FlightRenderPose>,
         aircraft: &birdman_game_app::SelectedAircraft,
     ) -> Result<Option<crate::ApplicationGeometryFrame>, ApplicationAssetError> {
-        let Some(active) = &self.active else {
+        let id = aircraft.identity();
+        let Some(mut frame) = self
+            .geometry
+            .get_mut(&id)
+            .map(|geometry| geometry.project(pose, aircraft.definition()))
+            .transpose()?
+        else {
             return Ok(None);
         };
-        if active.aircraft_identity != aircraft.identity() {
-            return Ok(None);
+        if !frame.updates.is_empty() {
+            self.complete_updates
+                .insert(id, (frame.revision, frame.updates.clone()));
+        } else if let Some((revision, updates)) = self.complete_updates.get(&id)
+            && *revision == frame.revision
+        {
+            frame.updates = updates.clone();
         }
-        self.geometry
-            .get_mut(&active.aircraft_identity)
-            .map(|geometry| geometry.project(pose, aircraft.definition()))
-            .transpose()
+        Ok(Some(frame))
     }
 
-    fn prune_geometry(&mut self) {
-        let active = self.active.as_ref().map(|bundle| bundle.aircraft_identity);
-        self.geometry.retain(|identity, _| {
-            Some(*identity) == active
-                || self
-                    .pending
-                    .values()
-                    .any(|pending| pending.bundle.aircraft_identity == *identity)
-        });
+    pub(super) fn snapshot(
+        &mut self,
+        buffer_id: u32,
+    ) -> Result<BufferSnapshot, ApplicationAssetError> {
+        self.snapshots
+            .retain(|_, entry| entry.bytes.strong_count() > 0);
+        let revision = self
+            .geometry
+            .values()
+            .find_map(|geometry| geometry.buffer_revision(buffer_id))
+            .unwrap_or(0);
+        let source = self
+            .buffer(buffer_id)
+            .ok_or(ApplicationAssetError::BufferUnavailable)?;
+        let data_type = match source {
+            crate::ApplicationBufferSlice::U8(_) => crate::ApplicationBufferType::U8,
+            crate::ApplicationBufferSlice::F32(_) => crate::ApplicationBufferType::F32,
+            crate::ApplicationBufferSlice::U32(_) => crate::ApplicationBufferType::U32,
+        };
+        if let Some(cached) = self.snapshots.get(&(buffer_id, revision))
+            && let Some(bytes) = cached.bytes.upgrade()
+        {
+            return Ok(BufferSnapshot {
+                buffer_id,
+                revision,
+                data_type,
+                bytes,
+            });
+        }
+        let source = self
+            .buffer(buffer_id)
+            .ok_or(ApplicationAssetError::BufferUnavailable)?;
+        let length = match &source {
+            crate::ApplicationBufferSlice::U8(bytes) => bytes.len(),
+            crate::ApplicationBufferSlice::F32(values) => values
+                .len()
+                .checked_mul(4)
+                .ok_or(ApplicationAssetError::SnapshotBudgetExceeded)?,
+            crate::ApplicationBufferSlice::U32(values) => values
+                .len()
+                .checked_mul(4)
+                .ok_or(ApplicationAssetError::SnapshotBudgetExceeded)?,
+        };
+        let pinned: usize = self.snapshots.values().map(|entry| entry.byte_length).sum();
+        if length > crate::APPLICATION_RENDER_BUFFER_BYTES
+            || pinned
+                .checked_add(length)
+                .is_none_or(|sum| sum > crate::APPLICATION_RENDER_PINNED_BYTES)
+        {
+            return Err(ApplicationAssetError::SnapshotBudgetExceeded);
+        }
+        let bytes: Arc<[u8]> = source.to_bytes().into();
+        self.snapshots.insert(
+            (buffer_id, revision),
+            SnapshotCacheEntry {
+                byte_length: length,
+                bytes: Arc::downgrade(&bytes),
+            },
+        );
+        Ok(BufferSnapshot {
+            buffer_id,
+            revision,
+            data_type,
+            bytes,
+        })
     }
 
-    fn bundles(&self) -> impl Iterator<Item = &PreparedAssets> {
-        self.active
+    pub(super) fn rebind(&mut self, aircraft_identity: [u8; 32]) {
+        if let Some(geometry) = self.geometry.get_mut(&aircraft_identity) {
+            geometry.rebind();
+        }
+    }
+
+    pub(super) fn retain<'a>(&mut self, endpoints: impl Iterator<Item = &'a AssetsOwner>) {
+        let bundles: Vec<_> = endpoints.flat_map(|endpoint| endpoint.bundles()).collect();
+        let aircraft = bundles
             .iter()
-            .chain(self.pending.values().map(|pending| &pending.bundle))
+            .map(|bundle| bundle.aircraft_identity)
+            .collect();
+        let buffers = bundles.iter().flat_map(|bundle| bundle.image_ids).collect();
+        self.retain_referenced(&aircraft, &buffers);
+    }
+
+    pub(super) fn retain_referenced(
+        &mut self,
+        aircraft: &BTreeSet<[u8; 32]>,
+        buffers: &BTreeSet<u32>,
+    ) {
+        self.snapshots
+            .retain(|_, entry| entry.bytes.strong_count() > 0);
+        self.geometry.retain(|id, _| aircraft.contains(id));
+        self.skies
+            .retain(|sky| buffers.contains(&sky.image.descriptor.buffer_id));
+        self.details
+            .retain(|detail| buffers.contains(&detail.images[0].descriptor.buffer_id));
+        self.complete_updates
+            .retain(|id, _| self.geometry.contains_key(id));
     }
 
     fn image(
@@ -739,15 +1002,22 @@ mod tests {
     fn immutable_images_survive_serial_commits_and_obsolete_candidates_are_released() {
         let exhibition = EnvironmentSelection::exhibition().unwrap();
         let mut owner = AssetsOwner::default();
-        let first = owner
+        let mut catalog = AssetCatalog::default();
+        let first = catalog
             .prepare(
                 1,
                 exhibition,
                 &birdman_game_app::SelectedAircraft::bundled().unwrap(),
                 target(WaterQuality::High),
-                None,
             )
             .unwrap();
+        owner.offer(
+            1,
+            (&birdman_game_app::SelectedAircraft::bundled().unwrap()).identity(),
+            target(WaterQuality::High),
+            None,
+            &first,
+        );
         assert_eq!(first.water.detail_anisotropy_clamp, 8);
         let sky_id = first.sky.buffer_id;
         let scene = &first.scene;
@@ -772,7 +1042,7 @@ mod tests {
             }
         }
         let another = crate::geometry::GeometryOwner::prepare(
-            &mut owner.next_buffer_id,
+            &mut catalog.next_buffer_id,
             birdman_game_app::SelectedAircraft::bundled()
                 .unwrap()
                 .definition(),
@@ -803,7 +1073,8 @@ mod tests {
         );
         assert_eq!(first.water.geometry.near.len(), 16);
         let position = first.water.geometry.near[0].position;
-        let crate::ApplicationBufferSlice::F32(values) = owner.buffer(position.buffer_id).unwrap()
+        let crate::ApplicationBufferSlice::F32(values) =
+            catalog.buffer(position.buffer_id).unwrap()
         else {
             panic!("Expected native Float32 attributes");
         };
@@ -817,7 +1088,7 @@ mod tests {
         );
         let detail_id = first.water.detail[0].image.buffer_id;
         assert_eq!(
-            owner.bytes(sky_id).unwrap().len(),
+            catalog.bytes(sky_id).unwrap().len(),
             first.sky.size[0] as usize * first.sky.size[1] as usize * 4
         );
         assert!(owner.select(Some(1)).is_empty());
@@ -833,15 +1104,21 @@ mod tests {
                 resource_id: 101
             }]
         ));
-        let second = owner
+        let second = catalog
             .prepare(
                 2,
                 exhibition,
                 &birdman_game_app::SelectedAircraft::bundled().unwrap(),
                 target(WaterQuality::Low),
-                None,
             )
             .unwrap();
+        owner.offer(
+            2,
+            (&birdman_game_app::SelectedAircraft::bundled().unwrap()).identity(),
+            target(WaterQuality::Low),
+            None,
+            &second,
+        );
         assert_eq!(second.water.detail_anisotropy_clamp, 4);
         assert_eq!(first.water.detail_anisotropy_clamp, 8);
         assert_eq!(
@@ -885,7 +1162,8 @@ mod tests {
             committed.requests.as_slice(),
             [ApplicationRequest::ReleaseResources { resource_id: 101 }]
         ));
-        assert!(owner.bytes(sky_id).is_some());
+        catalog.retain(std::iter::once(&owner));
+        assert!(catalog.bytes(sky_id).is_some());
         let selection = HybridSessionPreparation::select_scenario(
             WeatherClass::Calm,
             birdman_game_app::DEFAULT_SESSION_SEED,
@@ -900,15 +1178,21 @@ mod tests {
             identity: identity_for_selection(selection).into(),
             ..exhibition
         };
-        let third = owner
+        let third = catalog
             .prepare(
                 3,
                 calm,
                 &birdman_game_app::SelectedAircraft::bundled().unwrap(),
                 target(WaterQuality::Low),
-                None,
             )
             .unwrap();
+        owner.offer(
+            3,
+            (&birdman_game_app::SelectedAircraft::bundled().unwrap()).identity(),
+            target(WaterQuality::Low),
+            None,
+            &third,
+        );
         assert_eq!(third.sky.buffer_id, sky_id);
         assert_eq!(
             third.lighting.sunlight_direction,
@@ -924,13 +1208,23 @@ mod tests {
         );
         assert!(third.venue.is_visible());
         let abandoned_id = third.water.detail[0].image.buffer_id;
+        let snapshot = catalog.snapshot(abandoned_id).unwrap();
+        let retained = Arc::downgrade(&snapshot.bytes);
+        let mut leases = crate::asset_leases::AssetLeases::default();
+        let lease = leases.insert_resource(
+            700,
+            target(WaterQuality::Low).renderer_resource_id,
+            3,
+            vec![snapshot],
+        );
         owner.select(Some(3));
         let cancelled = owner.select(None);
         assert!(cancelled.iter().any(|request| matches!(
             request,
             ApplicationRequest::CancelResources { request_id: 3 }
         )));
-        assert!(owner.bytes(abandoned_id).is_some());
+        catalog.retain(std::iter::once(&owner));
+        assert!(catalog.bytes(abandoned_id).is_some());
         let late = owner.observe(
             3,
             ApplicationResourceObservation::Prepared { resource_id: 103 },
@@ -939,19 +1233,36 @@ mod tests {
             late.requests.as_slice(),
             [ApplicationRequest::ReleaseResources { resource_id: 103 }]
         ));
-        assert!(owner.bytes(abandoned_id).is_none());
-        assert!(owner.bytes(detail_id).is_some());
+        let (request_id, resource_id) = late.prepared.expect("late prepared resource was admitted");
+        leases.prepared(request_id, resource_id);
+        catalog.retain(std::iter::once(&owner));
+        assert!(catalog.bytes(abandoned_id).is_none());
+        assert!(retained.upgrade().is_some());
+        assert!(leases.buffer(lease.lease_id, lease.buffers[0]).is_some());
+        assert!(owner.released(103, false));
+        let retired = leases.released(103);
+        assert_eq!(retired, [3]);
+        catalog.retain(std::iter::once(&owner));
+        assert!(retained.upgrade().is_none());
+        catalog.retain(std::iter::once(&owner));
+        assert!(catalog.bytes(detail_id).is_some());
         let mut replacement = target(WaterQuality::Low);
         replacement.renderer_resource_id += 1;
-        let replacement_assets = owner
+        let replacement_assets = catalog
             .prepare(
                 4,
                 exhibition,
                 &birdman_game_app::SelectedAircraft::bundled().unwrap(),
                 replacement,
-                None,
             )
             .unwrap();
+        owner.offer(
+            4,
+            (&birdman_game_app::SelectedAircraft::bundled().unwrap()).identity(),
+            replacement,
+            None,
+            &replacement_assets,
+        );
         let replacement_ids: BTreeSet<_> = replacement_assets
             .scene
             .meshes
@@ -992,9 +1303,16 @@ mod tests {
         let custom =
             birdman_game_app::SelectedAircraft::decode(serde_json::to_vec(&document).unwrap())
                 .unwrap();
-        let changed = owner
-            .prepare(5, exhibition, &custom, target(WaterQuality::Low), None)
+        let changed = catalog
+            .prepare(5, exhibition, &custom, target(WaterQuality::Low))
             .unwrap();
+        owner.offer(
+            5,
+            (&custom).identity(),
+            target(WaterQuality::Low),
+            None,
+            &changed,
+        );
         let original_meshes: BTreeSet<_> =
             first.scene.meshes.iter().map(|mesh| mesh.mesh_id).collect();
         assert!(
@@ -1017,12 +1335,12 @@ mod tests {
             .find(|mesh| mesh.name == cockpit.name)
             .unwrap();
         let Some(crate::ApplicationBufferSlice::F32(original_positions)) =
-            owner.buffer(cockpit.position.buffer_id)
+            catalog.buffer(cockpit.position.buffer_id)
         else {
             panic!("original geometry remains retained");
         };
         let Some(crate::ApplicationBufferSlice::F32(changed_positions)) =
-            owner.buffer(changed_cockpit.position.buffer_id)
+            catalog.buffer(changed_cockpit.position.buffer_id)
         else {
             panic!("candidate geometry remains retained");
         };
@@ -1035,16 +1353,23 @@ mod tests {
                 cause: "new aircraft preparation failed".to_owned(),
             },
         );
-        assert!(owner.buffer(obsolete).is_none());
-        let fallback = owner
+        catalog.retain(std::iter::once(&owner));
+        assert!(catalog.buffer(obsolete).is_none());
+        let fallback = catalog
             .prepare(
                 6,
                 exhibition,
                 &birdman_game_app::SelectedAircraft::bundled().unwrap(),
                 target(WaterQuality::Low),
-                None,
             )
             .unwrap();
+        owner.offer(
+            6,
+            (&birdman_game_app::SelectedAircraft::bundled().unwrap()).identity(),
+            target(WaterQuality::Low),
+            None,
+            &fallback,
+        );
         assert_eq!(
             fallback
                 .scene

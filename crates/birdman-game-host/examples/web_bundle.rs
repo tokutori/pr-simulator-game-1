@@ -24,6 +24,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     if !checkout.status.success() || String::from_utf8(checkout.stdout)?.trim() != source {
         return Err("Web bundle source differs from the current checkout".into());
     }
+    let status = Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=normal"])
+        .current_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .output()?;
+    if !status.status.success() || !status.stdout.is_empty() {
+        return Err("Versioned Web bundles require a clean fixed-source checkout".into());
+    }
     let manifest = write_web_bundle_manifest(&directory, &source, APPLICATION_CONTRACT_SHA256)?;
     println!("{}", manifest.display());
     Ok(())

@@ -21,37 +21,50 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
 
 /// TLS material explicitly selected by the host operator.
 #[derive(Clone, Debug)]
 pub struct HostTlsConfig {
+    /// PEM certificate chain presented by the HTTPS listener.
     pub certificate_chain_pem: PathBuf,
+    /// PEM private key corresponding to the certificate chain.
     pub private_key_pem: PathBuf,
 }
 
 /// A single HTTP/WebSocket listener and its verified distribution.
 #[derive(Clone)]
 pub struct HostListenConfig {
+    /// Native address to bind; port zero requests an ephemeral port.
     pub bind: SocketAddr,
+    /// Explicit HTTPS configuration; `None` selects HTTP.
     pub tls: Option<HostTlsConfig>,
+    /// Verified bytes matching the authority's bundle fingerprint.
     pub web: Arc<WebDistribution>,
 }
 
 /// Shared management projection consumed by both native front ends.
 #[derive(Clone)]
 pub struct HostManagementSnapshot {
+    /// Canonical application and peer state derived by the shared runtime.
     pub application: ApplicationServerSnapshot,
+    /// Actual address returned by the operating system after binding.
     pub listening: Option<SocketAddr>,
+    /// A listener's native socket and TLS preparation is pending.
     pub starting: bool,
+    /// The current listener uses HTTPS and WSS.
     pub https: bool,
+    /// Latest native I/O failure visible to the operator.
     pub diagnostic: Option<String>,
 }
 
 /// I/O lifecycle controls and typed commands to the shared authority.
 pub enum HostManagementCommand {
+    /// Prepare the selected distribution and begin accepting network peers.
     Start(HostListenConfig),
+    /// Close network peers and the listener while preserving the application.
     Stop,
+    /// Forward an explicit native operator command to the canonical authority.
     Application(ApplicationServerCommand),
 }
 
@@ -62,7 +75,11 @@ enum Event {
         network: Option<Arc<AtomicBool>>,
         reply: oneshot::Sender<Result<HostPeer, String>>,
     },
-    Receive(ApplicationPeerId, ApplicationNetworkMessage),
+    Receive(
+        ApplicationPeerId,
+        ApplicationNetworkMessage,
+        OwnedSemaphorePermit,
+    ),
     Transmitted(ApplicationPeerId, u64, Result<(), String>),
     Disconnect(ApplicationPeerId),
     Shutdown,
@@ -72,23 +89,80 @@ enum Event {
 #[derive(Clone)]
 pub struct HostServiceHandle {
     events: mpsc::Sender<Event>,
+    receive_budget: Arc<Semaphore>,
     snapshot: watch::Receiver<HostManagementSnapshot>,
     pub(crate) bootstrap_json: Arc<str>,
 }
 
 impl HostServiceHandle {
+    /// Read the latest shared native administration projection.
     pub fn snapshot(&self) -> HostManagementSnapshot {
         self.snapshot.borrow().clone()
     }
 
+    /// Submit a native management command without blocking the UI thread.
     pub fn administer(&self, command: HostManagementCommand) -> Result<(), String> {
         self.events
             .try_send(Event::Management(command))
             .map_err(|error| error.to_string())
     }
 
+    /// Allocate a raw in-process peer retained across network listener stops.
     pub async fn connect_local(&self) -> Result<HostPeer, String> {
         self.connect(None).await
+    }
+
+    /// Request an in-process peer and poll its raw completion from a native update loop.
+    pub fn request_local_peer(
+        &self,
+    ) -> Result<oneshot::Receiver<Result<HostPeer, String>>, String> {
+        let (reply, result) = oneshot::channel();
+        self.events
+            .try_send(Event::Connect {
+                network: None,
+                reply,
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(result)
+    }
+
+    /// Try native raw-message delivery, preserving unaccepted data for the caller.
+    pub fn try_receive(
+        &self,
+        peer: ApplicationPeerId,
+        message: ApplicationNetworkMessage,
+    ) -> Result<(), ApplicationNetworkMessage> {
+        let Some(length) = received_length(&message) else {
+            return Err(message);
+        };
+        let Ok(permit) = self
+            .receive_budget
+            .clone()
+            .try_acquire_many_owned(length as u32)
+        else {
+            return Err(message);
+        };
+        self.events
+            .try_send(Event::Receive(peer, message, permit))
+            .map_err(|error| match error.into_inner() {
+                Event::Receive(_, message, _) => message,
+                _ => unreachable!("raw receive event retained by the channel"),
+            })
+    }
+
+    /// Try a native transport acknowledgment without blocking an ECS update.
+    pub fn try_transmitted(
+        &self,
+        peer: ApplicationPeerId,
+        id: u64,
+        result: Result<(), String>,
+    ) -> Result<(), (u64, Result<(), String>)> {
+        self.events
+            .try_send(Event::Transmitted(peer, id, result))
+            .map_err(|error| match error.into_inner() {
+                Event::Transmitted(_, id, result) => (id, result),
+                _ => unreachable!("transport acknowledgment retained by the channel"),
+            })
     }
 
     pub(crate) async fn connect(
@@ -103,17 +177,49 @@ impl HostServiceHandle {
         result.await.map_err(|error| error.to_string())?
     }
 
+    /// Forward raw received data for admission by the shared authority.
     pub async fn receive(
         &self,
         peer: ApplicationPeerId,
         message: ApplicationNetworkMessage,
     ) -> Result<(), String> {
-        self.events
-            .send(Event::Receive(peer, message))
+        let length =
+            received_length(&message).ok_or("Raw peer message exceeds its receive limit")?;
+        let permit = self
+            .receive_budget
+            .clone()
+            .try_acquire_many_owned(length as u32)
+            .map_err(|_| "Raw peer receive byte budget is exhausted".to_owned())?;
+        self.receive_reserved(peer, message, permit).await
+    }
+
+    pub(crate) async fn reserve_receive(&self) -> Result<OwnedSemaphorePermit, String> {
+        // One source frame and its owned Runtime message coexist during conversion.
+        let bytes = 2 * birdman_game_runtime::APPLICATION_NETWORK_SERVER_TEXT_BYTES
+            .max(birdman_game_runtime::APPLICATION_NETWORK_BINARY_BYTES);
+        self.receive_budget
+            .clone()
+            .acquire_many_owned(bytes as u32)
             .await
             .map_err(|error| error.to_string())
     }
 
+    pub(crate) async fn receive_reserved(
+        &self,
+        peer: ApplicationPeerId,
+        message: ApplicationNetworkMessage,
+        permit: OwnedSemaphorePermit,
+    ) -> Result<(), String> {
+        if received_length(&message).is_none() {
+            return Err("Raw peer message exceeds its receive limit".to_owned());
+        }
+        self.events
+            .send(Event::Receive(peer, message, permit))
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    /// Report the actual transport result for one runtime-owned transmission.
     pub async fn transmitted(
         &self,
         peer: ApplicationPeerId,
@@ -126,15 +232,26 @@ impl HostServiceHandle {
             .map_err(|error| error.to_string())
     }
 
+    /// Notify the authority that a raw peer transport has ended.
     pub async fn disconnect(&self, peer: ApplicationPeerId) {
         let _ = self.events.send(Event::Disconnect(peer)).await;
+    }
+
+    /// Report native transport closure without awaiting from an ECS update.
+    pub fn try_disconnect(&self, peer: ApplicationPeerId) -> Result<(), String> {
+        self.events
+            .try_send(Event::Disconnect(peer))
+            .map_err(|error| error.to_string())
     }
 }
 
 /// One raw peer, with at most one unacknowledged transmission.
 pub struct HostPeer {
+    /// Resolves when the service retires this peer's raw transport.
     pub disconnected: oneshot::Receiver<()>,
+    /// Identifier allocated by the canonical authority.
     pub id: ApplicationPeerId,
+    /// At most one transmission awaits its explicit transport result.
     pub transmissions: mpsc::Receiver<ApplicationTransmission>,
 }
 
@@ -152,6 +269,7 @@ pub struct HostService {
 }
 
 impl HostService {
+    /// Start a dedicated native executor using the application's original clock epoch.
     pub fn new(
         server: ApplicationServer,
         epoch: Instant,
@@ -171,6 +289,9 @@ impl HostService {
         });
         let handle = HostServiceHandle {
             events,
+            receive_budget: Arc::new(Semaphore::new(
+                birdman_game_runtime::APPLICATION_NETWORK_IO_BYTE_BUDGET,
+            )),
             snapshot: snapshot_receiver,
             bootstrap_json,
         };
@@ -216,6 +337,7 @@ impl HostService {
             .map_err(|_| "Host I/O thread panicked".to_owned())?
     }
 
+    /// Obtain a shared command and raw I/O handle for native front ends.
     pub fn handle(&self) -> HostServiceHandle {
         self.handle.clone()
     }
@@ -283,6 +405,25 @@ async fn run(
                 } => None,
             }
         };
+        if listener
+            .as_ref()
+            .is_some_and(crate::http::HostListener::is_finished)
+        {
+            let mut stopped = listener.take().expect("finished listener");
+            let cause = stopped.terminal_cause().await;
+            let network: Vec<_> = peers
+                .iter()
+                .filter_map(|(id, delivery)| delivery.network.then_some(*id))
+                .collect();
+            for id in network {
+                peers.remove(&id);
+                let _ = server.disconnect(id, epoch.elapsed().as_secs_f64() * 1000.0);
+            }
+            snapshot.send_modify(|state| {
+                state.listening = None;
+                state.diagnostic = Some(cause);
+            });
+        }
         // Read completions before the authority evaluates deadlines against the same epoch.
         let mut result = Ok(());
         for completion in io.poll() {
@@ -294,11 +435,15 @@ async fn run(
         }
         match event {
             Some(Event::Shutdown) => {
-                listener.take();
-                if let Some(task) = starting.take() {
-                    task.abort();
-                }
                 peers.clear();
+                if let Err(error) = stop_listener(listener.take(), starting.take()).await {
+                    snapshot.send_modify(|state| state.diagnostic = Some(error.clone()));
+                    shutdown_error = Some(error);
+                }
+                snapshot.send_modify(|state| {
+                    state.listening = None;
+                    state.starting = false;
+                });
                 if let Err(error) = server.shutdown(epoch.elapsed().as_secs_f64() * 1000.0) {
                     let error = error.to_string();
                     snapshot.send_modify(|state| state.diagnostic = Some(error.clone()));
@@ -370,11 +515,6 @@ async fn run(
                 }
             }
             Some(Event::Management(HostManagementCommand::Stop)) => {
-                listener.take();
-                if let Some(task) = starting.take() {
-                    task.abort();
-                }
-                snapshot.send_modify(|state| state.starting = false);
                 let network: Vec<_> = peers
                     .iter()
                     .filter_map(|(id, delivery)| delivery.network.then_some(*id))
@@ -383,7 +523,11 @@ async fn run(
                     peers.remove(&id);
                     let _ = server.disconnect(id, epoch.elapsed().as_secs_f64() * 1000.0);
                 }
-                snapshot.send_modify(|state| state.listening = None);
+                result = stop_listener(listener.take(), starting.take()).await;
+                snapshot.send_modify(|state| {
+                    state.listening = None;
+                    state.starting = false;
+                });
             }
             Some(Event::Management(HostManagementCommand::Application(command))) => {
                 result = server
@@ -421,10 +565,11 @@ async fn run(
                     .map_err(|error| error.to_string());
                 let _ = reply.send(response);
             }
-            Some(Event::Receive(id, message)) => {
+            Some(Event::Receive(id, message, permit)) => {
                 result = server
                     .receive(id, epoch.elapsed().as_secs_f64() * 1000.0, message)
                     .map_err(|error| error.to_string());
+                drop(permit);
             }
             Some(Event::Transmitted(id, transmission, delivery)) => {
                 if !peers.contains_key(&id) {
@@ -493,4 +638,40 @@ async fn run(
         shutdown_error = Some(error);
     }
     shutdown_error.map_or(Ok(()), Err)
+}
+
+async fn stop_listener(
+    listener: Option<crate::http::HostListener>,
+    starting: Option<tokio::task::JoinHandle<Result<crate::http::HostListener, String>>>,
+) -> Result<(), String> {
+    let mut result = Ok(());
+    if let Some(listener) = listener {
+        result = listener.stop().await;
+    }
+    if let Some(preparation) = starting {
+        preparation.abort();
+        match preparation.await {
+            Ok(Ok(listener)) => {
+                result = result.and(listener.stop().await);
+            }
+            Ok(Err(error)) => result = Err(error),
+            Err(error) if error.is_cancelled() => {}
+            Err(error) => result = Err(error.to_string()),
+        }
+    }
+    result
+}
+
+fn received_length(message: &ApplicationNetworkMessage) -> Option<usize> {
+    let (length, maximum) = match message {
+        ApplicationNetworkMessage::Text(text) => (
+            text.len(),
+            birdman_game_runtime::APPLICATION_NETWORK_SERVER_TEXT_BYTES,
+        ),
+        ApplicationNetworkMessage::Binary(bytes) => (
+            bytes.len(),
+            birdman_game_runtime::APPLICATION_NETWORK_BINARY_BYTES,
+        ),
+    };
+    (length <= maximum).then_some(length)
 }

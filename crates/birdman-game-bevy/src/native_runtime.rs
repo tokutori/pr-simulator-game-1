@@ -23,10 +23,15 @@ pub(crate) struct NativeStorageResource(pub(crate) birdman_game_host::storage_io
 #[derive(Clone, Resource)]
 pub(crate) struct NativeRuntime(Arc<Mutex<ApplicationRuntime>>);
 
-pub(crate) enum NativeBuffer {
-    U8(Vec<u8>),
-    F32(Vec<f32>),
-    U32(Vec<u32>),
+/// Bytes copied from one admitted immutable upload lease before renderer work starts.
+pub(crate) struct NativeBuffers {
+    pub(crate) resource_epoch: u32,
+    buffers: BTreeMap<u32, Vec<u8>>,
+}
+impl NativeBuffers {
+    pub(crate) fn bytes(&self, id: u32) -> Option<&[u8]> {
+        self.buffers.get(&id).map(Vec::as_slice)
+    }
 }
 
 #[derive(Default, Resource)]
@@ -65,14 +70,30 @@ impl NativeRuntime {
     pub(crate) fn lock(&self) -> MutexGuard<'_, ApplicationRuntime> {
         self.0.lock().expect("Native application owner poisoned")
     }
-    pub(crate) fn asset_buffer(&self, id: u32) -> Option<NativeBuffer> {
-        use birdman_game_runtime::ApplicationBufferSlice;
+    pub(crate) fn buffers(
+        &self,
+        lease: &birdman_game_runtime::ApplicationAssetLease,
+    ) -> Result<NativeBuffers, String> {
         let runtime = self.lock();
-        Some(match runtime.asset_buffer(id)? {
-            ApplicationBufferSlice::U8(values) => NativeBuffer::U8(values.to_vec()),
-            ApplicationBufferSlice::F32(values) => NativeBuffer::F32(values.to_vec()),
-            ApplicationBufferSlice::U32(values) => NativeBuffer::U32(values.to_vec()),
-        })
+        lease
+            .buffers
+            .iter()
+            .map(|key| {
+                runtime
+                    .asset_bytes(lease.lease_id, key.buffer_id, key.revision)
+                    .map(|bytes| (key.buffer_id, bytes))
+                    .ok_or_else(|| {
+                        format!(
+                            "Upload lease {} buffer {}:{} is unavailable",
+                            lease.lease_id, key.buffer_id, key.revision
+                        )
+                    })
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()
+            .map(|buffers| NativeBuffers {
+                resource_epoch: lease.resource_epoch,
+                buffers,
+            })
     }
 }
 
@@ -385,6 +406,7 @@ fn admit_native(
 pub(crate) fn platform(world: &mut World) -> ApplicationPlatformObservation {
     let viewport = super::ui::viewport(world);
     ApplicationPlatformObservation {
+        location: None,
         gpu_timing_requested: world
             .get_resource::<super::screen_render::timing::TimingMode>()
             .is_some_and(|mode| mode.diagnostic_requested()),
@@ -768,6 +790,13 @@ fn apply_output(
                     .renderer_resource_id
                     .unwrap_or_else(|| super::world::platform(world).resource_id),
                 cause,
+            });
+        }
+        if let Some(lease) = &drawing.asset_lease {
+            queue.push_back(ApplicationInput::BuffersConsumed {
+                lease_id: lease.lease_id,
+                renderer_resource_id: lease.renderer_resource_id,
+                resource_epoch: lease.resource_epoch,
             });
         }
         world.resource_mut::<NativeIo>().drawing = Some(drawing);

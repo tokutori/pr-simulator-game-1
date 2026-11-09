@@ -15,7 +15,7 @@ use birdman_game_scene::mesh::{area_weighted_normals, write_area_weighted_normal
 use birdman_game_scene::prepared_scene::{PreparedAirframeFrame, PreparedScene};
 use birdman_game_scene::tail_geometry::TailMaterial;
 use birdman_game_scene::wing_geometry::WingMaterial;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Native borrowing view of the same buffer identity copied by the WASM adapter.
 pub enum ApplicationBufferSlice<'buffer> {
@@ -45,7 +45,7 @@ impl ApplicationBufferSlice<'_> {
 }
 
 /// Scalar element format of a shared upload buffer.
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ApplicationBufferType {
@@ -58,7 +58,7 @@ pub enum ApplicationBufferType {
 }
 
 /// Complete typed layout for a borrowed or copied GPU upload.
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationBufferDescriptor {
     /// Stable identity accepted by the common buffer accessor.
@@ -73,8 +73,29 @@ pub struct ApplicationBufferDescriptor {
     pub stride_bytes: u32,
 }
 
+impl ApplicationBufferDescriptor {
+    pub(super) fn validate(&self) -> Result<(), ApplicationAssetError> {
+        let width = match self.data_type {
+            ApplicationBufferType::U8 => 1u32,
+            ApplicationBufferType::F32 | ApplicationBufferType::U32 => 4,
+        };
+        let stride = width
+            .checked_mul(self.components)
+            .ok_or(ApplicationAssetError::BufferUnavailable)?;
+        let bytes = u64::from(self.count) * u64::from(stride);
+        if self.buffer_id == 0
+            || !(1..=4).contains(&self.components)
+            || self.stride_bytes != stride
+            || bytes > crate::APPLICATION_RENDER_BUFFER_BYTES as u64
+        {
+            return Err(ApplicationAssetError::BufferUnavailable);
+        }
+        Ok(())
+    }
+}
+
 /// Parent transform selected by shared physical or world placement.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ApplicationMeshAttachment {
@@ -91,7 +112,7 @@ pub enum ApplicationMeshAttachment {
 }
 
 /// Engine-independent final material values for a triangle range.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationMeshMaterial {
     /// Final material identity, unique across this application's asset lifetimes.
@@ -121,7 +142,7 @@ pub struct ApplicationMeshMaterial {
 }
 
 /// Static topology and final attributes for one scene mesh.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationMeshAsset {
     /// Stable drawing identity.
@@ -149,7 +170,7 @@ pub struct ApplicationMeshAsset {
 }
 
 /// Completed static RGBA image including its full linear-light mip chain.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationGeometryTexture {
     /// Concatenated RGBA8 mip levels, largest first.
@@ -161,7 +182,7 @@ pub struct ApplicationGeometryTexture {
 }
 
 /// Immutable registered meshes and completed wing images.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationGeometryAssets {
     /// Static triangle topology in common GPU attribute form.
@@ -171,7 +192,7 @@ pub struct ApplicationGeometryAssets {
 }
 
 /// Completed culling volume in water-local render axes.
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationWaterBounds {
     /// Inclusive minimum coordinates.
@@ -185,7 +206,7 @@ pub struct ApplicationWaterBounds {
 }
 
 /// One complete immutable water mesh and weather-expanded culling volume.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationWaterChunkAsset {
     /// Final render X/0/Z positions.
@@ -205,7 +226,7 @@ pub struct ApplicationWaterChunkAsset {
 }
 
 /// Complete water geometry selected by the shared quality policy.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationWaterGeometry {
     /// Sixteen near chunks, in row-major order.
@@ -217,7 +238,7 @@ pub struct ApplicationWaterGeometry {
 }
 
 /// One replacement attribute pair using retained mutable CPU buffers.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationMeshUpdate {
     /// Static mesh receiving these attributes.
@@ -229,7 +250,7 @@ pub struct ApplicationMeshUpdate {
 }
 
 /// Final local pose for an articulated mesh parent.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationMeshPose {
     /// Shared articulation parent.
@@ -239,7 +260,7 @@ pub struct ApplicationMeshPose {
 }
 
 /// Mutable attributes and articulation already resolved by the shared owner.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationGeometryFrame {
     /// Whether registered aircraft geometry is available for this source.
@@ -957,6 +978,13 @@ impl GeometryOwner {
             revision: self.revision,
             updates,
             part_poses,
+        })
+    }
+
+    pub(super) fn buffer_revision(&self, buffer_id: u32) -> Option<u32> {
+        self.buffers.get(&buffer_id).map(|buffer| match buffer {
+            Buffer::Wing(_) | Buffer::Structure(_) | Buffer::Normal(_) => self.revision,
+            _ => 0,
         })
     }
 

@@ -56,9 +56,13 @@ def write_json(path: Path, value) -> None:
 def require_source(root: Path, source_sha: str) -> None:
     if re.fullmatch(r"[0-9a-f]{40}", source_sha) is None:
         raise ValueError("source_sha must be a complete lowercase commit SHA")
-    actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True, encoding="utf-8").strip()
     if actual != source_sha:
         raise ValueError(f"checkout {actual} differs from requested source {source_sha}")
+    status = subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=normal"], cwd=root, text=True, encoding="utf-8")
+    if status:
+        raise ValueError("versioned Native packages require a clean fixed-source checkout")
 
 
 def binary_name(target: str) -> str:
@@ -193,7 +197,7 @@ def stage_binary(root: Path, binary: Path, server_binary: Path, target: str,
             "target": target,
             "binaries": binaries,
             "cargo_lock_sha256": digest(root / "Cargo.lock"),
-            "rustc": subprocess.check_output(["rustc", "-vV"], text=True).strip(),
+            "rustc": subprocess.check_output(["rustc", "-vV"], text=True, encoding="utf-8").strip(),
             "workflow_run": os.environ.get("NATIVE_WORKFLOW_RUN", "local"),
         }
         write_json(staging / "BUILD-INFO.json", metadata)
@@ -281,7 +285,7 @@ def append_source_form_notices(root: Path, source_sha: str, notice: Path, featur
 
 def generate_licenses(root: Path, cargo_about: Path, source_sha: str, output: Path, web: bool = False) -> None:
     require_source(root, source_sha)
-    version = subprocess.check_output([str(cargo_about), "--version"], text=True).strip()
+    version = subprocess.check_output([str(cargo_about), "--version"], text=True, encoding="utf-8").strip()
     if version != "cargo-about 0.9.2":
         raise ValueError(f"unexpected license tool: {version}")
     output.mkdir(parents=True, exist_ok=True)

@@ -75,6 +75,11 @@ impl ApplicationSession {
         self.flight_input.touch_generation()
     }
 
+    /// Allocates the next touch lease above the canonical retired generation floor.
+    pub fn next_flight_touch_generation(&self) -> Option<u32> {
+        self.flight_input.next_touch_generation()
+    }
+
     /// Retires held keyboard and touch controls while retaining the physical gamepad owner.
     pub fn retire_surface_flight_input(&mut self) {
         self.flight_input.retire_surface();

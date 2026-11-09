@@ -121,8 +121,9 @@ pub enum ApplicationGraphicsObservation {
 }
 
 /// Final desired resource configuration, independent of a confirmed commit counter.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
 pub struct ApplicationGraphicsTarget {
     /// Graphics context or device lifetime.
     pub renderer_resource_id: u32,

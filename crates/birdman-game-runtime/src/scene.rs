@@ -1,18 +1,16 @@
 use super::ApplicationRuntimeError;
 use birdman_game_app::{application::ApplicationSession, launch_venue};
 use birdman_game_core::SessionPhase;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use birdman_game_presentation::camera::{
-    CameraError, Pose, Quaternion, Vector3, camera_local_pose, compose_pose, flight_camera_pose,
-    flight_relative_pose, pilot_eye,
+    CameraError, Pose, Quaternion, Vector3, camera_local_pose, compose_pose, flight_relative_pose,
+    pilot_eye,
 };
 use birdman_game_presentation::game_ui::{
     GameUiFlightCamera, GameUiPresentationMode, GameUiReplayCamera, GameUiState, GameUiViewport,
 };
-use birdman_game_presentation::render_pose::{
-    FlightRenderPose, live_render_pose, prepared_render_pose,
-};
+use birdman_game_presentation::render_pose::{live_render_pose, prepared_render_pose};
 use birdman_game_presentation::replay_camera::replay_camera_view;
 use birdman_game_presentation::xr::{
     XrCameraMount, XrCameraRig, XrDepthRange, XrEye, XrReferenceFrame, XrTrackingOrigin,
@@ -82,15 +80,28 @@ pub(super) struct SceneContext<'a> {
 }
 
 /// Immutable accepted application values; tracking and display resources belong to the endpoint.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct SceneSource {
-    phase: SessionPhase,
-    aircraft: Option<FlightRenderPose>,
+    look_enabled: bool,
+    preparation_required: bool,
+    aircraft: Option<SceneAircraft>,
     world_from_aircraft: Pose,
     camera: CameraSource,
     pub(super) geometry: Option<crate::ApplicationGeometryFrame>,
-    pub(super) sunlight: Option<birdman_game_scene::lake_sky::LakeSunlight>,
+    pub(super) aircraft_identity: [u8; 32],
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SceneAircraft {
+    pilot_position_meters: f64,
+    initial_pilot_position_meters: f64,
+    simulation_time_seconds: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum CameraSource {
     Stationary {
         world_from_tracking: Pose,
@@ -106,10 +117,106 @@ enum CameraSource {
 }
 
 impl SceneSource {
+    pub(super) fn allows_look(phase: SessionPhase) -> bool {
+        matches!(
+            phase,
+            SessionPhase::FlightRunning
+                | SessionPhase::FlightPaused { .. }
+                | SessionPhase::Result
+                | SessionPhase::Replay
+                | SessionPhase::Attract
+        )
+    }
+    pub(super) fn look_enabled(&self) -> bool {
+        self.look_enabled
+    }
+
+    pub(super) fn requires_current_preparation(phase: SessionPhase) -> bool {
+        matches!(
+            phase,
+            SessionPhase::BriefingPreparing
+                | SessionPhase::BriefingReady
+                | SessionPhase::BriefingFailed { .. }
+        )
+    }
+    pub(super) fn preparation_required(&self) -> bool {
+        self.preparation_required
+    }
+
+    pub(super) fn validate(&self) -> Result<(), ApplicationRuntimeError> {
+        let invalid = || ApplicationRuntimeError::Camera(CameraError::InvalidPose);
+        compose_pose(Pose::IDENTITY, self.world_from_aircraft)
+            .map_err(ApplicationRuntimeError::Camera)?;
+        if let Some(aircraft) = self.aircraft
+            && (![
+                aircraft.pilot_position_meters,
+                aircraft.initial_pilot_position_meters,
+                aircraft.simulation_time_seconds,
+            ]
+            .into_iter()
+            .all(f64::is_finite)
+                || aircraft.simulation_time_seconds < 0.0)
+        {
+            return Err(invalid());
+        }
+        match self.camera {
+            CameraSource::Stationary {
+                world_from_tracking,
+            }
+            | CameraSource::Cinematic {
+                world_from_tracking,
+                ..
+            } => {
+                compose_pose(Pose::IDENTITY, world_from_tracking)
+                    .map_err(ApplicationRuntimeError::Camera)?;
+            }
+            CameraSource::Airframe {
+                pilot_eye_offset_frd_m,
+                ..
+            } => {
+                if self.aircraft.is_none()
+                    || !pilot_eye_offset_frd_m.into_iter().all(f64::is_finite)
+                {
+                    return Err(invalid());
+                }
+            }
+        }
+        if let CameraSource::Cinematic {
+            vertical_field_of_view_degrees,
+            ..
+        } = self.camera
+            && (!vertical_field_of_view_degrees.is_finite()
+                || !(0.0..180.0).contains(&vertical_field_of_view_degrees))
+        {
+            return Err(invalid());
+        }
+        if let Some(geometry) = &self.geometry {
+            for part in &geometry.part_poses {
+                compose_pose(Pose::IDENTITY, part.pose).map_err(ApplicationRuntimeError::Camera)?;
+            }
+            for update in &geometry.updates {
+                for descriptor in [update.position, update.normal] {
+                    descriptor
+                        .validate()
+                        .map_err(ApplicationRuntimeError::Assets)?;
+                    if !matches!(descriptor.data_type, crate::ApplicationBufferType::F32)
+                        || descriptor.components != 3
+                    {
+                        return Err(invalid());
+                    }
+                }
+                if update.position.count != update.normal.count {
+                    return Err(invalid());
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn capture(
         application: &ApplicationSession,
         ui: &GameUiState,
-        assets: &mut super::assets::AssetsOwner,
+        catalog: &mut super::assets::AssetCatalog,
     ) -> Result<Self, ApplicationRuntimeError> {
         let phase = application.core_session().snapshot().phase();
         let replay = if matches!(phase, SessionPhase::Replay | SessionPhase::Attract)
@@ -240,7 +347,7 @@ impl SceneSource {
                 .map_err(ApplicationRuntimeError::Camera)?,
             }
         };
-        let mut geometry = assets
+        let mut geometry = catalog
             .project_geometry(
                 aircraft,
                 application.aircraft().map_err(|cause| {
@@ -260,12 +367,20 @@ impl SceneSource {
             geometry.main_wing_visible = false;
         }
         Ok(Self {
-            phase,
-            aircraft,
+            preparation_required: Self::requires_current_preparation(phase),
+            look_enabled: Self::allows_look(phase),
+            aircraft: aircraft.map(|flight| SceneAircraft {
+                pilot_position_meters: flight.pilot_position_meters,
+                initial_pilot_position_meters: flight.initial_pilot_position_meters,
+                simulation_time_seconds: flight.simulation_time_seconds,
+            }),
             world_from_aircraft,
             camera,
             geometry,
-            sunlight: assets.sunlight(),
+            aircraft_identity: application
+                .aircraft()
+                .map_err(|_| ApplicationRuntimeError::Camera(CameraError::AircraftUnavailable))?
+                .identity(),
         })
     }
 }
@@ -330,17 +445,9 @@ impl SceneOwner {
         let mode = context
             .display
             .map_or(GameUiPresentationMode::Screen, |(mode, _)| mode);
-        let phase = context.source.phase;
         let aircraft = context.source.aircraft;
         let world_from_aircraft = context.source.world_from_aircraft;
-        if !matches!(
-            phase,
-            SessionPhase::FlightRunning
-                | SessionPhase::FlightPaused { .. }
-                | SessionPhase::Result
-                | SessionPhase::Replay
-                | SessionPhase::Attract
-        ) {
+        if !context.source.look_enabled {
             self.look = [0.0; 2];
         }
         let Some(display) = context.display else {
@@ -395,8 +502,18 @@ impl SceneOwner {
                 let eye = pilot_eye(*pilot_eye_offset_frd_m);
                 let mount = if *chase {
                     XrCameraMount::External {
-                        world_from_tracking: flight_camera_pose(&flight, true, look, eye)
+                        world_from_tracking: compose_pose(
+                            world_from_aircraft,
+                            camera_local_pose(
+                                eye,
+                                flight.pilot_position_meters,
+                                flight.initial_pilot_position_meters,
+                                true,
+                                look,
+                            )
                             .map_err(ApplicationRuntimeError::Camera)?,
+                        )
+                        .map_err(ApplicationRuntimeError::Camera)?,
                     }
                 } else {
                     XrCameraMount::Aircraft {

@@ -110,6 +110,10 @@ impl GameUiView {
 
     /// Resolves Back from the enabled navigation actions published by this view.
     pub fn back_action(&self) -> Option<GameUiAction> {
+        self.back_action.clone()
+    }
+
+    pub(super) fn resolve_back_action(&self) -> Option<GameUiAction> {
         self.panels
             .iter()
             .flat_map(|panel| &panel.controls)

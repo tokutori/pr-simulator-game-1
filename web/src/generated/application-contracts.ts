@@ -7,6 +7,146 @@ export type MenuFontStyle = "normal" | "italic";
  * Payload of one externally observed event.
  */
 export type ApplicationInput = {
+    readonly kind: "buffers_consumed";
+    /**
+     * Endpoint-issued drawing lease.
+     */
+    readonly lease_id: number;
+    /**
+     * Renderer lifetime copied from the drawing lease.
+     */
+    readonly renderer_resource_id: number;
+    /**
+     * Resource epoch copied from the drawing lease.
+     */
+    readonly resource_epoch: number;
+} | {
+    /**
+     * Raw response prefix including at most one byte beyond the issued budget.
+     */
+    readonly bytes: readonly number[];
+    /**
+     * Raw response media type.
+     */
+    readonly content_type?: string | null;
+    /**
+     * Raw transport or cancellation diagnostic.
+     */
+    readonly failure?: string | null;
+    readonly kind: "host_read";
+    /**
+     * Echoed owner-issued HTTP operation.
+     */
+    readonly request_id: number;
+    /**
+     * HTTP status, zero for a transport failure.
+     */
+    readonly status: number;
+} | {
+    /**
+     * Raw constructor or open failure.
+     */
+    readonly failure?: string | null;
+    readonly kind: "network_opened";
+    /**
+     * Echoed owner-issued socket lifetime.
+     */
+    readonly socket_id: number;
+} | {
+    readonly kind: "network_message";
+    /**
+     * Platform observed more source data than the issued receive budget.
+     */
+    readonly overflow: boolean;
+    /**
+     * Raw unparsed message or bounded prefix.
+     */
+    readonly payload: ApplicationNetworkData;
+    /**
+     * Owning socket lifetime.
+     */
+    readonly socket_id: number;
+} | {
+    /**
+     * Raw socket queue size.
+     */
+    readonly buffered_amount: number;
+    /**
+     * Raw send failure.
+     */
+    readonly cause?: string | null;
+    readonly kind: "network_send_observed";
+    /**
+     * The platform accepted the send call.
+     */
+    readonly queued: boolean;
+    /**
+     * Raw socket state, absent when its handle is no longer retained.
+     */
+    readonly ready_state?: number | null;
+    /**
+     * Echoed owner-issued send operation.
+     */
+    readonly send_id: number;
+    /**
+     * Owning socket lifetime.
+     */
+    readonly socket_id: number;
+} | {
+    /**
+     * Raw socket queue size.
+     */
+    readonly buffered_amount: number;
+    readonly kind: "network_observed";
+    /**
+     * Raw socket ready state.
+     */
+    readonly ready_state: number;
+    /**
+     * Owning socket lifetime.
+     */
+    readonly socket_id: number;
+} | {
+    /**
+     * Raw close API failure.
+     */
+    readonly cause?: string | null;
+    readonly kind: "network_close_observed";
+    /**
+     * The platform still retains the socket handle.
+     */
+    readonly present: boolean;
+    /**
+     * Raw socket ready state when present.
+     */
+    readonly ready_state?: number | null;
+    /**
+     * The close API call was accepted.
+     */
+    readonly requested: boolean;
+    /**
+     * Owning socket lifetime.
+     */
+    readonly socket_id: number;
+} | {
+    /**
+     * Raw peer or platform close code.
+     */
+    readonly code: number;
+    readonly kind: "network_closed";
+    /**
+     * Raw close reason.
+     */
+    readonly reason: string;
+    /**
+     * Owning socket lifetime.
+     */
+    readonly socket_id: number;
+    /**
+     * Raw clean-shutdown observation.
+     */
+    readonly was_clean: boolean;
+} | {
     readonly kind: "controller_io";
     /**
      * One bounded operation and its OS-completion timestamp.
@@ -505,6 +645,22 @@ export type ApplicationInput = {
      * Identity issued by this owner for the completed I/O operation.
      */
     readonly request_id: number;
+};
+/**
+ * Raw text or binary payload; protocol decoding belongs to the shared runtime.
+ */
+export type ApplicationNetworkData = {
+    readonly kind: "text";
+    /**
+     * Exact unparsed text.
+     */
+    readonly text: string;
+} | {
+    /**
+     * Exact observed bytes or bounded prefix.
+     */
+    readonly bytes: readonly number[];
+    readonly kind: "binary";
 };
 /**
  * Raw Native I/O completion, with actual OS-completion timestamps.
@@ -1907,6 +2063,92 @@ export type ApplicationLifecycle = "running" | "closing" | "drained";
  * Ordered platform operations produced by the application owner.
  */
 export type ApplicationRequest = {
+    /**
+     * Requested media type.
+     */
+    readonly accept: string;
+    readonly kind: "read_host";
+    /**
+     * Response-byte read budget.
+     */
+    readonly maximum_bytes: number;
+    /**
+     * Owner-issued HTTP operation.
+     */
+    readonly request_id: number;
+    /**
+     * Exact HTTP URL resolved by Rust.
+     */
+    readonly url: string;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "cancel_host_read";
+    /**
+     * Owner-issued HTTP operation.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "network_open";
+    /**
+     * Maximum binary payload, excluding the extra overflow observation byte.
+     */
+    readonly maximum_binary_bytes: number;
+    /**
+     * Maximum UTF-8 text payload, excluding the extra overflow observation byte.
+     */
+    readonly maximum_text_bytes: number;
+    /**
+     * Required application subprotocol.
+     */
+    readonly protocol: string;
+    /**
+     * Owner-issued socket lifetime.
+     */
+    readonly socket_id: number;
+    /**
+     * Exact validated WS or WSS endpoint.
+     */
+    readonly url: string;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "network_send";
+    /**
+     * Exact encoded packet.
+     */
+    readonly payload: ApplicationNetworkData;
+    /**
+     * Owner-issued send operation.
+     */
+    readonly send_id: number;
+    /**
+     * Owning socket lifetime.
+     */
+    readonly socket_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "observe_network";
+    /**
+     * Owning socket lifetime.
+     */
+    readonly socket_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    /**
+     * Browser-valid close code issued by Rust.
+     */
+    readonly code: number;
+    readonly kind: "network_close";
+    /**
+     * UTF-8 close reason, limited to 123 bytes.
+     */
+    readonly reason: string;
+    /**
+     * Owning socket lifetime.
+     */
+    readonly socket_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
     readonly kind: "controller_io";
     /**
      * Bounded open, exchange or terminal retirement operation.
@@ -2140,6 +2382,10 @@ export type ApplicationRequest = {
     readonly [k: string]: unknown | undefined;
 } | {
     /**
+     * Complete immutable bytes held through candidate and active resource retirement.
+     */
+    readonly asset_lease: ApplicationAssetLease;
+    /**
      * Revision-scoped CPU drawing data; image bytes use the common buffer channel.
      */
     readonly assets: ApplicationEnvironmentAssets;
@@ -2147,10 +2393,6 @@ export type ApplicationRequest = {
      * Active platform display resource receiving the scene.
      */
     readonly display_resource_id?: number | null;
-    /**
-     * Canonical environment to render.
-     */
-    readonly environment: EnvironmentIdentity;
     /**
      * Complete desired renderer configuration to prepare and bind atomically.
      */
@@ -2908,6 +3150,10 @@ export interface ApplicationPlatformObservation {
      */
     readonly gpu_timing_requested: boolean;
     /**
+     * Raw browser document location; absent for explicit local native execution.
+     */
+    readonly location?: ApplicationLocationObservation | null;
+    /**
      * Live renderer and its startup resources; None retires that lifetime and replacement uses a new creation identity.
      */
     readonly renderer?: ApplicationRendererObservation | null;
@@ -2965,6 +3211,19 @@ export interface PhoneSensorApiObservation {
      * Raw screen rotation, absent when the browser cannot provide it.
      */
     readonly screen_angle_degrees?: number | null;
+}
+/**
+ * Raw document location used to resolve same-origin host discovery.
+ */
+export interface ApplicationLocationObservation {
+    /**
+     * Browser's raw secure-context observation.
+     */
+    readonly secure_context: boolean;
+    /**
+     * Complete document URL supplied by the platform.
+     */
+    readonly url: string;
 }
 /**
  * Actual font resource and shaping locale reported by platform font I/O.
@@ -3063,6 +3322,10 @@ export interface ApplicationOutput {
  */
 export interface ApplicationDrawingOutput {
     /**
+     * Immutable drawing attributes; the consumer releases this scope after reading them.
+     */
+    readonly asset_lease?: ApplicationAssetLease | null;
+    /**
      * Shared display adjustment derived from the retained display settings.
      */
     readonly display: DisplayAdjustment;
@@ -3087,6 +3350,40 @@ export interface ApplicationDrawingOutput {
      */
     readonly ui: ApplicationUiProjection;
     readonly [k: string]: unknown | undefined;
+}
+/**
+ * Buffer scope retained for one drawing consumer or a complete GPU-resource lifetime.
+ */
+export interface ApplicationAssetLease {
+    /**
+     * Complete immutable buffer versions belonging to the operation.
+     */
+    readonly buffers: readonly ApplicationBufferKey[];
+    /**
+     * Endpoint-issued unique lease identity.
+     */
+    readonly lease_id: number;
+    /**
+     * Actual renderer lifetime receiving these bytes.
+     */
+    readonly renderer_resource_id: number;
+    /**
+     * Resource preparation or committed resource generation.
+     */
+    readonly resource_epoch: number;
+}
+/**
+ * Exact immutable version of one published drawing buffer.
+ */
+export interface ApplicationBufferKey {
+    /**
+     * Canonical buffer identity.
+     */
+    readonly buffer_id: number;
+    /**
+     * Accepted immutable content revision.
+     */
+    readonly revision: number;
 }
 /**
  * Color adjustment parameters derived once from the retained display settings.
@@ -5878,35 +6175,6 @@ export interface LakeMeshSpacingDomain {
     readonly [k: string]: unknown | undefined;
 }
 /**
- * Exact split-seed scenario identity used by aggregate resource preparation.
- */
-export interface EnvironmentIdentity {
-    /**
-     * Registered catalog version.
-     */
-    readonly catalog_version: number;
-    /**
-     * Environment content version.
-     */
-    readonly environment_version: number;
-    /**
-     * Scenario identifier; registry lookup applies its own nonzero constraint.
-     */
-    readonly scenario_id: number;
-    /**
-     * Scenario content version.
-     */
-    readonly scenario_version: number;
-    /**
-     * High 32 bits of the exact seed.
-     */
-    readonly seed_high: number;
-    /**
-     * Low 32 bits of the exact seed.
-     */
-    readonly seed_low: number;
-}
-/**
  * Final desired resource configuration, independent of a confirmed commit counter.
  */
 export interface ApplicationGraphicsTarget {
@@ -5948,5 +6216,4 @@ export interface ApplicationGraphicsTarget {
         number,
         number
     ];
-    readonly [k: string]: unknown | undefined;
 }

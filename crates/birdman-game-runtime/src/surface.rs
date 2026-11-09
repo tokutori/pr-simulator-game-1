@@ -537,10 +537,7 @@ impl SurfaceOwner {
                                 geometry: XrPanelGeometry {
                                     scope: XrMenuScope {
                                         scene: format!("{:?}", view.scene),
-                                        overlay: Some(format!(
-                                            "{:?}:{}",
-                                            view.active_overlay, view.selections.credits_open
-                                        )),
+                                        overlay: Some(view.interaction_scope.clone()),
                                         panel_id: panel.id.clone(),
                                     },
                                     anchor: panel.anchor,

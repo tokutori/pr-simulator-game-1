@@ -13,7 +13,8 @@ use axum::{
     routing::get,
 };
 use birdman_game_runtime::{
-    APPLICATION_NETWORK_PROTOCOL, ApplicationNetworkMessage, ApplicationNetworkPayload,
+    APPLICATION_NETWORK_BINARY_BYTES, APPLICATION_NETWORK_PROTOCOL,
+    APPLICATION_NETWORK_SERVER_TEXT_BYTES, ApplicationNetworkMessage, ApplicationNetworkPayload,
 };
 use futures_util::{SinkExt, StreamExt};
 use std::{
@@ -37,8 +38,8 @@ pub(crate) struct HostListener {
     pub address: SocketAddr,
     pub https: bool,
     active: Arc<AtomicBool>,
-    server: axum_server::Handle,
-    task: tokio::task::JoinHandle<std::io::Result<()>>,
+    server: axum_server::Handle<SocketAddr>,
+    task: Option<tokio::task::JoinHandle<std::io::Result<()>>>,
 }
 
 impl HostListener {
@@ -99,8 +100,34 @@ impl HostListener {
             https,
             server,
             active,
-            task,
+            task: Some(task),
         })
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.task.as_ref().is_some_and(|task| task.is_finished())
+    }
+
+    pub async fn terminal_cause(&mut self) -> String {
+        match self.task.take().expect("terminal listener task").await {
+            Ok(Err(error)) => error.to_string(),
+            Err(error) => error.to_string(),
+            Ok(Ok(())) => "HTTP listener terminated".to_owned(),
+        }
+    }
+
+    pub async fn stop(mut self) -> Result<(), String> {
+        self.active.store(false, Ordering::Release);
+        self.server.shutdown();
+        let Some(task) = self.task.take() else {
+            return Ok(());
+        };
+        task.abort();
+        match task.await {
+            Ok(result) => result.map_err(|error| error.to_string()),
+            Err(error) if error.is_cancelled() => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
     }
 }
 
@@ -108,7 +135,9 @@ impl Drop for HostListener {
     fn drop(&mut self) {
         self.active.store(false, Ordering::Release);
         self.server.shutdown();
-        self.task.abort();
+        if let Some(task) = &self.task {
+            task.abort();
+        }
     }
 }
 
@@ -163,9 +192,12 @@ async fn upgrade(
     if !same_origin(&headers, state.config.tls.is_some()) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    ws.protocols([APPLICATION_NETWORK_PROTOCOL])
-        .max_message_size(1_048_576)
-        .max_frame_size(1_048_576)
+    let ws = ws.protocols([APPLICATION_NETWORK_PROTOCOL]);
+    if ws.selected_protocol().is_none() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    ws.max_message_size(APPLICATION_NETWORK_SERVER_TEXT_BYTES.max(APPLICATION_NETWORK_BINARY_BYTES))
+        .max_frame_size(APPLICATION_NETWORK_SERVER_TEXT_BYTES.max(APPLICATION_NETWORK_BINARY_BYTES))
         .on_upgrade(move |socket| connection(socket, state.host, state.active))
         .into_response()
 }
@@ -193,6 +225,11 @@ fn same_origin(headers: &HeaderMap, https: bool) -> bool {
         return false;
     };
     origin.scheme() == scheme
+        && expected.username().is_empty()
+        && expected.password().is_none()
+        && expected.path() == "/"
+        && expected.query().is_none()
+        && expected.fragment().is_none()
         && origin.username().is_empty()
         && origin.password().is_none()
         && origin.path() == "/"
@@ -207,17 +244,28 @@ async fn connection(socket: WebSocket, host: HostServiceHandle, active: Arc<Atom
         return;
     };
     let (mut sink, mut stream) = socket.split();
+    let mut read_permit = None;
     loop {
         tokio::select! {
             _ = &mut peer.disconnected => break,
-            incoming = stream.next() => {
+            incoming = async {
+                if read_permit.is_none() { read_permit = Some(host.reserve_receive().await?); }
+                Ok::<_, String>(stream.next().await)
+            } => {
+                let Ok(incoming) = incoming else { break; };
                 let message = match incoming {
-                    Some(Ok(Message::Text(text))) if text.len() <= 1_048_576 => ApplicationNetworkMessage::Text(text.to_string()),
-                    Some(Ok(Message::Binary(bytes))) if bytes.len() <= 262_144 => ApplicationNetworkMessage::Binary(bytes.to_vec()),
+                    Some(Ok(Message::Text(text))) if text.len() <= APPLICATION_NETWORK_SERVER_TEXT_BYTES => ApplicationNetworkMessage::Text(text.to_string()),
+                    Some(Ok(Message::Binary(bytes))) if bytes.len() <= APPLICATION_NETWORK_BINARY_BYTES => ApplicationNetworkMessage::Binary(bytes.to_vec()),
                     Some(Ok(Message::Ping(_)|Message::Pong(_))) => continue,
                     _ => break,
                 };
-                if host.receive(peer.id, message).await.is_err() { break; }
+                let permit = read_permit.take().expect("read began with a byte reservation");
+                let delivery = host.receive_reserved(peer.id, message, permit);
+                let accepted = tokio::select! {
+                    _ = &mut peer.disconnected => false,
+                    result = delivery => result.is_ok(),
+                };
+                if !accepted { break; }
             }
             outgoing = peer.transmissions.recv() => {
                 let Some(outgoing) = outgoing else { break; };
@@ -267,6 +315,11 @@ mod tests {
         ] {
             headers.insert(header::ORIGIN, origin.parse().unwrap());
             assert_eq!(same_origin(&headers, false), accepted, "{origin}");
+        }
+        headers.insert(header::ORIGIN, "http://localhost:8080".parse().unwrap());
+        for host in ["user@localhost:8080", "localhost:8080/path"] {
+            headers.insert(header::HOST, host.parse().unwrap());
+            assert!(!same_origin(&headers, false), "{host}");
         }
     }
 }

@@ -87,7 +87,7 @@ impl From<birdman_game_core::SessionScenarioIdentity> for EnvironmentIdentity {
 }
 
 /// Owner whose selected environment is being observed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EnvironmentSource {
     /// Immutable title exhibition, independent of flight selection.
@@ -221,7 +221,7 @@ pub enum EnvironmentProjection {
 }
 
 /// Shared admission of the launch venue, independent of display resources.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EnvironmentVenueProjection {

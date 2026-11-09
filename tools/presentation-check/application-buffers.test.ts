@@ -24,26 +24,43 @@ function buffersFixture() {
   const mesh: ApplicationMeshAsset = { mesh_id: 7, name: "physical-upload-fixture", attachment: "aircraft", frustum_culled: false,
     local_pose: { position: { x: 0, y: 0, z: 0 }, orientation: { w: 1, x: 0, y: 0, z: 0 } },
     position, normal, index, uv, color: null, materials: [] };
-  const buffers = new ThreeApplicationBuffers(id => {
+  const read = (id: number): Uint8Array => {
     const values = bytes.get(id);
     if (values === undefined) throw new Error("Unavailable shared buffer");
     return values.slice();
-  });
-  return { bytes, descriptor, mesh, buffers };
+  };
+  const buffers = new ThreeApplicationBuffers(read);
+  return { bytes, descriptor, mesh, buffers, read };
 }
 
 describe("Shared GPU upload buffers", () => {
   it("copies little-endian attributes once and publishes complete reusable position/normal pairs", () => {
     const fixture = buffersFixture();
-    const { buffers, mesh, bytes, descriptor } = fixture;
+    const { buffers, mesh, bytes, descriptor, read } = fixture;
     try {
       const geometry = buffers.geometry(mesh);
       expect(buffers.geometry(mesh)).toBe(geometry);
       expect([...geometry.getIndex()?.array ?? []]).toEqual([0, 2, 1]);
       expect([...geometry.getAttribute("position").array]).toEqual([0, 0, 0, 1, 0, 0, 0, 0, 1]);
+      const candidateBytes = new Map([...bytes].map(([id, value]) => [id, value.slice()]));
+      const candidate = new ThreeApplicationBuffers(id => {
+        const value = candidateBytes.get(id);
+        if (value === undefined) throw new Error("Unavailable candidate buffer");
+        return value;
+      });
+      try {
+        const candidateGeometry = candidate.geometry(mesh);
+        expect(candidateGeometry.getAttribute("position")).not.toBe(geometry.getAttribute("position"));
+        const replacementBytes = bytes.get(mesh.position.buffer_id);
+        if (replacementBytes === undefined) throw new Error("Missing scoped position fixture");
+        new DataView(replacementBytes.buffer).setFloat32(0, 9, true);
+        buffers.update(geometry, { mesh_id: 7, position: mesh.position, normal: mesh.normal }, read);
+        expect(geometry.getAttribute("position").getX(0)).toBe(9);
+        expect(candidateGeometry.getAttribute("position").getX(0)).toBe(0);
+      } finally { candidate.dispose(); }
       const position = descriptor([0, -0.1, 0, 1, -0.1, 0, 0, -0.2, 1], 3);
       const normal = descriptor([0, 1, 0, 0, 1, 0, 0, 1, 0], 3);
-      buffers.update(geometry, { mesh_id: 7, position, normal });
+      buffers.update(geometry, { mesh_id: 7, position, normal }, read);
       const attribute = geometry.getAttribute("position");
       if (!(attribute instanceof BufferAttribute)) throw new Error("Unexpected interleaved upload");
       const array = attribute.array;
@@ -51,7 +68,7 @@ describe("Shared GPU upload buffers", () => {
       const positionBytes = bytes.get(position.buffer_id);
       if (positionBytes === undefined) throw new Error("Missing position upload");
       new DataView(positionBytes.buffer).setFloat32(4, -0.3, true);
-      buffers.update(geometry, { mesh_id: 7, position, normal });
+      buffers.update(geometry, { mesh_id: 7, position, normal }, read);
       expect(geometry.getAttribute("position")).toBe(attribute);
       expect(attribute.array).toBe(array);
       expect(attribute.version).toBe(version + 1);
@@ -68,7 +85,7 @@ describe("Shared GPU upload buffers", () => {
       enlargedNormal.set(normalBytes);
       bytes.set(normal.buffer_id, enlargedNormal);
       new DataView(positionBytes.buffer).setFloat32(4, -0.4, true);
-      expect(() => { buffers.update(geometry, { mesh_id: 7, position, normal: { ...normal, count: normal.count + 1 } }); }).toThrow("prepared topology");
+      expect(() => { buffers.update(geometry, { mesh_id: 7, position, normal: { ...normal, count: normal.count + 1 } }, read); }).toThrow("prepared topology");
       expect([...array]).toEqual(previous);
       expect(attribute.version).toBe(version + 1);
       expect(normalAttribute.array).toBe(normalArray);
@@ -76,7 +93,7 @@ describe("Shared GPU upload buffers", () => {
       expect(normalAttribute.version).toBe(normalVersion);
       const replacement = descriptor([2, 0, 0, 3, 0, 0, 2, 0, 1], 3);
       bytes.delete(normal.buffer_id);
-      expect(() => { buffers.update(geometry, { mesh_id: 7, position: replacement, normal }); }).toThrow("Unavailable shared buffer");
+      expect(() => { buffers.update(geometry, { mesh_id: 7, position: replacement, normal }, read); }).toThrow("Unavailable shared buffer");
       expect([...geometry.getAttribute("position").array]).toEqual(previous);
       expect(() => { buffers.geometry({ ...mesh, index: { ...mesh.index, buffer_id: replacement.buffer_id, components: 1 } }); }).toThrow("layout");
     } finally { buffers.dispose(); }

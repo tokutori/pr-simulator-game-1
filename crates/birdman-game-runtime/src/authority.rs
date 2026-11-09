@@ -5,12 +5,14 @@ use super::*;
 /// Owns the single application independently of any display or renderer lifetime.
 pub(super) struct ApplicationAuthority {
     pub(super) application: ApplicationSession,
+    pub(super) assets: assets::AssetCatalog,
     pub(super) ui: GameUiState,
+    pub(super) records: birdman_game_presentation::game_ui::GameUiStoredRecordPreview,
     pub(super) previous_frame_ms: Option<f64>,
     pub(super) controller_gamepads: Vec<FlightGamepadObservation>,
     pub(super) controller_wake: Option<(u32, f64)>,
     pub(super) controller_next_tick_ms: Option<f64>,
-    pub(super) next_request_id: u32,
+    pub(super) request_ids: request_ids::RequestIds,
     pub(super) replay_supported: bool,
     pub(super) observed_ms: f64,
     pub(super) storage: storage::StorageOwner,
@@ -19,15 +21,21 @@ pub(super) struct ApplicationAuthority {
 }
 
 impl ApplicationAuthority {
-    pub(super) fn new(application: ApplicationSession, replay_supported: bool) -> Self {
+    pub(super) fn new(
+        application: ApplicationSession,
+        replay_supported: bool,
+        request_ids: request_ids::RequestIds,
+    ) -> Self {
         Self {
             application,
+            assets: assets::AssetCatalog::default(),
             ui: GameUiState::default(),
+            records: Default::default(),
             previous_frame_ms: None,
             controller_gamepads: Vec::new(),
             controller_wake: None,
             controller_next_tick_ms: None,
-            next_request_id: 1,
+            request_ids,
             replay_supported,
             observed_ms: 0.0,
             storage: storage::StorageOwner::default(),
@@ -36,12 +44,320 @@ impl ApplicationAuthority {
         }
     }
 
+    pub(super) fn observe_replay_entry(&mut self, previous_phase: SessionPhase) {
+        if previous_phase != SessionPhase::Replay
+            && self.application.core_session().snapshot().phase() == SessionPhase::Replay
+        {
+            self.ui.replay_view = if self.application.replay_available() {
+                birdman_game_presentation::game_ui::GameUiReplayView::Cinematic
+            } else {
+                birdman_game_presentation::game_ui::GameUiReplayView::Analysis
+            };
+            self.ui.technical_open = false;
+        }
+    }
+    pub(super) fn execute_session(
+        &mut self,
+        command: birdman_game_app::application::SessionCommand,
+        readiness: BackendReadiness,
+    ) -> Result<(), ApplicationRuntimeError> {
+        let keyboard_change = matches!(
+            &command,
+            birdman_game_app::application::SessionCommand::SetKeyboardControls { .. }
+        );
+        let display_change = matches!(
+            &command,
+            birdman_game_app::application::SessionCommand::SetDisplaySettings { .. }
+        );
+        let previous_phase = self.application.core_session().snapshot().phase();
+        self.application
+            .execute(command, readiness)
+            .map_err(ApplicationRuntimeError::Application)?;
+        if keyboard_change {
+            self.storage
+                .keyboard_changed(self.application.keyboard_controls());
+        }
+        if display_change {
+            self.storage
+                .display_changed(self.application.display_settings());
+        }
+        self.observe_replay_entry(previous_phase);
+        self.previous_frame_ms = None;
+        Ok(())
+    }
+
+    pub(super) fn observe_io(
+        &mut self,
+        input: ApplicationInput,
+        arrival_valid: bool,
+        readiness: BackendReadiness,
+        focused: bool,
+        initializing: bool,
+        requests: &mut Vec<ApplicationRequest>,
+    ) -> Result<(Option<ApplicationInput>, Option<String>), ApplicationRuntimeError> {
+        let mut notification_result = None;
+        match input {
+            ApplicationInput::ControllerIo { observation } => {
+                self.application
+                    .observe_controller_io(observation, arrival_valid)
+                    .map_err(ApplicationRuntimeError::Application)?;
+                if arrival_valid {
+                    self.reconcile_controller_observation(self.observed_ms, readiness, focused)?;
+                }
+            }
+            ApplicationInput::ConfigurationLoaded {
+                document,
+                request_id,
+                completion,
+            } => {
+                let write_id = self.allocate_request()?;
+                let (selected, request) = self.storage.configuration_read_completed(
+                    document,
+                    request_id,
+                    completion,
+                    &self.application,
+                    write_id,
+                );
+                requests.extend(request);
+                if let Some(selected) = selected {
+                    selected
+                        .apply(&mut self.application)
+                        .map_err(ApplicationRuntimeError::Session)?;
+                }
+            }
+            ApplicationInput::ConfigurationSaved {
+                document,
+                request_id,
+                failure,
+            } => {
+                if let Some(selected) = self.storage.configuration_saved(
+                    document,
+                    request_id,
+                    failure,
+                    &self.application,
+                ) {
+                    selected
+                        .apply(&mut self.application)
+                        .map_err(ApplicationRuntimeError::Session)?;
+                }
+            }
+            ApplicationInput::KeyboardControlsLoaded {
+                request_id,
+                completion,
+            } => {
+                if let Some(settings) = self.storage.keyboard_loaded(request_id, completion)
+                    && !self.shutdown.closed()
+                    && initializing
+                    && matches!(
+                        self.application.core_session().snapshot().phase(),
+                        SessionPhase::Title | SessionPhase::FlightSetup
+                    )
+                {
+                    self.application
+                        .execute(
+                            birdman_game_app::application::SessionCommand::SetKeyboardControls {
+                                settings,
+                            },
+                            readiness,
+                        )
+                        .map_err(ApplicationRuntimeError::Application)?;
+                }
+            }
+            ApplicationInput::KeyboardControlsSaved {
+                request_id,
+                failure,
+            } => {
+                self.storage.keyboard_written(request_id, failure);
+            }
+            ApplicationInput::DisplaySettingsLoaded {
+                request_id,
+                completion,
+            } => {
+                if let Some(settings) = self.storage.display_loaded(request_id, completion)
+                    && !self.shutdown.closed()
+                    && initializing
+                    && matches!(
+                        self.application.core_session().snapshot().phase(),
+                        SessionPhase::Title
+                            | SessionPhase::FlightSetup
+                            | SessionPhase::FlightPaused { .. }
+                    )
+                {
+                    self.application
+                        .execute(
+                            birdman_game_app::application::SessionCommand::SetDisplaySettings {
+                                settings,
+                            },
+                            readiness,
+                        )
+                        .map_err(ApplicationRuntimeError::Application)?;
+                }
+            }
+            ApplicationInput::DisplaySettingsSaved {
+                request_id,
+                failure,
+            } => {
+                self.storage.display_written(request_id, failure);
+            }
+            ApplicationInput::RecordPreviewObserved {
+                request_id,
+                observation,
+            } => {
+                if let Some(items) =
+                    self.storage
+                        .preview_observed(request_id, observation, requests)
+                {
+                    self.records = items
+                        .into_iter()
+                        .map(
+                            |item| birdman_game_presentation::game_ui::GameUiStoredRecord {
+                                id: item.id,
+                                saved_at: item.saved_at,
+                                personal_best: item.personal_best,
+                            },
+                        )
+                        .collect::<Vec<_>>()
+                        .into();
+                }
+            }
+            ApplicationInput::DownloadCompleted {
+                request_id,
+                failure,
+            } => {
+                if let Some(notification) = self.storage.downloaded(request_id, failure) {
+                    notification_result = Some(notification);
+                }
+            }
+            ApplicationInput::RecordLoaded {
+                request_id,
+                completion,
+            } => {
+                let previous_phase = self.application.core_session().snapshot().phase();
+                if let Some(notification) =
+                    self.storage
+                        .loaded(request_id, completion, &mut self.application)
+                {
+                    notification_result = Some(notification);
+                }
+                self.observe_replay_entry(previous_phase);
+            }
+            ApplicationInput::RecordSaveOpened {
+                request_id,
+                unix_milliseconds,
+            } => {
+                requests.extend(self.storage.opened(request_id, unix_milliseconds));
+            }
+            ApplicationInput::RecordSaveObserved {
+                request_id,
+                observation,
+            } => {
+                self.storage
+                    .observe(request_id, observation, &self.application, requests);
+            }
+            input => return Ok((Some(input), None)),
+        }
+        Ok((None, notification_result))
+    }
+
+    pub(super) fn observe_wake(
+        &mut self,
+        request_id: u32,
+        observed_ms: f64,
+        focused: bool,
+    ) -> Result<(), ApplicationRuntimeError> {
+        if let Some((id, at_ms)) = self.controller_wake
+            && id == request_id
+        {
+            self.controller_wake = None;
+            if observed_ms >= at_ms {
+                self.application
+                    .observe_controller_deadline()
+                    .map_err(ApplicationRuntimeError::Application)?;
+                if !self.shutdown.closed()
+                    && self.application.controller_realtime()
+                    && self.application.core_session().snapshot().phase()
+                        == SessionPhase::FlightRunning
+                    && let Some(tick_at) = self.controller_next_tick_ms
+                    && observed_ms >= tick_at
+                {
+                    let next = tick_at
+                        + birdman_game_format::external_controller::HITL_INTERVAL_MILLISECONDS;
+                    if observed_ms > next {
+                        self.application
+                            .miss_controller_clock()
+                            .map_err(ApplicationRuntimeError::Application)?;
+                    } else {
+                        self.controller_next_tick_ms = Some(next);
+                        self.application.arm_controller_tick_deadline(next);
+                        self.application
+                            .advance_flight_frame(observed_ms, &self.controller_gamepads, focused)
+                            .map_err(ApplicationRuntimeError::Flight)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn request_storage_loads(
+        &mut self,
+        requests: &mut Vec<ApplicationRequest>,
+    ) -> Result<(), ApplicationRuntimeError> {
+        for document in [
+            ConfigurationDocumentKind::Aircraft,
+            ConfigurationDocumentKind::Controller,
+            ConfigurationDocumentKind::ControllerExecution,
+        ] {
+            if !self.shutdown.closed() && self.storage.configuration_needs_read(document) {
+                let request_id = self.allocate_request()?;
+                requests.push(self.storage.read_configuration(document, request_id));
+            }
+        }
+        if !self.shutdown.closed() && self.storage.keyboard_needs_read() {
+            let request_id = self.allocate_request()?;
+            requests.push(self.storage.read_keyboard(request_id));
+        }
+        if self.storage.keyboard_needs_write() {
+            let request_id = self.allocate_request()?;
+            requests.extend(self.storage.write_keyboard(request_id));
+        }
+        if !self.shutdown.closed() && self.storage.display_needs_read() {
+            let request_id = self.allocate_request()?;
+            requests.push(self.storage.read_display(request_id));
+        }
+        if self.storage.display_needs_write() {
+            let request_id = self.allocate_request()?;
+            requests.extend(self.storage.write_display(request_id));
+        }
+        Ok(())
+    }
+    pub(super) fn reconcile_storage(
+        &mut self,
+        records_available: bool,
+        requests: &mut Vec<ApplicationRequest>,
+    ) -> Result<(), ApplicationRuntimeError> {
+        if !self.shutdown.closed() {
+            self.storage.reconcile(&self.application);
+        }
+        if !self.shutdown.closed()
+            && records_available
+            && self.storage.needs_preview(&self.application)
+        {
+            let request_id = self.allocate_request()?;
+            requests.push(self.storage.begin_preview(request_id));
+        }
+        if !self.shutdown.closed()
+            && records_available
+            && self.storage.needs_save(&self.application)
+        {
+            let request_id = self.allocate_request()?;
+            requests.push(self.storage.begin(&self.application, request_id)?);
+        }
+        Ok(())
+    }
+
     pub(super) fn allocate_request(&mut self) -> Result<u32, ApplicationRuntimeError> {
-        let id = self.next_request_id;
-        self.next_request_id = id
-            .checked_add(1)
-            .ok_or(ApplicationRuntimeError::RequestExhausted)?;
-        Ok(id)
+        self.request_ids.allocate()
     }
 
     pub(super) fn synchronize_controller_wake(

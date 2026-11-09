@@ -6,7 +6,7 @@ use super::{
     PhoneMotionObservation, PhoneOrientationObservation, PhoneSensorApiObservation,
 };
 use birdman_game_app::application::{ApplicationError, FlightFrameError, XrVisibility};
-use birdman_game_app::environment_snapshot::{EnvironmentIdentity, EnvironmentSnapshotError};
+use birdman_game_app::environment_snapshot::EnvironmentSnapshotError;
 use birdman_game_core::GameSessionError;
 use birdman_game_presentation::camera::Pose;
 use birdman_game_presentation::game_ui::{
@@ -37,11 +37,41 @@ pub struct ApplicationCapabilities {
     pub flight_log_available: bool,
 }
 
+/// Raw document location used to resolve same-origin host discovery.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ApplicationLocationObservation {
+    /// Complete document URL supplied by the platform.
+    pub url: String,
+    /// Browser's raw secure-context observation.
+    pub secure_context: bool,
+}
+
+/// Raw text or binary payload; protocol decoding belongs to the shared runtime.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ApplicationNetworkData {
+    /// Unparsed UTF-8 text received from or queued to a socket.
+    Text {
+        #[doc = "Exact unparsed text."]
+        text: String,
+    },
+    /// Unparsed binary bytes received from or queued to a socket.
+    Binary {
+        #[doc = "Exact observed bytes or bounded prefix."]
+        bytes: Vec<u8>,
+    },
+}
+
 /// External metrics and API availability, without derived UI state.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationPlatformObservation {
+    /// Raw browser document location; absent for explicit local native execution.
+    pub location: Option<ApplicationLocationObservation>,
     /// Explicit GPU diagnostic demand, independent of automatic quality selection.
     pub gpu_timing_requested: bool,
     /// Live renderer and its startup resources; None retires that lifetime and replacement uses a new creation identity.
@@ -52,6 +82,32 @@ pub struct ApplicationPlatformObservation {
     pub viewport: GameUiViewport,
     /// Actual API and drawing support.
     pub capabilities: ApplicationCapabilities,
+}
+
+/// Exact immutable version of one published drawing buffer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ApplicationBufferKey {
+    /// Canonical buffer identity.
+    pub buffer_id: u32,
+    /// Accepted immutable content revision.
+    pub revision: u32,
+}
+
+/// Buffer scope retained for one drawing consumer or a complete GPU-resource lifetime.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ApplicationAssetLease {
+    /// Endpoint-issued unique lease identity.
+    pub lease_id: u32,
+    /// Actual renderer lifetime receiving these bytes.
+    pub renderer_resource_id: u32,
+    /// Resource preparation or committed resource generation.
+    pub resource_epoch: u32,
+    /// Complete immutable buffer versions belonging to the operation.
+    pub buffers: Vec<ApplicationBufferKey>,
 }
 
 /// Exact raw pointer identifier, preserving native 64-bit IDs at the JSON boundary.
@@ -201,6 +257,93 @@ pub struct ApplicationSpatialObservation {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationInput {
+    /// Ends a synchronous drawing consumer; resource leases retire through their resource I/O.
+    BuffersConsumed {
+        /// Endpoint-issued drawing lease.
+        lease_id: u32,
+        /// Renderer lifetime copied from the drawing lease.
+        renderer_resource_id: u32,
+        /// Resource epoch copied from the drawing lease.
+        resource_epoch: u32,
+    },
+    /// Raw HTTP discovery response or cancellation result.
+    HostRead {
+        /// Echoed owner-issued HTTP operation.
+        request_id: u32,
+        /// HTTP status, zero for a transport failure.
+        status: u16,
+        /// Raw response media type.
+        content_type: Option<String>,
+        /// Raw response prefix including at most one byte beyond the issued budget.
+        bytes: Vec<u8>,
+        /// Raw transport or cancellation diagnostic.
+        failure: Option<String>,
+    },
+    /// Raw completion of a socket open request.
+    NetworkOpened {
+        /// Echoed owner-issued socket lifetime.
+        socket_id: u32,
+        /// Raw constructor or open failure.
+        failure: Option<String>,
+    },
+    /// Raw socket message, with size overflow retained as an observation.
+    NetworkMessage {
+        /// Owning socket lifetime.
+        socket_id: u32,
+        /// Raw unparsed message or bounded prefix.
+        payload: ApplicationNetworkData,
+        /// Platform observed more source data than the issued receive budget.
+        overflow: bool,
+    },
+    /// A socket send call queued data or failed; peer acknowledgement is separate.
+    NetworkSendObserved {
+        /// Owning socket lifetime.
+        socket_id: u32,
+        /// Echoed owner-issued send operation.
+        send_id: u64,
+        /// The platform accepted the send call.
+        queued: bool,
+        /// Raw socket state, absent when its handle is no longer retained.
+        ready_state: Option<u8>,
+        /// Raw socket queue size.
+        buffered_amount: f64,
+        /// Raw send failure.
+        cause: Option<String>,
+    },
+    /// Requested raw socket-state probe.
+    NetworkObserved {
+        /// Owning socket lifetime.
+        socket_id: u32,
+        /// Raw socket ready state.
+        ready_state: u8,
+        /// Raw socket queue size.
+        buffered_amount: f64,
+    },
+    /// Raw result of requesting close; actual closure is notified separately.
+    NetworkCloseObserved {
+        /// Owning socket lifetime.
+        socket_id: u32,
+        /// The platform still retains the socket handle.
+        present: bool,
+        /// The close API call was accepted.
+        requested: bool,
+        /// Raw socket ready state when present.
+        ready_state: Option<u8>,
+        /// Raw close API failure.
+        cause: Option<String>,
+    },
+    /// Actual socket close event.
+    NetworkClosed {
+        /// Owning socket lifetime.
+        socket_id: u32,
+        /// Raw peer or platform close code.
+        code: u16,
+        /// Raw close reason.
+        reason: String,
+        /// Raw clean-shutdown observation.
+        was_clean: bool,
+    },
+
     /// Raw completion from the requested controller transport.
     ControllerIo {
         /// One bounded operation and its OS-completion timestamp.
@@ -542,6 +685,59 @@ pub enum ApplicationInput {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ApplicationRequest {
+    /// Reads the same-origin host descriptor without creating a local domain session.
+    ReadHost {
+        /// Owner-issued HTTP operation.
+        request_id: u32,
+        /// Exact HTTP URL resolved by Rust.
+        url: String,
+        /// Requested media type.
+        accept: String,
+        /// Response-byte read budget.
+        maximum_bytes: u32,
+    },
+    /// Cancels an outstanding host descriptor read.
+    CancelHostRead {
+        #[doc = "Owner-issued HTTP operation."]
+        request_id: u32,
+    },
+    /// Creates one socket lifetime with explicit receive limits.
+    NetworkOpen {
+        /// Owner-issued socket lifetime.
+        socket_id: u32,
+        /// Exact validated WS or WSS endpoint.
+        url: String,
+        /// Required application subprotocol.
+        protocol: String,
+        /// Maximum UTF-8 text payload, excluding the extra overflow observation byte.
+        maximum_text_bytes: u32,
+        /// Maximum binary payload, excluding the extra overflow observation byte.
+        maximum_binary_bytes: u32,
+    },
+    /// Queues one already-encoded packet to the owning socket.
+    NetworkSend {
+        /// Owning socket lifetime.
+        socket_id: u32,
+        /// Owner-issued send operation.
+        send_id: u64,
+        /// Exact encoded packet.
+        payload: ApplicationNetworkData,
+    },
+    /// Observes the raw ready state and buffered byte count.
+    ObserveNetwork {
+        #[doc = "Owning socket lifetime."]
+        socket_id: u32,
+    },
+    /// Requests closure while retaining queue ownership until the actual close event.
+    NetworkClose {
+        /// Owning socket lifetime.
+        socket_id: u32,
+        /// Browser-valid close code issued by Rust.
+        code: u16,
+        /// UTF-8 close reason, limited to 123 bytes.
+        reason: String,
+    },
+
     /// Requested controller I/O; executed outside the sole application owner lock.
     ControllerIo {
         /// Bounded open, exchange or terminal retirement operation.
@@ -696,14 +892,14 @@ pub enum ApplicationRequest {
     },
     /// Prepare scene resources for one confirmed display and environment.
     PrepareResources {
+        /// Complete immutable bytes held through candidate and active resource retirement.
+        asset_lease: ApplicationAssetLease,
         /// Revision-scoped CPU drawing data; image bytes use the common buffer channel.
         assets: Box<super::ApplicationEnvironmentAssets>,
         /// Complete desired renderer configuration to prepare and bind atomically.
         graphics: ApplicationGraphicsTarget,
         /// Owner-issued identity to echo in the completion.
         request_id: u32,
-        /// Canonical environment to render.
-        environment: EnvironmentIdentity,
         /// Active platform display resource receiving the scene.
         display_resource_id: Option<u32>,
     },
@@ -769,6 +965,8 @@ pub struct ApplicationDrawingPresentation {
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationDrawingOutput {
+    /// Immutable drawing attributes; the consumer releases this scope after reading them.
+    pub asset_lease: Option<ApplicationAssetLease>,
     /// Shared display adjustment derived from the retained display settings.
     pub display: birdman_game_app::display_settings::DisplayAdjustment,
     /// Final visibility decisions for drawing adapters.

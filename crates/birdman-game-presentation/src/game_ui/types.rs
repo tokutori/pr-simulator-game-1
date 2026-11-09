@@ -469,7 +469,8 @@ pub struct GameUiUpdate {
 }
 
 /// Browser or OS observations that never own game physics or phase.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GameUiPlatformInput {
     /// Current physical display viewport.
     pub viewport: GameUiViewport,
@@ -494,6 +495,7 @@ pub struct GameUiPlatformInput {
     /// Platform supports persisted record lookup.
     pub stored_records_available: bool,
     /// The shared record owner admits an explicit retry of the failed Title list.
+    #[serde(skip)]
     pub stored_records_retry_available: bool,
     /// Platform supports record downloads.
     pub flight_log_available: bool,
@@ -512,6 +514,7 @@ pub struct GameUiPlatformInput {
     /// Captured head-HUD resource failure, separate from the domain and physical state.
     pub head_hud_failure: Option<String>,
     /// Bounded newest-record preview; the persistence index and PB search remain separate.
+    #[serde(skip)]
     pub stored_records: GameUiStoredRecordPreview,
 }
 

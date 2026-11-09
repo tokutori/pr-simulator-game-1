@@ -4,16 +4,25 @@ use std::{net::SocketAddr, path::PathBuf};
 
 /// Startup paths and listener selected by the native operator.
 pub struct ServerOptions {
+    /// Native HTTP/HTTPS socket address.
     pub bind: SocketAddr,
+    /// Directory containing the fixed-source manifest and Web assets.
     pub web_root: PathBuf,
+    /// Native flight-record storage directory.
     pub records: PathBuf,
+    /// Optional PEM certificate chain for HTTPS.
     pub certificate: Option<PathBuf>,
+    /// Optional PEM private key for HTTPS.
     pub private_key: Option<PathBuf>,
 }
 
+/// CPU-only early output or a complete native administration invocation.
 pub enum ServerInvocation {
+    /// Print usage and exit before accessing assets or graphics.
     Help,
+    /// Print source provenance and exit before initializing the application.
     Version,
+    /// Open native administration with the parsed settings.
     Run(ServerOptions),
 }
 
@@ -67,6 +76,7 @@ pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<ServerInvoca
     Ok(ServerInvocation::Run(options))
 }
 
+/// Native administration usage printed by the early command-line path.
 pub const HELP: &str = "鳥人間滑空ゲーム 配信サーバー\n\
 使用方法: birdman-game-server [options]\n\
   --bind IP:PORT     待受アドレス（既定: 127.0.0.1:8080）\n\

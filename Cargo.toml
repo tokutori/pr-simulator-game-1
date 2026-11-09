@@ -25,6 +25,7 @@ birdman-game-presentation = { path = "crates/birdman-game-presentation" }
 birdman-game-runtime = { path = "crates/birdman-game-runtime" }
 birdman-game-scene = { path = "crates/birdman-game-scene" }
 libm = "=0.2.16"
+url = "=2.5.8"
 wasmi = { version = "=2.0.0", default-features = false, features = ["stable", "validate", "deterministic", "portable-dispatch", "prefer-btree-collections"] }
 wasmparser = { version = "=0.228.0", default-features = false }
 wasmi_core = { version = "=2.0.0", default-features = false }

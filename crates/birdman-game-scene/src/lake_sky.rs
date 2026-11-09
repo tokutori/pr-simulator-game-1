@@ -87,7 +87,7 @@ impl LakeSunlight {
 }
 
 /// Final sunlight placement and aircraft-following shadow volume in render-world axes.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct LakeSceneShadow {
     /// Directional light origin in render East/Up/negative-North metres.

@@ -76,6 +76,11 @@ pub struct GameUiStructureCache {
 }
 
 impl GameUiStructureCache {
+    /// Retires the current structure while preserving the monotonic publication revision.
+    pub fn invalidate(&mut self) {
+        self.key = None;
+    }
+
     /// Observes structural inputs and the application-owned record source, preserving Frame updates.
     pub fn observe(
         &mut self,

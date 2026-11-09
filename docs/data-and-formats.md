@@ -60,6 +60,7 @@
 ### Native同梱Web
 
 - 配布: 同じソースから生成したWeb成果物を1回用意し、通常Nativeと管理サーバーを含む6構成の各archiveへ`web/`として同梱する。公開Pagesも同じ相対baseのビルド設定を使用する。
+- 固定ソース: versioned配布は、追跡済み・未追跡のソース変更がないチェックアウトの完全なHEADを使用する。CIの生成物とダウンロード成果物は`target/`と`web/dist/`へ配置する。
 - Native来歴: `BUILD-INFO.json` schema 2は完全なsource SHA、application契約SHA-256、Cargo.lock、toolchain、各実行ファイルの名前・feature・SHA-256・CPU起動結果を持つ。
 - Web manifest: `web-bundle-manifest.json` schema 1は`source_sha`、`contract_sha256`、各ファイルの正規相対path・size・SHA-256・content_typeを持つ。manifest自身のSHA-256をHTTP bootstrapと配布metadataが保持する。
 - 契約指紋: runtimeが生成するplatform・observation・output・font probe／metricsのcanonical JSON schemaをSHA-256へ入力する。接続時にはWebSocketプロトコル版と完全なsource SHAも照合する。

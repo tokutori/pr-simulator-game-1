@@ -23,7 +23,7 @@ vi.mock("../../web/src/render/engines/three/application-renderer.js", () => ({
     readonly dispose = vi.fn();
     private readonly candidates = new Map<number, Prepare>();
     private readonly pending = new Map<number, { request: Prepare; cancelled: boolean }>();
-    constructor(_canvas: HTMLCanvasElement, private readonly id: number, _bytes: (id: number) => Uint8Array,
+    constructor(_canvas: HTMLCanvasElement, private readonly id: number, _bytes: (leaseId: number, id: number, revision: number) => Uint8Array,
       private readonly notify: (input: ApplicationInput) => void) { capture.driver = this; }
     observation(): ApplicationRendererObservation {
       capture.observation();
@@ -72,6 +72,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); capture.driver = 
 
 async function browserFixture(phoneSensors: "probe" | "permission" | null = null, xr?: XRSystem) {
   const browser = new Window({ url: "http://localhost/" });
+  Object.defineProperty(browser, "isSecureContext", { value: true });
   browser.innerWidth = 1280;
   browser.innerHeight = 720;
   browser.document.documentElement.lang = "ja";
