@@ -516,8 +516,10 @@ impl EnvironmentDocument {
         if input.len() > MAX_ENVIRONMENT_JSON_BYTES {
             return Err(EnvironmentFormatError::InputTooLarge);
         }
+        let text = crate::json_version::source_text(input)
+            .map_err(|_| EnvironmentFormatError::InvalidJson)?;
         let document: Self =
-            serde_json::from_slice(input).map_err(|_| EnvironmentFormatError::InvalidJson)?;
+            serde_json::from_str(text).map_err(|_| EnvironmentFormatError::InvalidJson)?;
         document.validate()?;
         Ok(document)
     }

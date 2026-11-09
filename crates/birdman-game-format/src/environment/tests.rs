@@ -379,13 +379,53 @@ fn wave_and_sky_ranges_are_checked_at_the_external_boundary() {
 #[test]
 fn bounded_codec_and_schema_versions_reject_unsupported_inputs() {
     let mut document = fixture();
+    let json = document.encode_json().unwrap();
+    let mut bytes = [b"\xef\xbb\xbf".as_slice(), &json].concat();
+    assert_eq!(EnvironmentDocument::decode_json(&bytes).unwrap(), document);
+    assert_eq!(
+        EnvironmentDocument::decode_json(&[b"\xef\xbb\xbf".as_slice(), &bytes].concat()),
+        Err(EnvironmentFormatError::InvalidJson)
+    );
+    for invalid in [b"\xef\xbb\xbf{".as_slice(), b"\xef\xbb\xbf\xff"] {
+        assert_eq!(
+            EnvironmentDocument::decode_json(invalid),
+            Err(EnvironmentFormatError::InvalidJson)
+        );
+    }
+    bytes.resize(MAX_ENVIRONMENT_JSON_BYTES, b' ');
+    assert_eq!(EnvironmentDocument::decode_json(&bytes).unwrap(), document);
+    bytes.push(b' ');
+    assert_eq!(
+        EnvironmentDocument::decode_json(&bytes),
+        Err(EnvironmentFormatError::InputTooLarge)
+    );
     document.schema_version = 0;
+    assert_eq!(
+        EnvironmentDocument::decode_json(
+            &[
+                b"\xef\xbb\xbf".as_slice(),
+                &serde_json::to_vec(&document).unwrap()
+            ]
+            .concat()
+        ),
+        Err(EnvironmentFormatError::UnsupportedSchemaVersion)
+    );
     assert_eq!(
         document.encode_json(),
         Err(EnvironmentFormatError::UnsupportedSchemaVersion)
     );
     document = fixture();
     document.environment_version = 0;
+    assert_eq!(
+        EnvironmentDocument::decode_json(
+            &[
+                b"\xef\xbb\xbf".as_slice(),
+                &serde_json::to_vec(&document).unwrap()
+            ]
+            .concat()
+        ),
+        Err(EnvironmentFormatError::InvalidIdentity)
+    );
     assert_eq!(
         document.validate(),
         Err(EnvironmentFormatError::InvalidIdentity)

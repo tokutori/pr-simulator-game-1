@@ -457,8 +457,8 @@ export class ThreeApplicationRenderer {
     sun.layers.enable(1);
     scene.add(ambient, sun, sun.target);
     const aircraft = new Group();
-    const attachments = { world: new Group(), aircraft, horizontal_tail: new Group(), vertical_tail: new Group() };
-    aircraft.add(attachments.horizontal_tail, attachments.vertical_tail);
+    const attachments = { world: new Group(), aircraft, main_wing: new Group(), horizontal_tail: new Group(), vertical_tail: new Group() };
+    aircraft.add(attachments.main_wing, attachments.horizontal_tail, attachments.vertical_tail);
     scene.add(attachments.world, aircraft);
     for (const asset of manifest.meshes) {
       let ranges = this.range_geometry.get(asset.mesh_id);
@@ -636,6 +636,7 @@ export class ThreeApplicationRenderer {
     for (const candidate of this.resources.values()) {
       setPose(candidate.aircraft, drawing.scene.world_from_aircraft);
       candidate.aircraft.visible = geometry?.aircraft_visible === true;
+      candidate.attachments.main_wing.visible = geometry?.main_wing_visible === true;
       candidate.attachments.world.visible = drawing.scene.venue_visible;
       for (const part of geometry?.part_poses ?? []) setPose(candidate.attachments[part.attachment], part.pose);
       setPose(candidate.water, drawing.scene.water_world_from_surface);

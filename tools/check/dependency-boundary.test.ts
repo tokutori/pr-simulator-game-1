@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertDependencyBoundary, assertNativeTextPatch, HOST_NUMERICAL_TEST_TARGET, NATIVE_LINUX_WINDOW_TARGET, NATIVE_OPENXR_TARGET, NATIVE_SCREEN_TARGET } from "./dependency-boundary.js";
+import { assertDependencyBoundary, assertNativePatches, HOST_NUMERICAL_TEST_TARGET, NATIVE_LINUX_WINDOW_TARGET, NATIVE_OPENXR_TARGET, NATIVE_SCREEN_TARGET } from "./dependency-boundary.js";
 
 const numericalDependency = {
   name: "nalgebra", kind: "dev", target: HOST_NUMERICAL_TEST_TARGET, req: "=0.35.0",
@@ -219,28 +219,28 @@ describe("Cargo dependency boundary", () => {
       }
     }
   );
-  it("limits the native text patch to its excluded vendor directory", () => {
-    expect(() => { assertNativeTextPatch({
-      workspace: { exclude: ["vendor/parley"] },
-      patch: { "crates-io": { parley: { path: "vendor/parley" } } }
-    }); }).not.toThrow();
+  const nativePatchManifest = {
+    workspace: { exclude: ["vendor/parley", "vendor/bevy_mod_openxr", "vendor/openxr"] },
+    patch: { "crates-io": {
+      parley: { path: "vendor/parley" },
+      bevy_mod_openxr: { path: "vendor/bevy_mod_openxr" },
+      openxr: { path: "vendor/openxr" }
+    } }
+  };
+  it("limits native patches to their excluded vendor directories", () => {
+    expect(() => { assertNativePatches(nativePatchManifest); }).not.toThrow();
   });
-
-  it.each([
-    { path: "../parley" }, { git: "https://example.invalid/parley" },
-    { path: "vendor/parley", git: "https://example.invalid/parley" }
-  ])("rejects a different native text replacement %j", (replacement) => {
-    expect(() => { assertNativeTextPatch({
-      workspace: { exclude: ["vendor/parley"] },
-      patch: { "crates-io": { parley: replacement } }
-    }); }).toThrow("Invalid native text segmentation backport");
-  });
-
-  it("keeps the native text dependency outside workspace members", () => {
-    expect(() => { assertNativeTextPatch({
-      workspace: { exclude: [] },
-      patch: { "crates-io": { parley: { path: "vendor/parley" } } }
-    }); }).toThrow("Invalid native text segmentation backport");
+  it.each(["parley", "bevy_mod_openxr", "openxr"])("rejects replacement and membership changes for %s", (name) => {
+    for (const kind of ["path", "git", "extra", "missing", "exclude"]) {
+      const manifest = structuredClone(nativePatchManifest);
+      const patches: Record<string, unknown> = manifest.patch["crates-io"];
+      if (kind === "path") patches[name] = { path: `../${name}` };
+      if (kind === "git") patches[name] = { git: `https://example.invalid/${name}` };
+      if (kind === "extra") patches[name] = { path: `vendor/${name}`, version: "=0.0.0" };
+      if (kind === "missing") Reflect.deleteProperty(patches, name);
+      if (kind === "exclude") manifest.workspace.exclude = manifest.workspace.exclude.filter(path => path !== `vendor/${name}`);
+      expect(() => { assertNativePatches(manifest); }, `${name}: ${kind}`).toThrow(`Invalid native dependency patch: ${name}`);
+    }
   });
 
   it("preserves the existing product dependency whitelist", () => {

@@ -51,7 +51,7 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 - 依存の版とfeatureは`Cargo.toml`・`Cargo.lock`を正本とする。
 - coreの数値依存は`libm`と`polycool`である。登録機体の局所線型化試験はcontentに置き、`nalgebra`をdesktopの検証用dev-dependencyに限定する。
 - 証明用`vstd`とschema生成用`schemars`は明示的な非default featureとし、通常のnative/WASM実行経路へ有効化しない。
-- Parleyのlocal patchはnative日本語組版に限定し、`vendor/parley`を独立したworkspace memberへ追加しない。
+- Nativeのlocal patchは`vendor/parley`・`vendor/bevy_mod_openxr`・`vendor/openxr`への単一path指定とし、`workspace.exclude`で依存元のworkspaceから分離する。Parleyは日本語組版、XR patchはswapchain資源の所有とOpenXRの元status保持を担い、依存境界検査は置換先とworkspace除外を確認する。
 - NativeのGPU I/Oは描画engineと同じ完全固定版の`wgpu`をdesktop targetへ限定し、default featureと追加featureを有効化せずに直接使用する。
 
 - 依存境界検査は設計上の禁止依存・feature・対象platformを検査する。

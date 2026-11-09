@@ -86,7 +86,7 @@ struct Candidate {
     stage: ResourceStage,
     target: ApplicationGraphicsTarget,
     root: Entity,
-    attachments: [Entity; 4],
+    attachments: [Entity; 5],
     preview: Entity,
     reflection_camera: Entity,
     water_root: Entity,
@@ -489,6 +489,7 @@ fn attachment_index(attachment: ApplicationMeshAttachment) -> usize {
     match attachment {
         ApplicationMeshAttachment::World => 0,
         ApplicationMeshAttachment::Aircraft => 1,
+        ApplicationMeshAttachment::MainWing => 4,
         ApplicationMeshAttachment::HorizontalTail => 2,
         ApplicationMeshAttachment::VerticalTail => 3,
     }
@@ -1173,6 +1174,19 @@ pub(crate) fn submit(
                         .geometry
                         .as_ref()
                         .is_some_and(|geometry| geometry.aircraft_visible)
+                {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                },
+            );
+            world.entity_mut(candidate.attachments[4]).insert(
+                if preparing
+                    || drawing
+                        .scene
+                        .geometry
+                        .as_ref()
+                        .is_some_and(|geometry| geometry.main_wing_visible)
                 {
                     Visibility::Inherited
                 } else {
@@ -2023,6 +2037,10 @@ mod tests {
         let preparation_culling = candidate.preparation_culling.clone();
         assert!(!preparation_culling.is_empty());
         let attachments = candidate.attachments;
+        assert_eq!(
+            world.get::<ChildOf>(attachments[4]).unwrap().parent(),
+            attachments[1]
+        );
         direct_gpu.candidates.insert(41, candidate);
         world.insert_resource(direct_gpu);
         let venue_visible = drawing.scene.venue_visible;
@@ -2035,9 +2053,9 @@ mod tests {
                 .unwrap()
                 .stage = stage;
             submit(&mut world, &runtime, &drawing).unwrap();
-            for attachment in &attachments[..2] {
+            for attachment in [attachments[0], attachments[1], attachments[4]] {
                 assert_eq!(
-                    world.get::<Visibility>(*attachment),
+                    world.get::<Visibility>(attachment),
                     Some(&Visibility::Inherited)
                 );
             }
@@ -2079,9 +2097,9 @@ mod tests {
             );
         world.insert_resource(direct_gpu);
         submit(&mut world, &runtime, &drawing).unwrap();
-        for attachment in &attachments[..2] {
+        for attachment in [attachments[0], attachments[1], attachments[4]] {
             assert_eq!(
-                world.get::<Visibility>(*attachment),
+                world.get::<Visibility>(attachment),
                 Some(&Visibility::Hidden)
             );
         }
@@ -2102,9 +2120,9 @@ mod tests {
         drawing.presentation.scene_visible = false;
         submit(&mut world, &runtime, &drawing).unwrap();
         let hidden_root = world.resource::<NativeGpu>().candidates[&41].root;
-        for attachment in &attachments[..2] {
+        for attachment in [attachments[0], attachments[1], attachments[4]] {
             assert_eq!(
-                world.get::<Visibility>(*attachment),
+                world.get::<Visibility>(attachment),
                 Some(&Visibility::Hidden)
             );
         }
@@ -2115,6 +2133,36 @@ mod tests {
         );
         assert!(world.get::<Camera>(main).unwrap().is_active);
         drawing.presentation.scene_visible = scene_visible;
+        drawing.scene.geometry = Some(birdman_game_runtime::ApplicationGeometryFrame {
+            aircraft_visible: true,
+            main_wing_visible: false,
+            revision: 0,
+            updates: Vec::new(),
+            part_poses: [
+                ApplicationMeshAttachment::HorizontalTail,
+                ApplicationMeshAttachment::VerticalTail,
+            ]
+            .map(|attachment| birdman_game_runtime::ApplicationMeshPose {
+                attachment,
+                pose: birdman_game_presentation::camera::Pose::IDENTITY,
+            }),
+        });
+        submit(&mut world, &runtime, &drawing).unwrap();
+        assert_eq!(
+            world.get::<Visibility>(attachments[1]),
+            Some(&Visibility::Inherited)
+        );
+        assert_eq!(
+            world.get::<Visibility>(attachments[4]),
+            Some(&Visibility::Hidden)
+        );
+        drawing.scene.geometry.as_mut().unwrap().main_wing_visible = true;
+        submit(&mut world, &runtime, &drawing).unwrap();
+        assert_eq!(
+            world.get::<Visibility>(attachments[4]),
+            Some(&Visibility::Inherited)
+        );
+        drawing.scene.geometry = None;
 
         let mut direct_gpu = world.remove_resource::<NativeGpu>().unwrap();
         let mut scaled = direct_gpu

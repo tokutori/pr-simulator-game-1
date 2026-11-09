@@ -949,7 +949,7 @@ export type GameUiPresentationMode = "screen" | "hmd" | "phone_vr";
 /**
  * Parent transform selected by shared physical or world placement.
  */
-export type ApplicationMeshAttachment = "world" | "aircraft" | "horizontal_tail" | "vertical_tail";
+export type ApplicationMeshAttachment = "world" | "aircraft" | "main_wing" | "horizontal_tail" | "vertical_tail";
 /**
  * Scalar element format of a shared upload buffer.
  */
@@ -3399,6 +3399,10 @@ export interface ApplicationGeometryFrame {
      * Whether registered aircraft geometry is available for this source.
      */
     readonly aircraft_visible: boolean;
+    /**
+     * Whether an accepted structural coefficient permits main-wing imagery.
+     */
+    readonly main_wing_visible: boolean;
     /**
      * Final horizontal and vertical tail transforms.
      *

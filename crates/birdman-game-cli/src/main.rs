@@ -122,12 +122,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn controller_command_uses_independent_diagnostics_and_the_explicit_aircraft_pair() {
+    fn document_commands_admit_source_text_and_report_pair_diagnostics() {
         let directory =
             std::env::temp_dir().join(format!("birdman-controller-cli-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
         let controller_path = directory.join("controller.json");
         let aircraft_path = directory.join("aircraft.json");
+        let environment_path = directory.join("environment.json");
+        let environment = [
+            b"\xef\xbb\xbf".as_slice(),
+            include_bytes!("../../../assets/biwa-typical-july-environment-v6.json"),
+        ]
+        .concat();
+        std::fs::write(&environment_path, &environment).unwrap();
+        assert_eq!(
+            read_document(
+                environment_path.to_str().unwrap(),
+                birdman_game_format::MAX_ENVIRONMENT_JSON_BYTES
+            )
+            .unwrap(),
+            environment
+        );
+        assert!(validate_environment(environment_path.to_str().unwrap()).is_ok());
         std::fs::write(
             &aircraft_path,
             [
@@ -165,6 +181,7 @@ mod tests {
         assert!(independent.contains("/shared_authority"));
         std::fs::remove_file(&controller_path).unwrap();
         std::fs::remove_file(&aircraft_path).unwrap();
+        std::fs::remove_file(&environment_path).unwrap();
         std::fs::remove_dir(&directory).unwrap();
     }
 }

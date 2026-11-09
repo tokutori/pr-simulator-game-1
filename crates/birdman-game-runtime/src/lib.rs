@@ -1610,6 +1610,7 @@ impl ApplicationRuntime {
             && let Some(geometry) = &mut scene_frame.projection.geometry
         {
             geometry.aircraft_visible = false;
+            geometry.main_wing_visible = false;
         }
         let position = scene_frame.projection.world_from_aircraft.position;
         scene_frame.projection.lighting = self.assets.sunlight().and_then(|sunlight| {
