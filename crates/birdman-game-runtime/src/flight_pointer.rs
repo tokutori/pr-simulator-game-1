@@ -62,18 +62,18 @@ fn control_position(position: [f64; 2], rect: [f64; 4], bounds: GameUiRect) -> O
 impl ApplicationRuntime {
     fn screen_pointer_available(&self) -> bool {
         self.presentation_input_focused()
-            && self.display.state().active_mode() == Some(GameUiPresentationMode::Screen)
-            && !self.display.state().pending()
+            && self.endpoint.display.state().active_mode() == Some(GameUiPresentationMode::Screen)
+            && !self.endpoint.display.state().pending()
     }
 
     fn touch_controls_available(&self) -> bool {
         self.screen_pointer_available()
-            && self.platform.touch_available
+            && self.endpoint.platform.touch_available
             && self.application.core_session().snapshot().phase() == SessionPhase::FlightRunning
     }
 
     fn release_flight_pointer(&mut self, slot: usize) {
-        if let Some(pointer) = self.flight_pointers[slot].take() {
+        if let Some(pointer) = self.endpoint.flight_pointers[slot].take() {
             self.application
                 .observe_flight_touch(FlightTouchObservation {
                     generation: pointer.generation,
@@ -85,22 +85,24 @@ impl ApplicationRuntime {
     }
 
     pub(super) fn retire_stale_flight_pointers(&mut self) {
-        for slot in 0..self.flight_pointers.len() {
-            let stale = self.flight_pointers[slot].as_ref().is_some_and(|pointer| {
-                !self.touch_controls_available()
-                    || pointer.viewport != self.platform.viewport
-                    || self.application.flight_touch_generation() != Some(pointer.generation)
-            });
+        for slot in 0..self.endpoint.flight_pointers.len() {
+            let stale = self.endpoint.flight_pointers[slot]
+                .as_ref()
+                .is_some_and(|pointer| {
+                    !self.touch_controls_available()
+                        || pointer.viewport != self.endpoint.platform.viewport
+                        || self.application.flight_touch_generation() != Some(pointer.generation)
+                });
             if stale {
                 self.release_flight_pointer(slot);
             }
         }
-        if self.look_pointer.is_some_and(|pointer| {
+        if self.endpoint.look_pointer.is_some_and(|pointer| {
             !self.screen_pointer_available()
-                || pointer.viewport != self.platform.viewport
+                || pointer.viewport != self.endpoint.platform.viewport
                 || pointer.phase != self.application.core_session().snapshot().phase()
         }) {
-            self.look_pointer = None;
+            self.endpoint.look_pointer = None;
         }
     }
 
@@ -115,12 +117,16 @@ impl ApplicationRuntime {
         buttons: u16,
         position: [f64; 2],
     ) -> Result<(), ApplicationRuntimeError> {
-        let current_revision = self.retained.as_ref().map(|view| view.view_revision);
+        let current_revision = self
+            .endpoint
+            .retained
+            .as_ref()
+            .map(|view| view.view_revision);
         if phase == ApplicationPointerPhase::Down
             && (kind == ApplicationPointerKind::Touch || (button == 2 && buttons & 2 != 0))
             && self.screen_pointer_available()
             && current_revision == Some(revision)
-            && self.look_pointer.is_none()
+            && self.endpoint.look_pointer.is_none()
             && position.into_iter().all(f64::is_finite)
             && matches!(
                 self.application.core_session().snapshot().phase(),
@@ -131,20 +137,21 @@ impl ApplicationRuntime {
                     | SessionPhase::Attract
             )
             && !self
+                .endpoint
                 .flight_pointers
                 .iter()
                 .flatten()
                 .any(|pointer| pointer.id == id)
         {
-            self.look_pointer = Some(LookPointer {
+            self.endpoint.look_pointer = Some(LookPointer {
                 id,
                 kind,
                 minimum_revision: revision,
-                viewport: self.platform.viewport,
+                viewport: self.endpoint.platform.viewport,
                 phase: self.application.core_session().snapshot().phase(),
                 position,
             });
-        } else if let Some(pointer) = &mut self.look_pointer
+        } else if let Some(pointer) = &mut self.endpoint.look_pointer
             && pointer.id == id
             && pointer.kind == kind
             && revision >= pointer.minimum_revision
@@ -154,7 +161,8 @@ impl ApplicationRuntime {
                 && (kind == ApplicationPointerKind::Touch || buttons & 2 != 0)
                 && position.into_iter().all(f64::is_finite)
             {
-                self.scene
+                self.endpoint
+                    .scene
                     .observe_look([
                         position[0] - pointer.position[0],
                         position[1] - pointer.position[1],
@@ -166,7 +174,7 @@ impl ApplicationRuntime {
                 || (kind == ApplicationPointerKind::Mouse && buttons & 2 == 0)
                 || !position.into_iter().all(f64::is_finite)
             {
-                self.look_pointer = None;
+                self.endpoint.look_pointer = None;
             }
         }
         Ok(())
@@ -188,7 +196,7 @@ impl ApplicationRuntime {
     ) -> Result<bool, ApplicationRuntimeError> {
         let mouse_over_touch_control = kind == ApplicationPointerKind::Mouse
             && control_id.is_some_and(|id| {
-                self.retained.as_ref().is_some_and(|view| {
+                self.endpoint.retained.as_ref().is_some_and(|view| {
                     view.panels
                         .iter()
                         .flat_map(|panel| &panel.controls)
@@ -206,13 +214,17 @@ impl ApplicationRuntime {
             return Ok(false);
         }
         self.retire_stale_flight_pointers();
-        let current_revision = self.retained.as_ref().map(|view| view.view_revision);
+        let current_revision = self
+            .endpoint
+            .retained
+            .as_ref()
+            .map(|view| view.view_revision);
         if control_id.is_none() || mouse_over_touch_control {
             self.observe_look_pointer(revision, id, kind, phase, button, buttons, position)?;
             return Ok(true);
         }
         let control_id = control_id.unwrap();
-        let target = self.retained.as_ref().and_then(|view| {
+        let target = self.endpoint.retained.as_ref().and_then(|view| {
             view.panels
                 .iter()
                 .flat_map(|panel| &panel.controls)
@@ -240,13 +252,17 @@ impl ApplicationRuntime {
         }
         if phase == ApplicationPointerPhase::Down {
             if current_revision != Some(revision)
-                || self.flight_pointers[slot].is_some()
+                || self.endpoint.flight_pointers[slot].is_some()
                 || self
+                    .endpoint
                     .flight_pointers
                     .iter()
                     .flatten()
                     .any(|pointer| pointer.id == id)
-                || self.look_pointer.is_some_and(|pointer| pointer.id == id)
+                || self
+                    .endpoint
+                    .look_pointer
+                    .is_some_and(|pointer| pointer.id == id)
             {
                 return Ok(true);
             }
@@ -266,10 +282,11 @@ impl ApplicationRuntime {
             let generation = match self.application.flight_touch_generation() {
                 Some(generation) => generation,
                 None => {
-                    let Some(generation) = self.next_touch_generation.checked_add(1) else {
+                    let Some(generation) = self.endpoint.next_touch_generation.checked_add(1)
+                    else {
                         return Ok(true);
                     };
-                    self.next_touch_generation = generation;
+                    self.endpoint.next_touch_generation = generation;
                     generation
                 }
             };
@@ -282,12 +299,12 @@ impl ApplicationRuntime {
                     axes,
                 })
             {
-                self.flight_pointers[slot] = Some(FlightPointer {
+                self.endpoint.flight_pointers[slot] = Some(FlightPointer {
                     id,
                     control_id: control_id.to_owned(),
                     minimum_revision: revision,
                     generation,
-                    viewport: self.platform.viewport,
+                    viewport: self.endpoint.platform.viewport,
                     control,
                     bounds,
                     radius,
@@ -295,7 +312,7 @@ impl ApplicationRuntime {
                     axes,
                 });
             }
-        } else if let Some(pointer) = self.flight_pointers[slot].as_ref()
+        } else if let Some(pointer) = self.endpoint.flight_pointers[slot].as_ref()
             && pointer.id == id
             && pointer.control_id == control_id
             && revision >= pointer.minimum_revision
@@ -318,7 +335,7 @@ impl ApplicationRuntime {
                             axes,
                         })
                     {
-                        self.flight_pointers[slot].as_mut().unwrap().axes = axes;
+                        self.endpoint.flight_pointers[slot].as_mut().unwrap().axes = axes;
                     } else {
                         self.release_flight_pointer(slot);
                     }
@@ -331,7 +348,7 @@ impl ApplicationRuntime {
     }
 
     pub(super) fn project_flight_pointer_view(&self, view: &mut GameUiView) {
-        for pointer in self.flight_pointers.iter().flatten() {
+        for pointer in self.endpoint.flight_pointers.iter().flatten() {
             if let Some(item) = view
                 .panels
                 .iter_mut()
@@ -358,7 +375,7 @@ impl ApplicationRuntime {
     }
 
     pub(super) fn project_flight_pointers(&self, frame: &mut GameUiFrame) {
-        for pointer in self.flight_pointers.iter().flatten() {
+        for pointer in self.endpoint.flight_pointers.iter().flatten() {
             if let Some(value) = frame
                 .flight_touch
                 .iter_mut()

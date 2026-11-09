@@ -7,6 +7,8 @@ mod assets;
 mod boot;
 mod display;
 #[cfg(not(verus_only))]
+mod endpoint;
+#[cfg(not(verus_only))]
 mod flight_pointer;
 #[cfg(not(verus_only))]
 mod frame_rate;
@@ -131,7 +133,7 @@ pub struct PresentationWork {
     owner: surface::SurfaceOwner,
     view: Arc<GameUiView>,
     frame: birdman_game_presentation::game_ui::GameUiFrame,
-    scene: scene::SceneFrame,
+    tracking: surface::SurfaceTracking,
     font: Option<ApplicationSurfaceObservation>,
     display: surface::SurfaceDisplay,
     drawing: ApplicationDrawingOutput,
@@ -168,7 +170,7 @@ impl PresentationWork {
         let result = self.owner.project(
             &self.view,
             &self.frame,
-            &self.scene,
+            &self.tracking,
             self.font.as_ref(),
             self.display,
             measure,
@@ -189,48 +191,19 @@ impl PresentationWork {
 /// Owns the application and its presentation state across all platform adapters.
 #[cfg(not(verus_only))]
 pub struct ApplicationRuntime {
+    endpoint: endpoint::ApplicationEndpoint,
     application: ApplicationSession,
     ui: GameUiState,
-    platform: GameUiPlatformInput,
-    structure: GameUiStructureCache,
-    retained: Option<Arc<GameUiView>>,
-    chart_pointer: Option<(u32, String, ApplicationPointerId, ApplicationPointerKind)>,
-    flight_pointers: [Option<flight_pointer::FlightPointer>; 2],
-    look_pointer: Option<flight_pointer::LookPointer>,
-    next_touch_generation: u32,
-    display: display::DisplayWorkflow,
     previous_frame_ms: Option<f64>,
     controller_gamepads: Vec<FlightGamepadObservation>,
     controller_wake: Option<(u32, f64)>,
     controller_next_tick_ms: Option<f64>,
     next_request_id: u32,
     replay_supported: bool,
-    resource_readiness: BackendReadiness,
-    resources: Option<ResourcePreparation>,
     observed_ms: f64,
-    phone: phone::PhoneTracking,
-    phone_wake: Option<u32>,
-    page_visible: bool,
-    page_frozen: bool,
-    document_focused: bool,
-    xr_resource: Option<u32>,
-    xr_viewer: Option<XrViewerFrame>,
-    xr_visibility: XrVisibility,
-    xr_input_focused: bool,
-    scene: scene::SceneOwner,
-    surface: surface::SurfaceOwner,
-    presentation_lease: Option<u64>,
-    next_presentation_lease: u64,
-    presentation_work: Option<PresentationWork>,
-    surface_observation: Option<ApplicationSurfaceObservation>,
-    graphics: graphics::GraphicsOwner,
-    last_ready_resources: Option<ResourceKey>,
     storage: storage::StorageOwner,
-    assets: assets::AssetsOwner,
     diagnostic: Option<String>,
-    boot: boot::BootOwner,
     shutdown: shutdown::ShutdownOwner,
-    frame_rate: frame_rate::FrameRateOwner,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -257,91 +230,28 @@ impl ApplicationRuntime {
         application: ApplicationSession,
         observation: ApplicationPlatformObservation,
     ) -> Result<Self, ApplicationRuntimeError> {
-        let boot = boot::BootOwner::new(observation.renderer.is_some());
-        let mut graphics = graphics::GraphicsOwner::default();
-        graphics
-            .request_gpu_timing(observation.gpu_timing_requested, 0.0)
-            .map_err(ApplicationRuntimeError::Graphics)?;
-        graphics
-            .adopt(
-                observation.renderer.as_ref(),
-                birdman_game_presentation::game_ui::game_ui_scene(
-                    application.core_session().snapshot().phase(),
-                )
-                .screen_render_scope(),
-                0.0,
+        let replay_supported = observation.capabilities.replay_available;
+        let endpoint = endpoint::ApplicationEndpoint::new(
+            observation,
+            birdman_game_presentation::game_ui::game_ui_scene(
+                application.core_session().snapshot().phase(),
             )
-            .map_err(ApplicationRuntimeError::Graphics)?;
-        let surface_observation = observation.surface;
-        let capabilities = observation.capabilities;
-        let mut phone = phone::PhoneTracking::default();
-        phone.configure(capabilities.phone_sensors);
-        let platform = GameUiPlatformInput {
-            viewport: observation.viewport,
-            chart_extent: None,
-            presentation_mode: GameUiPresentationMode::Screen,
-            operation_pending: false,
-            hmd_available: capabilities.hmd_available,
-            phone_vr_available: phone.available(),
-            touch_available: capabilities.touch_available,
-            menu_recenter_available: false,
-            analysis_available: capabilities.analysis_available,
-            replay_available: capabilities.replay_available,
-            stored_records_available: capabilities.stored_records_available,
-            stored_records_retry_available: false,
-            flight_log_available: capabilities.flight_log_available,
-            water_quality: graphics.snapshot().water_quality,
-            render_quality_confirmed: graphics.resource().is_some(),
-            water_quality_operation: GameUiWaterQualityOperation::Idle {},
-            screen_render_scale: graphics.snapshot(),
-            notification: String::new(),
-            renderer_failure: None,
-            head_hud_failure: None,
-            stored_records: Default::default(),
-        };
+            .screen_render_scope(),
+        )?;
         Ok(Self {
+            endpoint,
             application,
             ui: GameUiState::default(),
-            platform,
-            structure: GameUiStructureCache::default(),
-            retained: None,
-            chart_pointer: None,
-            flight_pointers: [None, None],
-            look_pointer: None,
-            next_touch_generation: 0,
-            display: display::DisplayWorkflow::new(GameUiPresentationMode::Screen),
             previous_frame_ms: None,
             controller_gamepads: Vec::new(),
             controller_wake: None,
             controller_next_tick_ms: None,
             next_request_id: 1,
-            replay_supported: capabilities.replay_available,
-            resource_readiness: BackendReadiness::Preparing,
-            resources: None,
+            replay_supported,
             observed_ms: 0.0,
-            phone,
-            phone_wake: None,
-            page_visible: true,
-            page_frozen: false,
-            document_focused: true,
-            xr_resource: None,
-            xr_viewer: None,
-            xr_visibility: XrVisibility::Visible,
-            xr_input_focused: false,
-            scene: scene::SceneOwner::default(),
-            surface: surface::SurfaceOwner::default(),
-            presentation_lease: None,
-            next_presentation_lease: 0,
-            presentation_work: None,
-            surface_observation,
-            graphics,
-            last_ready_resources: None,
             storage: storage::StorageOwner::default(),
-            assets: assets::AssetsOwner::default(),
             diagnostic: None,
-            boot,
             shutdown: shutdown::ShutdownOwner::default(),
-            frame_rate: frame_rate::FrameRateOwner::default(),
         })
     }
 
@@ -353,7 +263,7 @@ impl ApplicationRuntime {
     /// Borrows a read-only typed upload for the current output, valid until the next mutable update.
     /// Static preparation data is retained across its resource lifetime; mutable attributes are submitted synchronously.
     pub fn asset_buffer(&self, buffer_id: u32) -> Option<ApplicationBufferSlice<'_>> {
-        self.assets.buffer(buffer_id)
+        self.endpoint.assets.buffer(buffer_id)
     }
 
     /// Copies one common GPU buffer into the platform-independent wire encoding.
@@ -396,13 +306,13 @@ impl ApplicationRuntime {
         &mut self,
         observation: ApplicationObservation,
     ) -> Result<(ApplicationOutput, Option<PresentationWork>), ApplicationRuntimeError> {
-        if self.presentation_lease.is_some()
+        if self.endpoint.presentation_lease.is_some()
             && matches!(&observation.input, ApplicationInput::Wake {request_id}
                 if !self.controller_wake.is_some_and(|(current,_)| current == *request_id))
         {
             return Ok((self.output(None, Vec::new(), false), None));
         }
-        if self.presentation_lease.is_some()
+        if self.endpoint.presentation_lease.is_some()
             && !matches!(
                 &observation.input,
                 ApplicationInput::ControllerIo { .. }
@@ -420,7 +330,7 @@ impl ApplicationRuntime {
             ));
         }
         let output = self.update_input(observation)?;
-        Ok((output, self.presentation_work.take()))
+        Ok((output, self.endpoint.presentation_work.take()))
     }
 
     /// Returns the unique surface owner and admits painting only within its original scope.
@@ -434,28 +344,28 @@ impl ApplicationRuntime {
             mut owner,
             drawing,
         } = result;
-        if self.presentation_lease != Some(id) {
+        if self.endpoint.presentation_lease != Some(id) {
             return Ok(None);
         }
-        self.presentation_lease = None;
+        self.endpoint.presentation_lease = None;
         let current = match self.presentation_scope() {
             Ok(current) => current,
             Err(cause) => {
                 owner.retire_input();
-                self.surface = owner;
+                self.endpoint.surface = owner;
                 return Err(cause);
             }
         };
         if current != scope {
             owner.retire_lease();
-            self.surface = owner;
+            self.endpoint.surface = owner;
             return Ok(None);
         }
-        self.surface = owner;
+        self.endpoint.surface = owner;
         match drawing {
             Ok(drawing) => Ok(Some(drawing)),
             Err(cause) => {
-                self.surface.retire_input();
+                self.endpoint.surface.retire_input();
                 Err(cause)
             }
         }
@@ -465,13 +375,14 @@ impl ApplicationRuntime {
         let environment = self.environment()?;
         Ok(PresentationScope {
             structure: GameUiStructureKey::new(&self.ui, &self.context(&environment)?),
-            resource: self.last_ready_resources,
+            resource: self.endpoint.last_ready_resources,
             display: self
+                .endpoint
                 .display
                 .state()
                 .active_mode()
-                .map(|mode| (mode, self.display.active_resource())),
-            font: self.surface_observation.clone(),
+                .map(|mode| (mode, self.endpoint.display.active_resource())),
+            font: self.endpoint.surface_observation.clone(),
             closed: self.shutdown.closed(),
         })
     }
@@ -517,8 +428,9 @@ impl ApplicationRuntime {
                         at_ms,
                         realtime: true,
                     })
-                } else if self.phone_wake == Some(*request_id) {
-                    self.phone
+                } else if self.endpoint.phone_wake == Some(*request_id) {
+                    self.endpoint
+                        .phone
                         .deadline()
                         .map(|at_ms| ApplicationRequest::ScheduleWake {
                             request_id: *request_id,
@@ -608,9 +520,10 @@ impl ApplicationRuntime {
             ..
         } = &input
             && !(buttons & 2 != 0
-                && self.display.state().active_mode() == Some(GameUiPresentationMode::Screen)
-                && self.display.active_resource() == *display_resource_id
-                && !self.display.state().pending()
+                && self.endpoint.display.state().active_mode()
+                    == Some(GameUiPresentationMode::Screen)
+                && self.endpoint.display.active_resource() == *display_resource_id
+                && !self.endpoint.display.state().pending()
                 && self.presentation_input_focused()
                 && matches!(
                     self.application.core_session().snapshot().phase(),
@@ -630,18 +543,19 @@ impl ApplicationRuntime {
                 ..
             }
         ) || matches!(&input, ApplicationInput::Platform { observation }
-                if observation.surface == self.surface_observation))
+                if observation.surface == self.endpoint.surface_observation))
         .then(|| {
             (
-                self.graphics.resource(),
-                self.display
+                self.endpoint.graphics.resource(),
+                self.endpoint
+                    .display
                     .state()
                     .active_mode()
-                    .and_then(|mode| self.graphics.target(mode)),
-                self.graphics.epoch(),
+                    .and_then(|mode| self.endpoint.graphics.target(mode)),
+                self.endpoint.graphics.epoch(),
             )
         });
-        let io_continuation = self.presentation_lease.is_some()
+        let io_continuation = self.endpoint.presentation_lease.is_some()
             || match &input {
                 ApplicationInput::ControllerIo { .. }
                 | ApplicationInput::RecordSaveOpened { .. } => true,
@@ -665,7 +579,7 @@ impl ApplicationRuntime {
                 _ => false,
             };
         if !io_continuation {
-            self.phone.observe_time(observed_ms);
+            self.endpoint.phone.observe_time(observed_ms);
         }
         let mut requests = Vec::new();
         let mut keyboard_consumed = false;
@@ -722,7 +636,7 @@ impl ApplicationRuntime {
             } => {
                 if let Some(settings) = self.storage.keyboard_loaded(request_id, completion)
                     && !self.shutdown.closed()
-                    && self.boot.active()
+                    && self.endpoint.boot.active()
                     && matches!(
                         self.application.core_session().snapshot().phase(),
                         SessionPhase::Title | SessionPhase::FlightSetup
@@ -733,7 +647,7 @@ impl ApplicationRuntime {
                             birdman_game_app::application::SessionCommand::SetKeyboardControls {
                                 settings,
                             },
-                            self.resource_readiness,
+                            self.endpoint.resource_readiness,
                         )
                         .map_err(ApplicationRuntimeError::Application)?;
                 }
@@ -750,7 +664,7 @@ impl ApplicationRuntime {
             } => {
                 if let Some(settings) = self.storage.display_loaded(request_id, completion)
                     && !self.shutdown.closed()
-                    && self.boot.active()
+                    && self.endpoint.boot.active()
                     && matches!(
                         self.application.core_session().snapshot().phase(),
                         SessionPhase::Title
@@ -763,7 +677,7 @@ impl ApplicationRuntime {
                             birdman_game_app::application::SessionCommand::SetDisplaySettings {
                                 settings,
                             },
-                            self.resource_readiness,
+                            self.endpoint.resource_readiness,
                         )
                         .map_err(ApplicationRuntimeError::Application)?;
                 }
@@ -778,10 +692,12 @@ impl ApplicationRuntime {
                 resource_id,
                 failure,
             } => {
-                if self
-                    .phone
-                    .started(resource_id, failure.as_deref(), observed_ms, &mut requests)
-                {
+                if self.endpoint.phone.started(
+                    resource_id,
+                    failure.as_deref(),
+                    observed_ms,
+                    &mut requests,
+                ) {
                     self.diagnostic = failure;
                 }
             }
@@ -789,7 +705,7 @@ impl ApplicationRuntime {
                 resource_id,
                 failure,
             } => {
-                if self.phone.stopped(resource_id, failure.as_deref()) {
+                if self.endpoint.phone.stopped(resource_id, failure.as_deref()) {
                     self.diagnostic = failure;
                 }
             }
@@ -798,41 +714,45 @@ impl ApplicationRuntime {
                 cause,
             } => {
                 if self
+                    .endpoint
                     .graphics
                     .invalidate_renderer(renderer_resource_id, observed_ms)
                     .map_err(ApplicationRuntimeError::Graphics)?
                 {
                     self.diagnostic = Some(cause);
-                    if self.boot.active() {
-                        self.boot.fail(self.diagnostic.as_deref());
+                    if self.endpoint.boot.active() {
+                        self.endpoint.boot.fail(self.diagnostic.as_deref());
                     } else {
-                        self.platform.renderer_failure = Some(
+                        self.endpoint.platform.renderer_failure = Some(
                             "描画を続けられない。ゲームを再読み込みして再試行する。".to_owned(),
                         );
                     }
                 }
             }
             ApplicationInput::DocumentFocus { focused } => {
-                self.document_focused = focused;
+                self.endpoint.document_focused = focused;
                 if !focused {
                     if self.presentation_input_focused() {
                         self.application.retire_surface_flight_input();
                     } else {
                         self.application.invalidate_flight_input();
                     }
-                    if self.display.state().active_mode() != Some(GameUiPresentationMode::Hmd) {
-                        self.surface.retire_input();
+                    if self.endpoint.display.state().active_mode()
+                        != Some(GameUiPresentationMode::Hmd)
+                    {
+                        self.endpoint.surface.retire_input();
                     }
                 }
             }
             ApplicationInput::DisplayEnded { resource_id, cause } => {
-                if self.display.active_resource() == Some(resource_id) {
+                if self.endpoint.display.active_resource() == Some(resource_id) {
                     if let Some(cause) = cause {
                         self.diagnostic = Some(cause);
                     }
                     let next_id = self.allocate_request()?;
                     requests.extend(
-                        self.display
+                        self.endpoint
+                            .display
                             .ended(resource_id, next_id)
                             .into_iter()
                             .map(|request| ApplicationRequest::Display { request }),
@@ -843,8 +763,8 @@ impl ApplicationRuntime {
                 self.close(&mut requests);
             }
             ApplicationInput::PageHide { persisted: true } => {
-                self.page_frozen = true;
-                self.page_visible = false;
+                self.endpoint.page_frozen = true;
+                self.endpoint.page_visible = false;
                 self.application.invalidate_flight_input();
             }
             ApplicationInput::PageHide { persisted: false } => unreachable!(),
@@ -856,21 +776,23 @@ impl ApplicationRuntime {
                 }
             }
             ApplicationInput::RendererCreated { request_id, result } => {
-                if self.boot.accepts(request_id) {
+                if self.endpoint.boot.accepts(request_id) {
                     match result {
                         ApplicationRendererCreation::Ready { renderer } => {
-                            self.graphics
+                            self.endpoint
+                                .graphics
                                 .adopt(Some(&renderer), self.render_scope(), observed_ms)
                                 .map_err(ApplicationRuntimeError::Graphics)?;
-                            self.boot = boot::BootOwner::Preparing;
+                            self.endpoint.boot = boot::BootOwner::Preparing;
                         }
                         ApplicationRendererCreation::Failed { cause } => {
                             self.diagnostic = Some(cause);
-                            self.boot.fail(self.diagnostic.as_deref());
+                            self.endpoint.boot.fail(self.diagnostic.as_deref());
                         }
                     }
                 } else if let ApplicationRendererCreation::Ready { renderer } = result
                     && self
+                        .endpoint
                         .graphics
                         .renderer_id()
                         .is_none_or(|id| id != renderer.resource_id)
@@ -888,7 +810,7 @@ impl ApplicationRuntime {
                     self.storage
                         .preview_observed(request_id, observation, &mut requests)
                 {
-                    self.platform.stored_records = items
+                    self.endpoint.platform.stored_records = items
                         .into_iter()
                         .map(
                             |item| birdman_game_presentation::game_ui::GameUiStoredRecord {
@@ -906,7 +828,7 @@ impl ApplicationRuntime {
                 failure,
             } => {
                 if let Some(notification) = self.storage.downloaded(request_id, failure) {
-                    self.platform.notification = notification;
+                    self.endpoint.platform.notification = notification;
                 }
             }
             ApplicationInput::RecordLoaded {
@@ -918,7 +840,7 @@ impl ApplicationRuntime {
                     self.storage
                         .loaded(request_id, completion, &mut self.application)
                 {
-                    self.platform.notification = notification;
+                    self.endpoint.platform.notification = notification;
                 }
                 self.observe_replay_entry(previous_phase);
             }
@@ -940,6 +862,7 @@ impl ApplicationRuntime {
                 observation,
             } => {
                 if let Some(cause) = self
+                    .endpoint
                     .graphics
                     .observe(renderer_resource_id, observation, observed_ms)
                     .map_err(ApplicationRuntimeError::Graphics)?
@@ -951,11 +874,15 @@ impl ApplicationRuntime {
                 resource_id,
                 failure,
             } => {
-                if self.assets.released(resource_id, failure.is_some())
+                if self
+                    .endpoint
+                    .assets
+                    .released(resource_id, failure.is_some())
                     && let Some(cause) = failure
                 {
                     self.diagnostic = Some(cause);
-                    self.graphics
+                    self.endpoint
+                        .graphics
                         .cleanup_failed(observed_ms)
                         .map_err(ApplicationRuntimeError::Graphics)?;
                 }
@@ -968,11 +895,15 @@ impl ApplicationRuntime {
             } => {
                 let focused = self.spatial_input_focused();
                 if focused
-                    && self.display.state().active_mode() == Some(GameUiPresentationMode::Hmd)
-                    && self.display.active_resource() == display_resource_id
-                    && let Some(action) =
-                        self.surface
-                            .select(presentation_id, pointer, focused, timestamp_ms)?
+                    && self.endpoint.display.state().active_mode()
+                        == Some(GameUiPresentationMode::Hmd)
+                    && self.endpoint.display.active_resource() == display_resource_id
+                    && let Some(action) = self.endpoint.surface.select(
+                        presentation_id,
+                        pointer,
+                        focused,
+                        timestamp_ms,
+                    )?
                 {
                     self.apply_surface_action(action, &mut requests)?;
                 }
@@ -981,58 +912,62 @@ impl ApplicationRuntime {
                 resource_id,
                 previous_from_new,
             } => {
-                if self.display.state().active_mode() == Some(GameUiPresentationMode::Hmd)
-                    && self.display.active_resource() == Some(resource_id)
+                if self.endpoint.display.state().active_mode() == Some(GameUiPresentationMode::Hmd)
+                    && self.endpoint.display.active_resource() == Some(resource_id)
                     && previous_from_new
                         .is_none_or(|change| self.reset_xr_reference(resource_id, change).is_err())
                 {
-                    self.xr_viewer = None;
+                    self.endpoint.xr_viewer = None;
                     self.recover_screen(
                         "VRの基準位置を取得できないため通常画面へ戻る。",
                         &mut requests,
                     )?;
                 }
             }
-            ApplicationInput::PointerMotion { delta_px, .. } => {
-                self.scene
-                    .observe_look(delta_px)
-                    .map_err(ApplicationRuntimeError::Camera)?
-            }
+            ApplicationInput::PointerMotion { delta_px, .. } => self
+                .endpoint
+                .scene
+                .observe_look(delta_px)
+                .map_err(ApplicationRuntimeError::Camera)?,
             ApplicationInput::XrSessionState {
                 resource_id,
                 visibility,
                 input_focused,
             } => {
-                if self.xr_resource == Some(resource_id) {
-                    self.xr_visibility = visibility;
-                    self.xr_input_focused = input_focused;
+                if self.endpoint.xr_resource == Some(resource_id) {
+                    self.endpoint.xr_visibility = visibility;
+                    self.endpoint.xr_input_focused = input_focused;
                 }
             }
             ApplicationInput::PageVisibility { visible } => {
-                self.page_visible = visible;
+                self.endpoint.page_visible = visible;
                 if visible {
-                    self.page_frozen = false;
+                    self.endpoint.page_frozen = false;
                 }
             }
             ApplicationInput::PhoneOrientation {
                 resource_id,
                 observation,
             } => {
-                self.phone
+                self.endpoint
+                    .phone
                     .observe_orientation(resource_id, observation, observed_ms);
             }
             ApplicationInput::PhoneMotion {
                 resource_id,
                 observation,
             } => {
-                self.phone
+                self.endpoint
+                    .phone
                     .observe_motion(resource_id, observation, observed_ms);
             }
             ApplicationInput::PhoneScreenRotation {
                 resource_id,
                 angle_degrees,
             } => {
-                self.phone.screen_changed(resource_id, angle_degrees);
+                self.endpoint
+                    .phone
+                    .screen_changed(resource_id, angle_degrees);
             }
             ApplicationInput::Wake { request_id } => {
                 if let Some((id, at_ms)) = self.controller_wake
@@ -1068,8 +1003,8 @@ impl ApplicationRuntime {
                             }
                         }
                     }
-                } else if self.phone_wake == Some(request_id) {
-                    self.phone_wake = None;
+                } else if self.endpoint.phone_wake == Some(request_id) {
+                    self.endpoint.phone_wake = None;
                 }
             }
             ApplicationInput::Frame {
@@ -1079,15 +1014,15 @@ impl ApplicationRuntime {
                 xr,
                 spatial,
             } => {
-                if self.display.state().active_mode().is_some()
-                    && self.display.active_resource() == display_resource_id
+                if self.endpoint.display.state().active_mode().is_some()
+                    && self.endpoint.display.active_resource() == display_resource_id
                 {
-                    self.frame_rate.observe(timestamp_ms);
-                    if self.xr_resource.is_some() {
-                        self.xr_viewer = Some(match xr {
+                    self.endpoint.frame_rate.observe(timestamp_ms);
+                    if self.endpoint.xr_resource.is_some() {
+                        self.endpoint.xr_viewer = Some(match xr {
                             Some(xr) => {
-                                self.xr_visibility = xr.visibility;
-                                self.xr_input_focused = xr.input_focused;
+                                self.endpoint.xr_visibility = xr.visibility;
+                                self.endpoint.xr_input_focused = xr.input_focused;
                                 capture_xr_viewer(xr.observation)
                             }
                             None => XrViewerFrame::Unavailable {
@@ -1097,7 +1032,7 @@ impl ApplicationRuntime {
                         });
                     }
                     self.synchronize_xr()?;
-                    if !self.display.state().pending() {
+                    if !self.endpoint.display.state().pending() {
                         let flight_gamepads: Vec<_> = gamepads
                             .iter()
                             .filter(|_| self.presentation_input_focused())
@@ -1132,6 +1067,7 @@ impl ApplicationRuntime {
                 extent,
             } => {
                 let current = self
+                    .endpoint
                     .retained
                     .as_ref()
                     .filter(|view| view.view_revision == view_revision)
@@ -1153,9 +1089,9 @@ impl ApplicationRuntime {
                     && extent.height.is_finite()
                     && extent.width >= minimum.width
                     && extent.height >= minimum.height
-                    && self.platform.chart_extent != Some(extent)
+                    && self.endpoint.platform.chart_extent != Some(extent)
                 {
-                    self.platform.chart_extent = Some(extent);
+                    self.endpoint.platform.chart_extent = Some(extent);
                 }
             }
             ApplicationInput::ControlPointer {
@@ -1190,14 +1126,15 @@ impl ApplicationRuntime {
                     ) || !is_primary
                         || (phase == ApplicationPointerPhase::Move && buttons & 1 == 0)
                     {
-                        if self.chart_pointer.as_ref() == Some(&identity) {
-                            self.chart_pointer = None;
+                        if self.endpoint.chart_pointer.as_ref() == Some(&identity) {
+                            self.endpoint.chart_pointer = None;
                         }
                     } else if self.presentation_input_focused()
                         && (phase != ApplicationPointerPhase::Down || button == 0)
                         && (phase != ApplicationPointerPhase::Up || button == 0 || buttons & 1 == 0)
                     {
                         let chart = self
+                            .endpoint
                             .retained
                             .as_ref()
                             .filter(|view| view.view_revision == view_revision)
@@ -1224,15 +1161,15 @@ impl ApplicationRuntime {
                     }
                             });
                         if let Some((target, value)) = chart {
-                            let range_id = self.retained.as_ref().unwrap().panels.iter().flat_map(|panel| &panel.controls).find_map(|control| match control.content { birdman_game_presentation::game_ui::GameUiControlContent::Range { target: candidate, .. } if candidate == target && control.enabled => Some(control.id.clone()), _ => None });
+                            let range_id = self.endpoint.retained.as_ref().unwrap().panels.iter().flat_map(|panel| &panel.controls).find_map(|control| match control.content { birdman_game_presentation::game_ui::GameUiControlContent::Range { target: candidate, .. } if candidate == target && control.enabled => Some(control.id.clone()), _ => None });
                             if phase == ApplicationPointerPhase::Down
                                 && button == 0
                                 && buttons & 1 != 0
                                 && range_id.is_some()
                             {
-                                self.chart_pointer = Some(identity.clone());
+                                self.endpoint.chart_pointer = Some(identity.clone());
                             }
-                            if self.chart_pointer.as_ref() == Some(&identity)
+                            if self.endpoint.chart_pointer.as_ref() == Some(&identity)
                                 && matches!(
                                     phase,
                                     ApplicationPointerPhase::Down
@@ -1245,9 +1182,9 @@ impl ApplicationRuntime {
                             }
                         }
                         if phase == ApplicationPointerPhase::Up
-                            && self.chart_pointer.as_ref() == Some(&identity)
+                            && self.endpoint.chart_pointer.as_ref() == Some(&identity)
                         {
-                            self.chart_pointer = None;
+                            self.endpoint.chart_pointer = None;
                         }
                     }
                 }
@@ -1271,37 +1208,41 @@ impl ApplicationRuntime {
                 keyboard_consumed = self.observe_keyboard(key, pressed, repeat, &mut requests)?;
             }
             ApplicationInput::Platform { observation } => {
-                self.graphics
+                self.endpoint
+                    .graphics
                     .request_gpu_timing(observation.gpu_timing_requested, observed_ms)
                     .map_err(ApplicationRuntimeError::Graphics)?;
-                self.graphics
+                self.endpoint
+                    .graphics
                     .adopt(
                         observation.renderer.as_ref(),
                         self.render_scope(),
                         observed_ms,
                     )
                     .map_err(ApplicationRuntimeError::Graphics)?;
-                self.surface_observation = observation.surface;
-                self.platform.viewport = observation.viewport;
+                self.endpoint.surface_observation = observation.surface;
+                self.endpoint.platform.viewport = observation.viewport;
                 let capabilities = observation.capabilities;
-                self.platform.hmd_available = capabilities.hmd_available;
-                self.platform.touch_available |= capabilities.touch_available;
-                self.phone.configure(capabilities.phone_sensors);
-                self.platform.analysis_available = capabilities.analysis_available;
+                self.endpoint.platform.hmd_available = capabilities.hmd_available;
+                self.endpoint.platform.touch_available |= capabilities.touch_available;
+                self.endpoint.phone.configure(capabilities.phone_sensors);
+                self.endpoint.platform.analysis_available = capabilities.analysis_available;
                 self.replay_supported = capabilities.replay_available;
-                self.platform.replay_available = capabilities.replay_available;
-                self.platform.stored_records_available = capabilities.stored_records_available;
-                self.platform.flight_log_available = capabilities.flight_log_available;
+                self.endpoint.platform.replay_available = capabilities.replay_available;
+                self.endpoint.platform.stored_records_available =
+                    capabilities.stored_records_available;
+                self.endpoint.platform.flight_log_available = capabilities.flight_log_available;
             }
             ApplicationInput::Resources {
                 request_id,
                 observation,
             } => {
-                let completion = self.assets.observe(request_id, observation);
+                let completion = self.endpoint.assets.observe(request_id, observation);
                 requests.extend(completion.requests);
                 let mut commit_failed = false;
                 if let Some(renderer) = completion.invalidated_renderer {
-                    self.graphics
+                    self.endpoint
+                        .graphics
                         .invalidate_renderer(renderer, observed_ms)
                         .map_err(ApplicationRuntimeError::Graphics)?;
                     self.diagnostic = completion
@@ -1311,7 +1252,7 @@ impl ApplicationRuntime {
                     commit_failed = true;
                 }
                 if let Some(committed) = &completion.committed
-                    && let Err(error) = self.graphics.committed(
+                    && let Err(error) = self.endpoint.graphics.committed(
                         committed.target,
                         committed.policy_request,
                         committed.actual,
@@ -1326,15 +1267,17 @@ impl ApplicationRuntime {
                 }
                 if let Some(failed) = &completion.failed
                     && !self
+                        .endpoint
                         .assets
                         .has_policy_request(failed.target, failed.policy_request)
                 {
-                    self.graphics
+                    self.endpoint
+                        .graphics
                         .failed(failed.target, failed.policy_request, observed_ms)
                         .map_err(ApplicationRuntimeError::Graphics)?;
                 }
                 if !commit_failed {
-                    requests.extend(self.assets.continue_commit());
+                    requests.extend(self.endpoint.assets.continue_commit());
                 }
                 let terminal = completion
                     .committed
@@ -1344,34 +1287,38 @@ impl ApplicationRuntime {
                         .failed
                         .as_ref()
                         .is_some_and(|failed| failed.request_id == request_id);
-                if let Some(resources) = self.resources.as_mut()
+                if let Some(resources) = self.endpoint.resources.as_mut()
                     && resources.request_id == request_id
                     && !resources.completed
                     && terminal
                 {
                     resources.completed = true;
-                    self.resource_readiness = match completion.failed {
+                    self.endpoint.resource_readiness = match completion.failed {
                         None if !commit_failed => BackendReadiness::Ready,
                         None => BackendReadiness::Failed(
                             birdman_game_core::BriefingFailure::AssetUnavailable,
                         ),
                         Some(failed) => {
                             self.diagnostic = Some(failed.cause);
-                            if !self.boot.active() {
-                                self.platform.notification = "描画資源を準備できない。".to_owned();
+                            if !self.endpoint.boot.active() {
+                                self.endpoint.platform.notification =
+                                    "描画資源を準備できない。".to_owned();
                             }
                             BackendReadiness::Failed(
                                 birdman_game_core::BriefingFailure::AssetUnavailable,
                             )
                         }
                     };
-                    if matches!(self.resource_readiness, BackendReadiness::Ready) {
-                        self.last_ready_resources = Some(resources.key);
+                    if matches!(self.endpoint.resource_readiness, BackendReadiness::Ready) {
+                        self.endpoint.last_ready_resources = Some(resources.key);
                     }
-                    if self.boot.active()
-                        && matches!(self.resource_readiness, BackendReadiness::Failed(_))
+                    if self.endpoint.boot.active()
+                        && matches!(
+                            self.endpoint.resource_readiness,
+                            BackendReadiness::Failed(_)
+                        )
                     {
-                        self.boot.fail(self.diagnostic.as_deref());
+                        self.endpoint.boot.fail(self.diagnostic.as_deref());
                     }
                 }
                 if !self.shutdown.closed()
@@ -1381,7 +1328,7 @@ impl ApplicationRuntime {
                     )
                 {
                     self.application
-                        .observe_readiness(self.resource_readiness)
+                        .observe_readiness(self.endpoint.resource_readiness)
                         .map_err(ApplicationRuntimeError::Session)?;
                 }
             }
@@ -1389,21 +1336,29 @@ impl ApplicationRuntime {
                 request_id,
                 completion,
             } => {
-                let was_pending = self.display.state().pending();
-                let next_id = if self.display.completion_advances(request_id, &completion) {
+                let was_pending = self.endpoint.display.state().pending();
+                let next_id = if self
+                    .endpoint
+                    .display
+                    .completion_advances(request_id, &completion)
+                {
                     self.allocate_request()?
                 } else {
                     0
                 };
                 requests.extend(
-                    self.display
+                    self.endpoint
+                        .display
                         .complete(request_id, completion, next_id)
                         .into_iter()
                         .map(|request| ApplicationRequest::Display { request }),
                 );
-                if was_pending && let DisplayState::Failed { cause, .. } = self.display.state() {
+                if was_pending
+                    && let DisplayState::Failed { cause, .. } = self.endpoint.display.state()
+                {
                     self.diagnostic = Some(cause.clone());
-                    self.platform.notification = format!("表示を切り替えられない。原因: {cause}");
+                    self.endpoint.platform.notification =
+                        format!("表示を切り替えられない。原因: {cause}");
                 }
             }
         }
@@ -1441,48 +1396,54 @@ impl ApplicationRuntime {
         self.synchronize_xr()?;
         self.synchronize_graphics()?;
         if let Err(error) = self.synchronize_resources(&mut requests) {
-            if self.boot.active() {
+            if self.endpoint.boot.active() {
                 self.diagnostic = Some(birdman_game_app::technical_error_text(&error));
-                self.boot.fail(self.diagnostic.as_deref());
+                self.endpoint.boot.fail(self.diagnostic.as_deref());
             } else {
                 return Err(error);
             }
         }
-        if matches!(self.boot, boot::BootOwner::Initial) {
+        if matches!(self.endpoint.boot, boot::BootOwner::Initial) {
             let request_id = self.allocate_request()?;
-            requests.push(self.boot.start(request_id));
+            requests.push(self.endpoint.boot.start(request_id));
         }
-        if matches!(self.boot, boot::BootOwner::Preparing) {
-            match self.resource_readiness {
+        if matches!(self.endpoint.boot, boot::BootOwner::Preparing) {
+            match self.endpoint.resource_readiness {
                 BackendReadiness::Ready
                     if !self.storage.configuration_loading()
                         && !self.storage.keyboard_loading()
                         && !self.storage.display_loading() =>
                 {
-                    self.boot = boot::BootOwner::Ready
+                    self.endpoint.boot = boot::BootOwner::Ready
                 }
                 BackendReadiness::Ready => {}
-                BackendReadiness::Failed(_) => self.boot.fail(self.diagnostic.as_deref()),
+                BackendReadiness::Failed(_) => self.endpoint.boot.fail(self.diagnostic.as_deref()),
                 BackendReadiness::Preparing => {}
             }
-            if matches!(self.boot, boot::BootOwner::Ready) {
+            if matches!(self.endpoint.boot, boot::BootOwner::Ready) {
                 self.synchronize_phone(&mut requests)?;
             }
         }
         if !self.spatial_input_focused() {
-            self.surface.retire_input();
+            self.endpoint.surface.retire_input();
         } else if let Some((spatial, timestamp_ms)) = spatial_frame {
-            let head = match self.display.state().active_mode() {
-                Some(GameUiPresentationMode::Hmd) => match &self.xr_viewer {
+            let head = match self.endpoint.display.state().active_mode() {
+                Some(GameUiPresentationMode::Hmd) => match &self.endpoint.xr_viewer {
                     Some(XrViewerFrame::RuntimeDerived {
                         tracking_from_head, ..
                     }) => Some(*tracking_from_head),
                     _ => None,
                 },
-                Some(GameUiPresentationMode::PhoneVr) => self.phone.projection().last_valid_head,
+                Some(GameUiPresentationMode::PhoneVr) => {
+                    self.endpoint.phone.projection().last_valid_head
+                }
                 _ => None,
             };
-            if let Some(action) = self.surface.observe(spatial, head, true, timestamp_ms)? {
+            if let Some(action) =
+                self.endpoint
+                    .surface
+                    .observe(spatial, head, true, timestamp_ms)?
+            {
                 self.apply_surface_action(action, &mut requests)?;
                 self.synchronize_phone(&mut requests)?;
                 self.synchronize_xr()?;
@@ -1494,41 +1455,46 @@ impl ApplicationRuntime {
             self.storage.reconcile(&self.application);
         }
         if !self.shutdown.closed()
-            && self.platform.stored_records_available
+            && self.endpoint.platform.stored_records_available
             && self.storage.needs_preview(&self.application)
         {
             let request_id = self.allocate_request()?;
             requests.push(self.storage.begin_preview(request_id));
         }
         if !self.shutdown.closed()
-            && self.platform.stored_records_available
+            && self.endpoint.platform.stored_records_available
             && self.storage.needs_save(&self.application)
         {
             let request_id = self.allocate_request()?;
             requests.push(self.storage.begin(&self.application, request_id)?);
         }
-        self.platform.presentation_mode = self
+        self.endpoint.platform.presentation_mode = self
+            .endpoint
             .display
             .state()
             .active_mode()
             .unwrap_or(GameUiPresentationMode::Screen);
-        self.platform.replay_available =
+        self.endpoint.platform.replay_available =
             self.replay_supported && self.application.replay_available();
-        self.platform.operation_pending = self.display.state().pending()
+        self.endpoint.platform.operation_pending = self.endpoint.display.state().pending()
             || self.storage.load_pending()
             || self.storage.configuration_pending();
-        self.platform.stored_records_retry_available = self.platform.stored_records_available
-            && self.storage.can_retry_preview(&self.application);
-        self.platform.render_quality_confirmed = self.graphics.resource().is_some();
-        self.platform.screen_render_scale = self.graphics.snapshot();
-        self.platform.water_quality = self.platform.screen_render_scale.water_quality;
-        self.platform.water_quality_operation = self.graphics.water_operation();
+        self.endpoint.platform.stored_records_retry_available =
+            self.endpoint.platform.stored_records_available
+                && self.storage.can_retry_preview(&self.application);
+        self.endpoint.platform.render_quality_confirmed =
+            self.endpoint.graphics.resource().is_some();
+        self.endpoint.platform.screen_render_scale = self.endpoint.graphics.snapshot();
+        self.endpoint.platform.water_quality =
+            self.endpoint.platform.screen_render_scale.water_quality;
+        self.endpoint.platform.water_quality_operation = self.endpoint.graphics.water_operation();
         self.application
             .observe_presentation(PresentationObservation::Backend {
-                ready: self.display.state().active_mode().is_some()
-                    && !self.display.state().pending()
+                ready: self.endpoint.display.state().active_mode().is_some()
+                    && !self.endpoint.display.state().pending()
                     && self.drawable_resources_available()
-                    && (self.phone.resource().is_none() || self.phone.projection().available),
+                    && (self.endpoint.phone.resource().is_none()
+                        || self.endpoint.phone.projection().available),
             })
             .map_err(ApplicationRuntimeError::Application)?;
         self.retire_stale_flight_pointers();
@@ -1536,50 +1502,54 @@ impl ApplicationRuntime {
         let revision = self.structure_revision(&environment)?;
         if !self.presentation_input_focused()
             || self
+                .endpoint
                 .chart_pointer
                 .as_ref()
                 .is_some_and(|(retained, ..)| *retained != revision)
         {
-            self.chart_pointer = None;
+            self.endpoint.chart_pointer = None;
         }
-        if !self.boot.active()
+        if !self.endpoint.boot.active()
             && requests.is_empty()
             && self
+                .endpoint
                 .retained
                 .as_ref()
                 .is_some_and(|view| view.view_revision == revision)
             && projection_baseline
                 == Some((
-                    self.graphics.resource(),
-                    self.display
+                    self.endpoint.graphics.resource(),
+                    self.endpoint
+                        .display
                         .state()
                         .active_mode()
-                        .and_then(|mode| self.graphics.target(mode)),
-                    self.graphics.epoch(),
+                        .and_then(|mode| self.endpoint.graphics.target(mode)),
+                    self.endpoint.graphics.epoch(),
                 ))
         {
             return Ok(self.output(None, requests, keyboard_consumed));
         }
         let projection = if self
+            .endpoint
             .retained
             .as_ref()
             .is_none_or(|view| view.view_revision != revision)
         {
             let mut view = game_ui_view(&self.ui, &self.context(&environment)?)
                 .map_err(ApplicationRuntimeError::Ui)?;
-            if self.boot.active() {
-                view = self.boot.view(view);
+            if self.endpoint.boot.active() {
+                view = self.endpoint.boot.view(view);
             }
             view.view_revision = revision;
             self.project_flight_pointer_view(&mut view);
             let view = Arc::new(view);
-            self.retained = Some(Arc::clone(&view));
+            self.endpoint.retained = Some(Arc::clone(&view));
             ApplicationUiProjection::View { view }
         } else {
             let mut frame = game_ui_frame(
                 &self.ui,
                 &self.context(&environment)?,
-                self.retained.as_ref().unwrap(),
+                self.endpoint.retained.as_ref().unwrap(),
                 revision,
             )
             .map_err(ApplicationRuntimeError::Ui)?;
@@ -1588,69 +1558,14 @@ impl ApplicationRuntime {
                 frame: Box::new(frame),
             }
         };
-        let scene_source = scene::SceneSource::capture(&self.application, &self.ui)?;
-        let mut scene_frame = self.scene.project(scene::SceneContext {
-            source: &scene_source,
-            viewport: &self.platform.viewport,
-            display: self
-                .display
-                .state()
-                .active_mode()
-                .map(|mode| (mode, self.display.active_resource())),
-            xr_viewer: self.xr_viewer.as_ref(),
-            phone_head: self.phone.projection().last_valid_head,
-            render_extent_px: self.graphics.resource().map(|resource| resource.extent_px),
-            venue_visible: self.assets.venue_visible(),
-        })?;
-        scene_frame.projection.geometry = self
-            .assets
-            .project_geometry(
-                scene_frame.aircraft,
-                self.application.aircraft().map_err(|cause| {
-                    ApplicationRuntimeError::Application(
-                        birdman_game_app::application::ApplicationError::Preparation(
-                            birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
-                        ),
-                    )
-                })?,
-            )
-            .map_err(ApplicationRuntimeError::Assets)?;
-        if self.application.core_session().snapshot().phase() == SessionPhase::Replay
-            && !self.application.replay_available()
-            && let Some(geometry) = &mut scene_frame.projection.geometry
-        {
-            geometry.aircraft_visible = false;
-            geometry.main_wing_visible = false;
-        }
-        let position = scene_frame.projection.world_from_aircraft.position;
-        scene_frame.projection.lighting = self.assets.sunlight().and_then(|sunlight| {
-            birdman_game_scene::lake_sky::LakeSceneShadow::for_aircraft(
-                [position.x, position.y, position.z],
-                sunlight,
-            )
-        });
-        if let Some(lighting) = &mut scene_frame.projection.lighting {
-            lighting.shadow_enabled &= self
-                .graphics
-                .resource()
-                .is_some_and(|resource| resource.quality.shadow.enabled());
-        }
-        if self.drawable_resources_available()
-            && self.presentation_visible()
-            && let Some(camera) = &scene_frame.projection.camera
-        {
-            let view = camera
-                .eyes
-                .first()
-                .map(|eye| (eye.world_from_eye, eye.projection))
-                .or_else(|| camera.world_from_head.zip(camera.screen_projection));
-            if let Some((pose, projection)) = view {
-                scene_frame.projection.reflection =
-                    birdman_game_presentation::camera::planar_reflection(pose, projection, 0.0)
-                        .map_err(ApplicationRuntimeError::Camera)?;
-            }
-        }
-        let view = self.retained.as_ref().unwrap();
+        let scene_source =
+            scene::SceneSource::capture(&self.application, &self.ui, &mut self.endpoint.assets)?;
+        let drawable_resources = self.drawable_resources_available();
+        let presentation_visible = self.presentation_visible();
+        let scene_frame =
+            self.endpoint
+                .project_scene(scene_source, drawable_resources, presentation_visible)?;
+        let view = self.endpoint.retained.as_ref().unwrap();
         let structural_frame = if matches!(projection, ApplicationUiProjection::View { .. }) {
             Some({
                 let mut frame =
@@ -1673,31 +1588,35 @@ impl ApplicationRuntime {
                 frame.clone(),
                 surface::SurfaceDisplay {
                     resource: self
+                        .endpoint
                         .display
                         .state()
                         .active_mode()
-                        .map(|mode| (mode, self.display.active_resource())),
-                    frame_rate_label: self.frame_rate.label(),
+                        .map(|mode| (mode, self.endpoint.display.active_resource())),
+                    frame_rate_label: self.endpoint.frame_rate.label(),
                 },
             )
         });
         let graphics = self
+            .endpoint
             .graphics
             .projection(render_spatial, observed_ms)
             .map_err(ApplicationRuntimeError::Graphics)?;
         let drawing = ApplicationDrawingOutput {
             display: self.application.display_settings().adjustment(),
             presentation: ApplicationDrawingPresentation {
-                frame_rate_label: self.frame_rate.label(),
-                mode: self.display.state().active_mode(),
+                frame_rate_label: self.endpoint.frame_rate.label(),
+                mode: self.endpoint.display.state().active_mode(),
                 screen_ui_visible: !self.shutdown.closed()
                     && self
+                        .endpoint
                         .display
                         .state()
                         .active_mode()
                         .is_none_or(|mode| mode == GameUiPresentationMode::Screen),
                 screen_hud_visible: !self.shutdown.closed()
-                    && self.display.state().active_mode() == Some(GameUiPresentationMode::Screen)
+                    && self.endpoint.display.state().active_mode()
+                        == Some(GameUiPresentationMode::Screen)
                     && view.hud.is_some(),
                 scene_visible: !self.shutdown.closed()
                     && self.presentation_visible()
@@ -1705,26 +1624,27 @@ impl ApplicationRuntime {
                     && scene_frame.projection.camera.is_some(),
             },
             graphics,
-            scene: scene_frame.projection.clone(),
+            scene: scene_frame.projection,
             spatial,
             ui: projection,
         };
         if let Some((view, frame, display)) = paint_inputs {
             let id = self
+                .endpoint
                 .next_presentation_lease
                 .checked_add(1)
                 .ok_or(ApplicationRuntimeError::PresentationExhausted)?;
             let scope = self.presentation_scope()?;
-            self.next_presentation_lease = id;
-            self.presentation_lease = Some(id);
-            self.presentation_work = Some(PresentationWork {
+            self.endpoint.next_presentation_lease = id;
+            self.endpoint.presentation_lease = Some(id);
+            self.endpoint.presentation_work = Some(PresentationWork {
                 id,
                 scope,
-                owner: std::mem::take(&mut self.surface),
+                owner: std::mem::take(&mut self.endpoint.surface),
                 view,
                 frame,
-                scene: scene_frame,
-                font: self.surface_observation.clone(),
+                tracking: scene_frame.tracking,
+                font: self.endpoint.surface_observation.clone(),
                 display,
                 drawing,
             });
@@ -1764,7 +1684,10 @@ impl ApplicationRuntime {
             KeyboardKey::L => Some(FlightControlKey::KeyL),
             _ => None,
         };
-        if self.page_visible && self.document_focused && !self.display.state().pending() {
+        if self.endpoint.page_visible
+            && self.endpoint.document_focused
+            && !self.endpoint.display.state().pending()
+        {
             if let Some(key) = control_key {
                 keyboard_consumed = self.application.observe_flight_key(FlightKeyObservation {
                     key,
@@ -1795,7 +1718,7 @@ impl ApplicationRuntime {
             } else if matches!(key, KeyboardKey::P | KeyboardKey::Escape)
                 && pressed
                 && !repeat
-                && !self.boot.active()
+                && !self.endpoint.boot.active()
             {
                 let command = match self.application.core_session().snapshot().phase() {
                     SessionPhase::FlightRunning => {
@@ -1821,19 +1744,20 @@ impl ApplicationRuntime {
 
     fn close(&mut self, requests: &mut Vec<ApplicationRequest>) {
         self.application.shutdown_controller();
-        let renderer = self.graphics.retire();
+        let renderer = self.endpoint.graphics.retire();
         requests.extend(self.shutdown.begin(renderer));
-        self.boot = boot::BootOwner::Closed;
-        self.chart_pointer = None;
-        self.page_visible = false;
+        self.endpoint.boot = boot::BootOwner::Closed;
+        self.endpoint.chart_pointer = None;
+        self.endpoint.page_visible = false;
         self.storage.close();
-        self.phone.close(requests);
-        if let Some(request_id) = self.phone_wake.take() {
+        self.endpoint.phone.close(requests);
+        if let Some(request_id) = self.endpoint.phone_wake.take() {
             requests.push(ApplicationRequest::CancelWake { request_id });
         }
-        requests.extend(self.assets.select(None));
+        requests.extend(self.endpoint.assets.select(None));
         requests.extend(
-            self.display
+            self.endpoint
+                .display
                 .close()
                 .into_iter()
                 .map(|request| ApplicationRequest::Display { request }),
@@ -1867,33 +1791,37 @@ impl ApplicationRuntime {
     }
 
     fn presentation_visible(&self) -> bool {
-        !self.page_frozen
-            && if self.display.state().active_mode() == Some(GameUiPresentationMode::Hmd) {
-                self.xr_visibility != XrVisibility::Hidden
+        !self.endpoint.page_frozen
+            && if self.endpoint.display.state().active_mode() == Some(GameUiPresentationMode::Hmd) {
+                self.endpoint.xr_visibility != XrVisibility::Hidden
             } else {
-                self.page_visible
+                self.endpoint.page_visible
             }
     }
 
     fn presentation_input_focused(&self) -> bool {
-        !self.page_frozen
-            && if self.display.state().active_mode() == Some(GameUiPresentationMode::Hmd) {
-                self.xr_visibility == XrVisibility::Visible && self.xr_input_focused
+        !self.endpoint.page_frozen
+            && if self.endpoint.display.state().active_mode() == Some(GameUiPresentationMode::Hmd) {
+                self.endpoint.xr_visibility == XrVisibility::Visible
+                    && self.endpoint.xr_input_focused
             } else {
-                self.page_visible && self.document_focused
+                self.endpoint.page_visible && self.endpoint.document_focused
             }
     }
 
     fn spatial_input_focused(&self) -> bool {
         self.presentation_input_focused()
-            && !self.display.state().pending()
-            && match self.display.state().active_mode() {
+            && !self.endpoint.display.state().pending()
+            && match self.endpoint.display.state().active_mode() {
                 Some(GameUiPresentationMode::Hmd) => {
-                    self.xr_visibility == XrVisibility::Visible
-                        && self.xr_input_focused
-                        && matches!(self.xr_viewer, Some(XrViewerFrame::RuntimeDerived { .. }))
+                    self.endpoint.xr_visibility == XrVisibility::Visible
+                        && self.endpoint.xr_input_focused
+                        && matches!(
+                            self.endpoint.xr_viewer,
+                            Some(XrViewerFrame::RuntimeDerived { .. })
+                        )
                 }
-                Some(GameUiPresentationMode::PhoneVr) => self.phone.projection().available,
+                Some(GameUiPresentationMode::PhoneVr) => self.endpoint.phone.projection().available,
                 _ => false,
             }
     }
@@ -1904,7 +1832,8 @@ impl ApplicationRuntime {
         requests: &mut Vec<ApplicationRequest>,
     ) -> Result<(), ApplicationRuntimeError> {
         let action = if surface.back {
-            self.retained
+            self.endpoint
+                .retained
                 .as_ref()
                 .and_then(|view| view.back_action.clone())
         } else {
@@ -1915,7 +1844,7 @@ impl ApplicationRuntime {
         if let Some(action) = action {
             match self.apply_action(surface.view_revision, action, requests) {
                 Err(ApplicationRuntimeError::Ui(GameUiError::StaleView)) => {
-                    self.surface.retire_input();
+                    self.endpoint.surface.retire_input();
                 }
                 result => result?,
             }
@@ -1929,13 +1858,14 @@ impl ApplicationRuntime {
         action: GameUiAction,
         requests: &mut Vec<ApplicationRequest>,
     ) -> Result<(), ApplicationRuntimeError> {
-        let update = if self.boot.active() {
+        let update = if self.endpoint.boot.active() {
             let view = self
+                .endpoint
                 .retained
                 .as_ref()
                 .filter(|view| view.view_revision == view_revision)
                 .ok_or(ApplicationRuntimeError::Ui(GameUiError::StaleView))?;
-            if !matches!(self.boot, boot::BootOwner::Failed(_)) {
+            if !matches!(self.endpoint.boot, boot::BootOwner::Failed(_)) {
                 return Ok(());
             }
             let action = match action {
@@ -1970,9 +1900,9 @@ impl ApplicationRuntime {
                     input:
                         birdman_game_presentation::game_ui::GameUiControlInput::Activate { control_id },
                 } if control_id == "game-boot-retry" => {
-                    self.resources = None;
-                    self.resource_readiness = BackendReadiness::Preparing;
-                    self.boot = if self.graphics.renderer_id().is_some() {
+                    self.endpoint.resources = None;
+                    self.endpoint.resource_readiness = BackendReadiness::Preparing;
+                    self.endpoint.boot = if self.endpoint.graphics.renderer_id().is_some() {
                         boot::BootOwner::Preparing
                     } else {
                         boot::BootOwner::Initial
@@ -1985,6 +1915,7 @@ impl ApplicationRuntime {
             let environment = self.environment()?;
             let revision = self.structure_revision(&environment)?;
             if self
+                .endpoint
                 .retained
                 .as_ref()
                 .is_none_or(|view| view.view_revision != view_revision)
@@ -1996,7 +1927,7 @@ impl ApplicationRuntime {
                 .map_err(ApplicationRuntimeError::Ui)?
         };
         if self.ui.flight_camera != update.state.flight_camera {
-            self.scene.reset_look();
+            self.endpoint.scene.reset_look();
         }
         self.ui = update.state;
         for effect in update.effects {
@@ -2012,8 +1943,8 @@ impl ApplicationRuntime {
                         &command,
                         birdman_game_app::application::SessionCommand::RetryBriefing {}
                     ) {
-                        self.resources = None;
-                        self.resource_readiness = BackendReadiness::Preparing;
+                        self.endpoint.resources = None;
+                        self.endpoint.resource_readiness = BackendReadiness::Preparing;
                     }
                     let keyboard_change = matches!(
                         &command,
@@ -2025,7 +1956,7 @@ impl ApplicationRuntime {
                     );
                     let previous_phase = self.application.core_session().snapshot().phase();
                     self.application
-                        .execute(command, self.resource_readiness)
+                        .execute(command, self.endpoint.resource_readiness)
                         .map_err(ApplicationRuntimeError::Application)?;
                     if keyboard_change {
                         self.storage
@@ -2050,7 +1981,8 @@ impl ApplicationRuntime {
                         | GameUiPlatformCommand::SetScreenRenderAuto { .. }
                         | GameUiPlatformCommand::SetWaterQuality { .. }),
                 } => {
-                    self.graphics
+                    self.endpoint
+                        .graphics
                         .select(&command, self.observed_ms)
                         .map_err(ApplicationRuntimeError::Graphics)?;
                 }
@@ -2078,7 +2010,7 @@ impl ApplicationRuntime {
                     command: GameUiPlatformCommand::SetPresentation { mode },
                 } => {
                     let request_id = self.allocate_request()?;
-                    match self.display.request(mode, request_id) {
+                    match self.endpoint.display.request(mode, request_id) {
                         display::DisplayRequestOutcome::Accepted(request) => {
                             requests.push(ApplicationRequest::Display { request })
                         }
@@ -2094,15 +2026,18 @@ impl ApplicationRuntime {
                     command: GameUiPlatformCommand::RecenterPhoneTracking {},
                 } => {
                     if let Some(correction) = self
+                        .endpoint
                         .phone
                         .recenter()
                         .map_err(ApplicationRuntimeError::Camera)?
                     {
                         let change = self
+                            .endpoint
                             .scene
                             .tracking_change(correction)
                             .map_err(ApplicationRuntimeError::Camera)?;
-                        self.surface
+                        self.endpoint
+                            .surface
                             .recenter_tracking(change)
                             .map_err(ApplicationRuntimeError::Camera)?;
                     }
@@ -2110,8 +2045,9 @@ impl ApplicationRuntime {
                 GameUiEffect::Platform {
                     command: GameUiPlatformCommand::RecenterMenu {},
                 } => {
-                    self.surface
-                        .recenter_menu(self.scene.reference_head())
+                    self.endpoint
+                        .surface
+                        .recenter_menu(self.endpoint.scene.reference_head())
                         .map_err(ApplicationRuntimeError::Camera)?;
                 }
                 GameUiEffect::Platform {
@@ -2173,7 +2109,7 @@ impl ApplicationRuntime {
         previous_from_new: birdman_game_presentation::camera::Pose,
     ) -> Result<(), birdman_game_presentation::camera::CameraError> {
         let new_from_previous = birdman_game_presentation::camera::inverse_pose(previous_from_new)?;
-        let mut viewer = self.xr_viewer.clone();
+        let mut viewer = self.endpoint.xr_viewer.clone();
         let head = match &mut viewer {
             Some(XrViewerFrame::RuntimeDerived {
                 tracking_from_head, ..
@@ -2186,9 +2122,11 @@ impl ApplicationRuntime {
         if let Some(head) = head {
             *head = birdman_game_presentation::camera::compose_pose(new_from_previous, *head)?;
         }
-        self.scene.reset_reference(resource_id, previous_from_new)?;
-        self.xr_viewer = viewer;
-        self.surface.retire_input();
+        self.endpoint
+            .scene
+            .reset_reference(resource_id, previous_from_new)?;
+        self.endpoint.xr_viewer = viewer;
+        self.endpoint.surface.retire_input();
         Ok(())
     }
 
@@ -2197,10 +2135,11 @@ impl ApplicationRuntime {
         message: &str,
         requests: &mut Vec<ApplicationRequest>,
     ) -> Result<(), ApplicationRuntimeError> {
-        self.platform.notification = message.to_owned();
-        if !self.display.state().pending() {
+        self.endpoint.platform.notification = message.to_owned();
+        if !self.endpoint.display.state().pending() {
             let request_id = self.allocate_request()?;
             match self
+                .endpoint
                 .display
                 .request(GameUiPresentationMode::Screen, request_id)
             {
@@ -2217,25 +2156,29 @@ impl ApplicationRuntime {
     }
 
     fn synchronize_xr(&mut self) -> Result<(), ApplicationRuntimeError> {
-        let document_available = !self.page_frozen
-            && (self.display.state().active_mode() == Some(GameUiPresentationMode::Hmd)
+        let document_available = !self.endpoint.page_frozen
+            && (self.endpoint.display.state().active_mode() == Some(GameUiPresentationMode::Hmd)
                 || self.presentation_input_focused());
         self.application
             .observe_availability(ExternalPauseReason::DocumentHidden, document_available)
             .map_err(ApplicationRuntimeError::Application)?;
-        let resource = (self.display.state().active_mode() == Some(GameUiPresentationMode::Hmd))
-            .then(|| self.display.active_resource())
-            .flatten();
-        if self.xr_resource != resource {
-            self.xr_resource = resource;
-            self.xr_viewer = None;
-            self.xr_visibility = XrVisibility::Visible;
-            self.xr_input_focused = false;
+        let resource = (self.endpoint.display.state().active_mode()
+            == Some(GameUiPresentationMode::Hmd))
+        .then(|| self.endpoint.display.active_resource())
+        .flatten();
+        if self.endpoint.xr_resource != resource {
+            self.endpoint.xr_resource = resource;
+            self.endpoint.xr_viewer = None;
+            self.endpoint.xr_visibility = XrVisibility::Visible;
+            self.endpoint.xr_input_focused = false;
         }
         let observation = resource.map(|_| XrAvailability {
-            visibility: self.xr_visibility,
-            input_focused: self.xr_input_focused,
-            tracking_valid: matches!(self.xr_viewer, Some(XrViewerFrame::RuntimeDerived { .. })),
+            visibility: self.endpoint.xr_visibility,
+            input_focused: self.endpoint.xr_input_focused,
+            tracking_valid: matches!(
+                self.endpoint.xr_viewer,
+                Some(XrViewerFrame::RuntimeDerived { .. })
+            ),
         });
         self.application
             .observe_presentation(PresentationObservation::Xr { observation })
@@ -2246,30 +2189,30 @@ impl ApplicationRuntime {
         &mut self,
         requests: &mut Vec<ApplicationRequest>,
     ) -> Result<(), ApplicationRuntimeError> {
-        let resource = (self.display.state().active_mode()
+        let resource = (self.endpoint.display.state().active_mode()
             == Some(GameUiPresentationMode::PhoneVr))
-        .then(|| self.display.active_resource())
+        .then(|| self.endpoint.display.active_resource())
         .flatten();
-        if self.phone.resource() != resource {
-            self.phone.end();
+        if self.endpoint.phone.resource() != resource {
+            self.endpoint.phone.end();
             if let Some(resource_id) = resource {
-                self.phone.begin(resource_id);
+                self.endpoint.phone.begin(resource_id);
             }
-            if let Some(request_id) = self.phone_wake.take() {
+            if let Some(request_id) = self.endpoint.phone_wake.take() {
                 requests.push(ApplicationRequest::CancelWake { request_id });
             }
         }
-        self.phone.observe_time(self.observed_ms);
-        self.phone.release_unused(requests);
+        self.endpoint.phone.observe_time(self.observed_ms);
+        self.endpoint.phone.release_unused(requests);
         if !self.shutdown.closed()
-            && (resource.is_some() || matches!(self.boot, boot::BootOwner::Ready))
-            && self.phone.needs_subscription()
+            && (resource.is_some() || matches!(self.endpoint.boot, boot::BootOwner::Ready))
+            && self.endpoint.phone.needs_subscription()
         {
             let resource_id = self.allocate_request()?;
-            self.phone.subscribe(resource_id, requests);
+            self.endpoint.phone.subscribe(resource_id, requests);
         }
-        self.platform.phone_vr_available = self.phone.available();
-        let failure = match self.phone.projection().reason {
+        self.endpoint.platform.phone_vr_available = self.endpoint.phone.available();
+        let failure = match self.endpoint.phone.projection().reason {
             Some(PhoneTrackingReason::InitialSampleTimeout) => {
                 Some("端末姿勢を取得できなかったため通常画面へ戻る。")
             }
@@ -2285,15 +2228,15 @@ impl ApplicationRuntime {
             _ => None,
         };
         if let Some(message) = failure
-            && self.phone.resource().is_some()
-            && !self.display.state().pending()
+            && self.endpoint.phone.resource().is_some()
+            && !self.endpoint.display.state().pending()
         {
             self.recover_screen(message, requests)?;
         }
-        match (self.phone.deadline(), self.phone_wake) {
+        match (self.endpoint.phone.deadline(), self.endpoint.phone_wake) {
             (Some(at_ms), None) => {
                 let request_id = self.allocate_request()?;
-                self.phone_wake = Some(request_id);
+                self.endpoint.phone_wake = Some(request_id);
                 requests.push(ApplicationRequest::ScheduleWake {
                     request_id,
                     at_ms,
@@ -2301,7 +2244,7 @@ impl ApplicationRuntime {
                 });
             }
             (None, Some(request_id)) => {
-                self.phone_wake = None;
+                self.endpoint.phone_wake = None;
                 requests.push(ApplicationRequest::CancelWake { request_id });
             }
             _ => {}
@@ -2326,32 +2269,39 @@ impl ApplicationRuntime {
 
     fn synchronize_graphics(&mut self) -> Result<(), ApplicationRuntimeError> {
         // HMD images have runtime-owned dimensions; configured Screen/Phone targets can scale.
-        self.graphics
+        self.endpoint
+            .graphics
             .resolution_constraint(
-                self.display.state().active_mode() != Some(GameUiPresentationMode::Hmd),
+                self.endpoint.display.state().active_mode() != Some(GameUiPresentationMode::Hmd),
                 self.observed_ms,
             )
             .map_err(ApplicationRuntimeError::Graphics)?;
-        let eligible = self.page_visible
-            && !self.display.state().pending()
-            && self.display.state().active_mode().is_some();
-        self.graphics
+        let eligible = self.endpoint.page_visible
+            && !self.endpoint.display.state().pending()
+            && self.endpoint.display.state().active_mode().is_some();
+        self.endpoint
+            .graphics
             .synchronize(self.render_scope(), eligible, self.observed_ms)
             .map_err(ApplicationRuntimeError::Graphics)?;
         Ok(())
     }
 
     fn drawable_resources_available(&self) -> bool {
-        let Some(current) = self.resources.as_ref().map(|resources| resources.key) else {
+        let Some(current) = self
+            .endpoint
+            .resources
+            .as_ref()
+            .map(|resources| resources.key)
+        else {
             return false;
         };
-        matches!(self.resource_readiness, BackendReadiness::Ready)
+        matches!(self.endpoint.resource_readiness, BackendReadiness::Ready)
             || !matches!(
                 self.application.core_session().snapshot().phase(),
                 SessionPhase::BriefingPreparing
                     | SessionPhase::BriefingReady
                     | SessionPhase::BriefingFailed { .. }
-            ) && self.last_ready_resources.is_some_and(|ready| {
+            ) && self.endpoint.last_ready_resources.is_some_and(|ready| {
                 ready.aircraft_identity == current.aircraft_identity
                     && ready.environment == current.environment
                     && ready.mode == current.mode
@@ -2365,27 +2315,27 @@ impl ApplicationRuntime {
         requests: &mut Vec<ApplicationRequest>,
     ) -> Result<(), ApplicationRuntimeError> {
         if matches!(
-            self.boot,
+            self.endpoint.boot,
             boot::BootOwner::Failed(_) | boot::BootOwner::Closed
         ) {
-            requests.extend(self.assets.select(None));
-            self.resources = None;
+            requests.extend(self.endpoint.assets.select(None));
+            self.endpoint.resources = None;
             return Ok(());
         }
-        let state = self.display.state();
+        let state = self.endpoint.display.state();
         let Some(graphics) = state
             .active_mode()
-            .and_then(|mode| self.graphics.target(mode))
+            .and_then(|mode| self.endpoint.graphics.target(mode))
         else {
-            requests.extend(self.assets.select(None));
-            self.resources = None;
-            self.resource_readiness = BackendReadiness::Preparing;
+            requests.extend(self.endpoint.assets.select(None));
+            self.endpoint.resources = None;
+            self.endpoint.resource_readiness = BackendReadiness::Preparing;
             return Ok(());
         };
         let Some(mode) = state.active_mode() else {
-            requests.extend(self.assets.select(None));
-            self.resources = None;
-            self.resource_readiness = BackendReadiness::Preparing;
+            requests.extend(self.endpoint.assets.select(None));
+            self.endpoint.resources = None;
+            self.endpoint.resource_readiness = BackendReadiness::Preparing;
             return Ok(());
         };
         let environment = EnvironmentSelection::for_session(&self.application)
@@ -2405,10 +2355,11 @@ impl ApplicationRuntime {
             graphics,
             environment: environment.identity,
             mode,
-            display_resource_id: self.display.active_resource(),
+            display_resource_id: self.endpoint.display.active_resource(),
         };
         // Archive metadata stays unavailable; only the already displayed background is reused.
         let environment = if self
+            .endpoint
             .resources
             .as_ref()
             .is_some_and(|resources| resources.key == desired_key)
@@ -2421,7 +2372,7 @@ impl ApplicationRuntime {
             {
                 EnvironmentProjection::Available { .. } => environment,
                 EnvironmentProjection::Unavailable { .. } => {
-                    let Some(previous) = self.last_ready_resources else {
+                    let Some(previous) = self.endpoint.last_ready_resources else {
                         return Ok(());
                     };
                     EnvironmentSelection {
@@ -2437,13 +2388,15 @@ impl ApplicationRuntime {
             ..desired_key
         };
         if self
+            .endpoint
             .resources
             .as_ref()
             .is_some_and(|resources| resources.key == key)
         {
-            self.graphics
+            self.endpoint
+                .graphics
                 .prepared(
-                    matches!(self.resource_readiness, BackendReadiness::Ready),
+                    matches!(self.endpoint.resource_readiness, BackendReadiness::Ready),
                     false,
                     self.observed_ms,
                 )
@@ -2451,10 +2404,11 @@ impl ApplicationRuntime {
             return Ok(());
         }
         let external_change = self
+            .endpoint
             .resources
             .as_ref()
             .map(|resources| resources.key)
-            .or(self.last_ready_resources)
+            .or(self.endpoint.last_ready_resources)
             .is_some_and(|previous| {
                 previous.aircraft_identity != key.aircraft_identity
                     || previous.environment != key.environment
@@ -2464,6 +2418,7 @@ impl ApplicationRuntime {
             });
         let request_id = self.allocate_request()?;
         let assets = self
+            .endpoint
             .assets
             .prepare(
                 request_id,
@@ -2476,17 +2431,18 @@ impl ApplicationRuntime {
                     )
                 })?,
                 graphics,
-                self.graphics.requested(),
+                self.endpoint.graphics.requested(),
             )
             .map_err(ApplicationRuntimeError::Assets)?;
-        requests.extend(self.assets.select(Some(request_id)));
-        self.resources = Some(ResourcePreparation {
+        requests.extend(self.endpoint.assets.select(Some(request_id)));
+        self.endpoint.resources = Some(ResourcePreparation {
             key,
             request_id,
             completed: false,
         });
-        self.resource_readiness = BackendReadiness::Preparing;
-        self.graphics
+        self.endpoint.resource_readiness = BackendReadiness::Preparing;
+        self.endpoint
+            .graphics
             .prepared(false, external_change, self.observed_ms)
             .map_err(ApplicationRuntimeError::Graphics)?;
         requests.push(ApplicationRequest::PrepareResources {
@@ -2582,7 +2538,7 @@ impl ApplicationRuntime {
             && self.application.core_session().snapshot().phase() == SessionPhase::BriefingPreparing
         {
             self.application
-                .observe_readiness(self.resource_readiness)
+                .observe_readiness(self.endpoint.resource_readiness)
                 .map_err(ApplicationRuntimeError::Session)?;
         }
         if !self.shutdown.closed()
@@ -2809,18 +2765,19 @@ impl ApplicationRuntime {
                 .archive()
                 .map(|archive| archive.identity_metadata()),
             environment_readout: environment,
-            platform: &self.platform,
+            platform: &self.endpoint.platform,
         })
     }
 
     fn structure_revision(&mut self, environment: &str) -> Result<u32, ApplicationRuntimeError> {
-        let environment = if self.boot.active() {
-            format!("{environment}\n{}", self.boot.scope())
+        let environment = if self.endpoint.boot.active() {
+            format!("{environment}\n{}", self.endpoint.boot.scope())
         } else {
             environment.to_owned()
         };
         let key = GameUiStructureKey::new(&self.ui, &self.context(&environment)?);
-        self.structure
+        self.endpoint
+            .structure
             .observe(key, self.application.record_source_id())
             .map_err(ApplicationRuntimeError::Ui)
     }

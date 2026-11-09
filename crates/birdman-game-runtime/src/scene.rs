@@ -87,6 +87,8 @@ pub(super) struct SceneSource {
     aircraft: Option<FlightRenderPose>,
     world_from_aircraft: Pose,
     camera: CameraSource,
+    pub(super) geometry: Option<crate::ApplicationGeometryFrame>,
+    pub(super) sunlight: Option<birdman_game_scene::lake_sky::LakeSunlight>,
 }
 
 enum CameraSource {
@@ -107,6 +109,7 @@ impl SceneSource {
     pub(super) fn capture(
         application: &ApplicationSession,
         ui: &GameUiState,
+        assets: &mut super::assets::AssetsOwner,
     ) -> Result<Self, ApplicationRuntimeError> {
         let phase = application.core_session().snapshot().phase();
         let replay = if matches!(phase, SessionPhase::Replay | SessionPhase::Attract)
@@ -237,21 +240,39 @@ impl SceneSource {
                 .map_err(ApplicationRuntimeError::Camera)?,
             }
         };
+        let mut geometry = assets
+            .project_geometry(
+                aircraft,
+                application.aircraft().map_err(|cause| {
+                    ApplicationRuntimeError::Application(
+                        birdman_game_app::application::ApplicationError::Preparation(
+                            birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
+                        ),
+                    )
+                })?,
+            )
+            .map_err(ApplicationRuntimeError::Assets)?;
+        if phase == SessionPhase::Replay
+            && !application.replay_available()
+            && let Some(geometry) = &mut geometry
+        {
+            geometry.aircraft_visible = false;
+            geometry.main_wing_visible = false;
+        }
         Ok(Self {
             phase,
             aircraft,
             world_from_aircraft,
             camera,
+            geometry,
+            sunlight: assets.sunlight(),
         })
     }
 }
 
 pub(super) struct SceneFrame {
-    pub aircraft: Option<FlightRenderPose>,
     pub projection: ApplicationSceneProjection,
-    pub viewer: Option<XrViewerFrame>,
-    pub rig: Option<XrCameraRig>,
-    pub reference: Option<XrReferenceFrame>,
+    pub tracking: super::surface::SurfaceTracking,
 }
 
 #[derive(Default)]
@@ -326,7 +347,6 @@ impl SceneOwner {
             self.rig = None;
             self.reference = None;
             return Ok(SceneFrame {
-                aircraft,
                 projection: ApplicationSceneProjection {
                     lighting: None,
                     reflection: None,
@@ -339,9 +359,12 @@ impl SceneOwner {
                     world_from_aircraft,
                     camera: None,
                 },
-                viewer: None,
-                rig: None,
-                reference: None,
+                tracking: super::surface::SurfaceTracking {
+                    world_from_head: None,
+                    viewer: None,
+                    rig: None,
+                    reference: None,
+                },
             });
         };
         if self.resource != Some(display) {
@@ -492,7 +515,6 @@ impl SceneOwner {
         self.rig = Some(rig);
         self.reference = reference;
         Ok(SceneFrame {
-            aircraft,
             projection: ApplicationSceneProjection {
                 lighting: None,
                 reflection: None,
@@ -520,9 +542,12 @@ impl SceneOwner {
                     eyes,
                 }),
             },
-            viewer,
-            rig: Some(rig),
-            reference,
+            tracking: super::surface::SurfaceTracking {
+                world_from_head,
+                viewer,
+                rig: Some(rig),
+                reference,
+            },
         })
     }
 }
