@@ -2027,10 +2027,14 @@ impl ApplicationServer {
                 .observe_readiness(readiness)
                 .map_err(ApplicationRuntimeError::Session)?;
         }
+        let diagnostic_phase_before = self.authority.application.core_session().snapshot().phase();
+        let diagnostic_advance_started = std::time::Instant::now();
         let devices = self.authority.controller_gamepads.clone();
         if !self.authority.shutdown.closed() {
             self.authority.advance_frame(now_ms, &devices, available)?;
         }
+        let diagnostic_advance_ms = diagnostic_advance_started.elapsed().as_secs_f64() * 1000.0;
+        let diagnostic_phase_after = self.authority.application.core_session().snapshot().phase();
         let mut requests = Vec::new();
         self.authority
             .collect_controller_requests(&mut requests, available)?;
@@ -2040,12 +2044,15 @@ impl ApplicationServer {
         if self.authority.shutdown.closed() {
             return Ok(());
         }
+        let diagnostic_scene_started = std::time::Instant::now();
         self.update_assets_generation()?;
         let source = scene::SceneSource::capture(
             &self.authority.application,
             &self.authority.ui,
             &mut self.authority.assets,
         )?;
+        let diagnostic_scene_ms = diagnostic_scene_started.elapsed().as_secs_f64() * 1000.0;
+        let diagnostic_publication_started = std::time::Instant::now();
         let peers: Vec<_> = self.peers.keys().copied().collect();
         for id in peers {
             if let Err(cause) = self.publish_peer(id, &source) {
@@ -2054,6 +2061,18 @@ impl ApplicationServer {
             }
         }
         self.retain_assets();
+        let diagnostic_publication_ms =
+            diagnostic_publication_started.elapsed().as_secs_f64() * 1000.0;
+        if diagnostic_advance_ms > 100.0
+            || diagnostic_scene_ms > 100.0
+            || diagnostic_publication_ms > 100.0
+            || (diagnostic_phase_before != diagnostic_phase_after
+                && matches!(diagnostic_phase_after, SessionPhase::FlightPaused { .. }))
+        {
+            eprintln!(
+                "Host pulse stages: advance={diagnostic_advance_ms:.1} ms, scene={diagnostic_scene_ms:.1} ms, publication={diagnostic_publication_ms:.1} ms; {diagnostic_phase_before:?} -> {diagnostic_phase_after:?}"
+            );
+        }
         Ok(())
     }
 
