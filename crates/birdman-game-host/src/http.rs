@@ -38,7 +38,7 @@ pub(crate) struct HostListener {
     pub https: bool,
     active: Arc<AtomicBool>,
     server: axum_server::Handle,
-    task: tokio::task::JoinHandle<std::io::Result<()>>,
+    task: Option<tokio::task::JoinHandle<std::io::Result<()>>>,
 }
 
 impl HostListener {
@@ -99,8 +99,34 @@ impl HostListener {
             https,
             server,
             active,
-            task,
+            task: Some(task),
         })
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.task.as_ref().is_some_and(|task| task.is_finished())
+    }
+
+    pub async fn terminal_cause(&mut self) -> String {
+        match self.task.take().expect("terminal listener task").await {
+            Ok(Err(error)) => error.to_string(),
+            Err(error) => error.to_string(),
+            Ok(Ok(())) => "HTTP listener terminated".to_owned(),
+        }
+    }
+
+    pub async fn stop(mut self) -> Result<(), String> {
+        self.active.store(false, Ordering::Release);
+        self.server.shutdown();
+        let Some(task) = self.task.take() else {
+            return Ok(());
+        };
+        task.abort();
+        match task.await {
+            Ok(result) => result.map_err(|error| error.to_string()),
+            Err(error) if error.is_cancelled() => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
     }
 }
 
@@ -108,7 +134,9 @@ impl Drop for HostListener {
     fn drop(&mut self) {
         self.active.store(false, Ordering::Release);
         self.server.shutdown();
-        self.task.abort();
+        if let Some(task) = &self.task {
+            task.abort();
+        }
     }
 }
 
@@ -193,6 +221,11 @@ fn same_origin(headers: &HeaderMap, https: bool) -> bool {
         return false;
     };
     origin.scheme() == scheme
+        && expected.username().is_empty()
+        && expected.password().is_none()
+        && expected.path() == "/"
+        && expected.query().is_none()
+        && expected.fragment().is_none()
         && origin.username().is_empty()
         && origin.password().is_none()
         && origin.path() == "/"
@@ -267,6 +300,11 @@ mod tests {
         ] {
             headers.insert(header::ORIGIN, origin.parse().unwrap());
             assert_eq!(same_origin(&headers, false), accepted, "{origin}");
+        }
+        headers.insert(header::ORIGIN, "http://localhost:8080".parse().unwrap());
+        for host in ["user@localhost:8080", "localhost:8080/path"] {
+            headers.insert(header::HOST, host.parse().unwrap());
+            assert!(!same_origin(&headers, false), "{host}");
         }
     }
 }

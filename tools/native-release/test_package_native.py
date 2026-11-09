@@ -171,11 +171,17 @@ class NativePackagingTests(unittest.TestCase):
                             packaging.validate_header(binary, target)
 
     def test_source_requires_complete_exact_sha(self) -> None:
-        with patch("package_native.subprocess.check_output", return_value=SOURCE_SHA + "\n"):
+        def output(command, **_options):
+            return "" if command[1] == "status" else SOURCE_SHA + "\n"
+        with patch("package_native.subprocess.check_output", side_effect=output):
             packaging.require_source(Path("."), SOURCE_SHA)
             for invalid in ("a" * 7, "b" * 40, SOURCE_SHA.upper(), "main"):
                 with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                     packaging.require_source(Path("."), invalid)
+        for dirty in (" M source.rs\n", "?? new-source.rs\n"):
+            with patch("package_native.subprocess.check_output", side_effect=[SOURCE_SHA + "\n", dirty]), \
+                    self.subTest(dirty=dirty), self.assertRaises(ValueError):
+                packaging.require_source(Path("."), SOURCE_SHA)
 
     def test_cpu_cli_runs_copied_binary_without_gpu_from_external_cwd(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
