@@ -633,6 +633,7 @@ fn shared_host_scopes_two_actual_native_connections_and_software_buffers() {
                 .is_some_and(|view| view.scene == GameUiScene::FlightSetup)
         })
     });
+    let retired_view_revision = clients[operator].view.as_ref().unwrap().view_revision;
     handle
         .administer(HostManagementCommand::Application(
             ApplicationServerCommand::AssignOperator { peer: None },
@@ -652,7 +653,11 @@ fn shared_host_scopes_two_actual_native_connections_and_software_buffers() {
         handle.snapshot().application.operator == Some(peers[0].id)
     });
     until(&mut clients, |clients| {
-        clients[operator].can_activate(&SessionCommand::ReturnToTitle {})
+        clients[operator]
+            .view
+            .as_ref()
+            .is_some_and(|view| view.view_revision > retired_view_revision)
+            && clients[operator].can_activate(&SessionCommand::ReturnToTitle {})
     });
     let return_packet = clients[operator].activate(SessionCommand::ReturnToTitle {});
     until(&mut clients, |clients| {

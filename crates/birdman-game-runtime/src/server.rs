@@ -1742,13 +1742,10 @@ impl ApplicationServer {
             ))
         })?;
         let aircraft_identity = aircraft.identity();
-        let preparation_started = std::time::Instant::now();
         let prepared = self
             .authority
             .assets
             .prepare_ready(request_id, selection, aircraft, target);
-        let preparation_ms = preparation_started.elapsed().as_secs_f64() * 1000.0;
-        let snapshot_started = std::time::Instant::now();
         let produced = prepared.and_then(|assets| {
             let buffers = assets
                 .buffer_ids()?
@@ -1757,12 +1754,6 @@ impl ApplicationServer {
                 .collect::<Result<Vec<_>, _>>()?;
             Ok((assets, buffers))
         });
-        let snapshot_ms = snapshot_started.elapsed().as_secs_f64() * 1000.0;
-        if preparation_ms > 100.0 || snapshot_ms > 100.0 {
-            self.authority.diagnostic = Some(format!(
-                "Host CPU preparation: resources={preparation_ms:.1} ms, immutable snapshots={snapshot_ms:.1} ms"
-            ));
-        }
         let scope = self.peers[&id].scope;
         let (assets, snapshots) = match produced {
             Ok(produced) => produced,
