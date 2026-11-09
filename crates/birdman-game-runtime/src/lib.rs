@@ -1070,7 +1070,7 @@ impl ApplicationRuntime {
             }
             ApplicationInput::Frame {
                 display_resource_id,
-                timestamp_ms,
+                timestamp_ms: _,
                 gamepads,
                 xr,
                 spatial,
@@ -1078,7 +1078,12 @@ impl ApplicationRuntime {
                 if self.display.state().active_mode().is_some()
                     && self.display.active_resource() == display_resource_id
                 {
-                    self.frame_rate.observe(timestamp_ms);
+                    // The frame rate measures the delivered frame cadence on
+                    // the runtime's arrival clock. The frame's source
+                    // timestamp is a foreign clock (an XR predicted display
+                    // time on Web) whose duplicates and discontinuities must
+                    // not starve the measurement.
+                    self.frame_rate.observe(observed_ms);
                     if self.xr_resource.is_some() {
                         self.xr_viewer = Some(match xr {
                             Some(xr) => {

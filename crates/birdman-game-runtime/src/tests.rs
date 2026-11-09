@@ -712,6 +712,53 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
 }
 
 #[test]
+fn frame_rate_label_follows_the_arrival_clock_when_the_frame_source_time_is_unstable() {
+    let mut runtime =
+        ApplicationRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
+    let initial = runtime
+        .update(
+            ApplicationObservation {
+                observed_ms: 0.0,
+                input: ApplicationInput::Platform {
+                    observation: screen_platform(),
+                },
+            },
+            &mut no_text_metrics,
+        )
+        .unwrap();
+    let title = finish_boot(&mut runtime, initial);
+    assert!(title.drawing.is_some());
+    // The source timestamps duplicate, jump backwards and leap by more than
+    // the owner's reset window, as an XR predicted-display clock can; the
+    // arrival clock stays a clean 100 ms cadence, so the rate still settles.
+    let source_times = [
+        0.0, 0.0, 9_000.0, 10.0, 10.0, 20_000.0, 5.0, 5.0, 30_000.0, 7.0, 7.0, 40_000.0,
+    ];
+    let mut label = String::new();
+    for (index, source) in source_times.iter().enumerate() {
+        let output = runtime
+            .update(
+                ApplicationObservation {
+                    observed_ms: f64::from(u32::try_from(index + 1).unwrap()) * 100.0,
+                    input: ApplicationInput::Frame {
+                        display_resource_id: None,
+                        timestamp_ms: *source,
+                        gamepads: Vec::new(),
+                        xr: None,
+                        spatial: Default::default(),
+                    },
+                },
+                &mut no_text_metrics,
+            )
+            .unwrap();
+        if let Some(drawing) = output.drawing {
+            label = drawing.presentation.frame_rate_label;
+        }
+    }
+    assert_eq!(label, "FPS 10.0");
+}
+
+#[test]
 fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_destruction() {
     // Disposal during font work retires the old spatial publication at return.
     {
