@@ -32,14 +32,17 @@ function isDefaultRegistrySource(dependency: Record<string, unknown>): boolean {
     && /^(registry|sparse)\+.+$/.test(dependency.source);
 }
 
-export function assertNativeTextPatch(workspace: unknown): void {
+export function assertNativePatches(workspace: unknown): void {
   const manifest = record(workspace);
   const patch = record(record(manifest.patch)["crates-io"]);
-  const replacement = record(patch.parley);
   const excluded = record(manifest.workspace).exclude;
-  if (replacement.path !== "vendor/parley" || Object.keys(replacement).length !== 1
-    || !Array.isArray(excluded) || !excluded.includes("vendor/parley")) {
-    throw new Error("Invalid native text segmentation backport");
+  for (const name of ["parley", "bevy_mod_openxr", "openxr"]) {
+    const path = `vendor/${name}`;
+    const replacement = record(patch[name] ?? {});
+    if (replacement.path !== path || Object.keys(replacement).length !== 1
+      || !Array.isArray(excluded) || !excluded.includes(path)) {
+      throw new Error(`Invalid native dependency patch: ${name}`);
+    }
   }
 }
 
