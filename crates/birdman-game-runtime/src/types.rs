@@ -165,13 +165,15 @@ pub struct ApplicationXrFrameObservation {
     pub input_focused: bool,
 }
 
-/// Unmodified tracked controller pose in the active runtime reference space.
+/// Unmodified XR select source in the active runtime reference space.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationPointerObservation {
     /// Platform input-source identity, retired when that source disconnects.
     pub source_id: u32,
+    /// Raw event source mode, including sources that exist only during the action.
+    pub target_ray_mode: String,
     /// Runtime target-ray-space pose in tracking coordinates.
     #[serde(deserialize_with = "birdman_game_presentation::xr::deserialize_xr_pose")]
     #[cfg_attr(
@@ -368,13 +370,13 @@ pub enum ApplicationInput {
         /// Original API diagnostic when release failed.
         failure: Option<String>,
     },
-    /// Explicit trigger observation targeting the last submitted spatial painting.
+    /// Explicit HMD source action targeting the last submitted spatial painting.
     XrSelect {
         /// Active display resource that emitted the trigger.
         display_resource_id: Option<u32>,
         /// Opaque identity returned with the submitted spatial projection.
         presentation_id: u32,
-        /// Raw controller pose sampled for the trigger.
+        /// Raw source mode and pose sampled for the primary action.
         pointer: ApplicationPointerObservation,
         /// Source event time on the common monotonic clock.
         timestamp_ms: f64,

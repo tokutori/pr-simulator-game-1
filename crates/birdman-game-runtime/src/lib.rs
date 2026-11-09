@@ -958,11 +958,13 @@ impl ApplicationRuntime {
                 pointer,
                 timestamp_ms,
             } => {
-                if self.spatial_input_focused()
+                let focused = self.spatial_input_focused();
+                if focused
+                    && self.display.state().active_mode() == Some(GameUiPresentationMode::Hmd)
                     && self.display.active_resource() == display_resource_id
                     && let Some(action) =
                         self.surface
-                            .select(presentation_id, pointer, timestamp_ms)?
+                            .select(presentation_id, pointer, focused, timestamp_ms)?
                 {
                     self.apply_surface_action(action, &mut requests)?;
                 }

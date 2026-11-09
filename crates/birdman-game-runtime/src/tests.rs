@@ -4695,6 +4695,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
         .unwrap();
     let pointer = ApplicationPointerObservation {
         source_id: 7,
+        target_ray_mode: "tracked-pointer".into(),
         tracking_from_ray: compose_pose(
             panel,
             Pose {
