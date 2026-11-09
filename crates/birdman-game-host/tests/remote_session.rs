@@ -490,6 +490,7 @@ fn trace(trace: &mut VecDeque<String>, message: String) {
     trace.push_back(message);
 }
 
+#[track_caller]
 fn until(clients: &mut [Client], condition: impl Fn(&[Client]) -> bool) {
     let end = Instant::now() + Duration::from_secs(60);
     loop {
@@ -501,11 +502,18 @@ fn until(clients: &mut [Client], condition: impl Fn(&[Client]) -> bool) {
         }
         assert!(
             Instant::now() < end,
-            "actual remote I/O did not reach the expected state: {:?}; host={:?} listening={:?} diagnostic={:?}",
+            "actual remote I/O did not reach the condition at {}: {:?}; host={:?} listening={:?} diagnostic={:?}",
+            std::panic::Location::caller(),
             clients
                 .iter()
                 .map(|client| (
-                    client.view.as_ref().map(|view| view.scene),
+                    client.view.as_ref().map(|view| (
+                        view.scene,
+                        view.active_overlay,
+                        view.view_revision
+                    )),
+                    client.consumed_frame_revision,
+                    client.aircraft_position,
                     &client.diagnostic,
                     client.preparations,
                     client.lifecycle,
