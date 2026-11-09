@@ -142,6 +142,7 @@ struct Peer {
     last_upload_id: u64,
     neutral_required: bool,
     last_observed_ms: f64,
+    last_input_observed_ms: Option<f64>,
     state: PeerState,
     reliable: VecDeque<ApplicationNetworkPayload>,
     inflight: Option<ApplicationTransmission>,
@@ -326,6 +327,7 @@ impl ApplicationServer {
                 last_upload_id: 0,
                 neutral_required: true,
                 last_observed_ms: now_ms,
+                last_input_observed_ms: None,
                 state: PeerState::AwaitingHello,
                 reliable: VecDeque::new(),
                 inflight: None,
@@ -432,6 +434,7 @@ impl ApplicationServer {
         if let Some(id) = self.operator {
             if let Some(peer) = self.peers.get_mut(&id) {
                 peer.neutral_required = true;
+                peer.last_input_observed_ms = None;
                 if let PeerState::Ready(display) = &mut peer.state {
                     display
                         .flight_pointer
@@ -506,6 +509,7 @@ impl ApplicationServer {
                     item.role_generation = generation;
                     item.last_sequence = 0;
                     item.neutral_required = true;
+                    item.last_input_observed_ms = None;
                     if let PeerState::Ready(view) = &mut item.state {
                         view.grants.clear();
                         view.structure.invalidate();
@@ -983,7 +987,7 @@ impl ApplicationServer {
 
     fn reconcile_availability(&mut self) -> Result<bool, ApplicationServerError> {
         let available = self.operator.and_then(|id| self.peers.get(&id)).is_some_and(|peer| {
-            !peer.neutral_required && self.authority.observed_ms-peer.last_observed_ms <= OPERATOR_INPUT_TIMEOUT_MS
+            !peer.neutral_required && peer.last_input_observed_ms.is_some_and(|last| self.authority.observed_ms-last <= OPERATOR_INPUT_TIMEOUT_MS)
                 && matches!(&peer.state, PeerState::Ready(display) if display.resource_ready && display.input_focused)
         });
         self.authority
@@ -1011,6 +1015,7 @@ impl ApplicationServer {
                     .filter_map(ApplicationGamepadObservation::flight)
                     .collect();
                 let peer = self.peers.get_mut(&id).unwrap();
+                peer.last_input_observed_ms = Some(self.authority.observed_ms);
                 if peer.neutral_required {
                     if devices.iter().all(FlightGamepadObservation::is_neutral) {
                         peer.neutral_required = false;
@@ -1118,7 +1123,10 @@ impl ApplicationServer {
                                 display.input_focused,
                                 &raw,
                             )?;
-                            if !handled {
+                            if handled {
+                                self.peers.get_mut(&id).unwrap().last_input_observed_ms =
+                                    Some(self.authority.observed_ms);
+                            } else {
                                 self.observe_chart_pointer(id, view_revision, raw)?;
                             }
                         }
@@ -1153,6 +1161,8 @@ impl ApplicationServer {
         let focused = display.input_focused;
         if let Some(key) = keyboard::control_key(key) {
             if focused {
+                self.peers.get_mut(&id).unwrap().last_input_observed_ms =
+                    Some(self.authority.observed_ms);
                 self.authority
                     .application
                     .observe_flight_key(FlightKeyObservation {
@@ -1797,18 +1807,23 @@ impl ApplicationServer {
         let expired: Vec<_> = self
             .peers
             .iter()
-            .filter(|(_, peer)| {
-                now_ms - peer.last_observed_ms
-                    > if peer.role == ApplicationPeerRole::Operator {
-                        OPERATOR_INPUT_TIMEOUT_MS
-                    } else {
-                        CONNECTION_TIMEOUT_MS
-                    }
-            })
+            .filter(|(_, peer)| now_ms - peer.last_observed_ms > CONNECTION_TIMEOUT_MS)
             .map(|(id, _)| *id)
             .collect();
         for id in expired {
             self.retire_peer(id)?;
+        }
+        let input_expired = self
+            .operator
+            .and_then(|id| self.peers.get(&id))
+            .is_some_and(|peer| {
+                !peer.neutral_required
+                    && peer
+                        .last_input_observed_ms
+                        .is_none_or(|last| now_ms - last > OPERATOR_INPUT_TIMEOUT_MS)
+            });
+        if input_expired {
+            self.withdraw_input()?;
         }
         let available = self.reconcile_availability()?;
         let readiness = if available {

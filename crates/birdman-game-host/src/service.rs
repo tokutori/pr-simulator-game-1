@@ -638,9 +638,19 @@ async fn run(
                 let _ = reply.send(response);
             }
             Some(Event::Receive(id, message, permit, receipt)) => {
+                let handling_started = Instant::now();
                 result = server
                     .receive(id, epoch.elapsed().as_secs_f64() * 1000.0, message)
                     .map_err(|error| error.to_string());
+                let handling_elapsed = handling_started.elapsed();
+                if handling_elapsed > Duration::from_millis(100) {
+                    let diagnostic = format!(
+                        "Host input handling: {:.1} ms",
+                        handling_elapsed.as_secs_f64() * 1000.0
+                    );
+                    eprintln!("{diagnostic}");
+                    snapshot.send_modify(|state| state.diagnostic = Some(diagnostic));
+                }
                 drop(permit);
                 if let Some(receipt) = receipt {
                     let _ = receipt.send(());

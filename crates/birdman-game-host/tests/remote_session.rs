@@ -3,7 +3,7 @@ use birdman_game_app::application::{ApplicationSession, SessionCommand};
 use birdman_game_host::{
     controller_io::NativeIoSignal,
     network_io::NativeNetworkIo,
-    service::{HostListenConfig, HostManagementCommand, HostService},
+    service::{HostListenConfig, HostManagementCommand, HostService, HostServiceHandle},
     web_distribution::{WebDistribution, write_web_bundle_manifest},
 };
 use birdman_game_presentation::game_ui::{
@@ -36,10 +36,12 @@ struct Client {
     consumed_frame_revision: Option<u32>,
     lifecycle: ApplicationLifecycle,
     diagnostic: Option<String>,
+    host: HostServiceHandle,
+    wire_trace: VecDeque<String>,
 }
 
 impl Client {
-    fn new(epoch: Instant, host: &str, renderer_id: u32) -> Self {
+    fn new(epoch: Instant, host: &str, renderer_id: u32, handle: HostServiceHandle) -> Self {
         let platform = ApplicationPlatformObservation {
             location: None,
             gpu_timing_requested: false,
@@ -87,6 +89,8 @@ impl Client {
             consumed_frame_revision: None,
             lifecycle: ApplicationLifecycle::Running,
             diagnostic: None,
+            host: handle,
+            wire_trace: VecDeque::new(),
         };
         client.observe(ApplicationInput::Platform {
             observation: client.platform.clone(),
@@ -172,6 +176,7 @@ impl Client {
                         ..
                     } = &request
                     {
+                        trace_packet(&mut self.wire_trace, "send", text);
                         self.sent.push(text.clone());
                     }
                     self.network
@@ -339,7 +344,25 @@ impl Client {
         let now = self.epoch.elapsed().as_secs_f64() * 1000.0;
         let runtime = &mut self.runtime;
         let epoch = self.epoch;
+        let wire_trace = &mut self.wire_trace;
         self.network.poll(|input| {
+            match &input {
+                ApplicationInput::NetworkMessage {
+                    payload: ApplicationNetworkData::Text { text },
+                    ..
+                } => trace_packet(wire_trace, "receive", text),
+                ApplicationInput::NetworkMessage {
+                    payload: ApplicationNetworkData::Binary { bytes },
+                    ..
+                } => trace(wire_trace, format!("receive binary {} bytes", bytes.len())),
+                ApplicationInput::NetworkOpened { failure, .. } => {
+                    trace(wire_trace, format!("opened {failure:?}"))
+                }
+                ApplicationInput::NetworkClosed { code, reason, .. } => {
+                    trace(wire_trace, format!("closed {code}: {reason}"))
+                }
+                _ => {}
+            }
             outputs.push(
                 runtime
                     .update(
@@ -431,6 +454,25 @@ impl Client {
     }
 }
 
+#[derive(serde::Deserialize)]
+struct PacketKind {
+    kind: String,
+}
+fn trace_packet(trace: &mut VecDeque<String>, direction: &str, text: &str) {
+    let kind = serde_json::from_str::<PacketKind>(text)
+        .map_or_else(|_| "invalid".to_owned(), |packet| packet.kind);
+    self::trace(trace, format!("{direction} {kind} {} bytes", text.len()));
+}
+fn trace(trace: &mut VecDeque<String>, message: String) {
+    if trace.back() == Some(&message) {
+        return;
+    }
+    if trace.len() == 16 {
+        trace.pop_front();
+    }
+    trace.push_back(message);
+}
+
 fn until(clients: &mut [Client], condition: impl Fn(&[Client]) -> bool) {
     let end = Instant::now() + Duration::from_secs(20);
     loop {
@@ -442,16 +484,20 @@ fn until(clients: &mut [Client], condition: impl Fn(&[Client]) -> bool) {
         }
         assert!(
             Instant::now() < end,
-            "actual remote I/O did not reach the expected state: {:?}",
+            "actual remote I/O did not reach the expected state: {:?}; host={:?} listening={:?} diagnostic={:?}",
             clients
                 .iter()
                 .map(|client| (
                     client.view.as_ref().map(|view| view.scene),
                     &client.diagnostic,
                     client.preparations,
-                    client.lifecycle
+                    client.lifecycle,
+                    &client.wire_trace,
                 ))
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
+            clients[0].host.snapshot().application,
+            clients[0].host.snapshot().listening,
+            clients[0].host.snapshot().diagnostic
         );
         std::thread::sleep(Duration::from_millis(2));
     }
@@ -508,7 +554,10 @@ fn shared_host_scopes_two_actual_native_connections_and_software_buffers() {
         std::thread::sleep(Duration::from_millis(2));
     };
     let url = format!("http://{address}/");
-    let mut clients = [Client::new(epoch, &url, 100), Client::new(epoch, &url, 200)];
+    let mut clients = [
+        Client::new(epoch, &url, 100, handle.clone()),
+        Client::new(epoch, &url, 200, handle.clone()),
+    ];
     until(&mut clients, |clients| {
         clients.iter().all(|client| {
             client
@@ -743,7 +792,7 @@ fn shared_host_scopes_two_actual_native_connections_and_software_buffers() {
         "operator loss must stop physical advancement"
     );
 
-    let mut reconnect = Client::new(epoch, &url, 300);
+    let mut reconnect = Client::new(epoch, &url, 300, handle.clone());
     reconnect.gamepads = vec![ApplicationGamepadObservation {
         identity: birdman_game_app::flight_input::FlightDeviceIdentity {
             slot_low: 0,
