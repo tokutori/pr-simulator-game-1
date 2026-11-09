@@ -711,7 +711,7 @@ impl NativeControllerConnection {
         if bytes.len() > MAX_CONNECTION_BYTES {
             return Err(ControllerFormatError::InputTooLarge);
         }
-        let text = core::str::from_utf8(bytes)
+        let text = crate::json_version::source_text(bytes)
             .map_err(|cause| ControllerFormatError::Json(alloc::format!("{cause}")))?;
         let version = crate::json_version::declared_schema_version(text)
             .map_err(|cause| ControllerFormatError::Json(alloc::format!("{cause}")))?;
@@ -726,7 +726,7 @@ impl NativeControllerConnection {
                 }
             ]));
         }
-        let document: NativeControllerDocument = serde_json::from_slice(bytes)
+        let document: NativeControllerDocument = serde_json::from_str(text)
             .map_err(|cause| ControllerFormatError::Json(alloc::format!("{cause}")))?;
         let value = document.connection;
         let text = |s: &str| !s.is_empty() && s.len() <= 4096 && !s.contains('\0');
@@ -805,6 +805,75 @@ mod tests {
             identity: [3; 32],
         }
     }
+    #[test]
+    fn connection_json_accepts_one_bom_with_raw_size_and_strict_validation() {
+        use crate::controller::{ControllerFormatError, ControllerValidationCode};
+        for connection in [
+            NativeControllerConnection::Sitl {
+                program: "controller".into(),
+                arguments: alloc::vec![],
+                program_id: "fixture".into(),
+                version: "1".into(),
+                binary_sha256: "a".repeat(64),
+            },
+            NativeControllerConnection::Hitl {
+                port: "fixture".into(),
+                baud_rate: 115_200,
+                hardware_id: "fixture".into(),
+                firmware_id: "1".into(),
+            },
+        ] {
+            let mut document = NativeControllerDocument {
+                schema_version: 1,
+                connection: connection.clone(),
+            };
+            let json = serde_json::to_vec(&document).unwrap();
+            let mut bytes = [b"\xef\xbb\xbf".as_slice(), &json].concat();
+            assert_eq!(
+                NativeControllerConnection::decode(&json).unwrap(),
+                connection
+            );
+            assert_eq!(
+                NativeControllerConnection::decode(&bytes).unwrap(),
+                connection
+            );
+            assert!(matches!(
+                NativeControllerConnection::decode(&[b"\xef\xbb\xbf".as_slice(), &bytes].concat()),
+                Err(ControllerFormatError::Json(_))
+            ));
+            bytes.resize(MAX_CONNECTION_BYTES, b' ');
+            assert_eq!(
+                NativeControllerConnection::decode(&bytes).unwrap(),
+                connection
+            );
+            bytes.push(b' ');
+            assert!(matches!(
+                NativeControllerConnection::decode(&bytes),
+                Err(ControllerFormatError::InputTooLarge)
+            ));
+            document.schema_version = 2;
+            assert!(matches!(
+                NativeControllerConnection::decode(&[b"\xef\xbb\xbf".as_slice(), &serde_json::to_vec(&document).unwrap()].concat()),
+                Err(ControllerFormatError::Validation(issues)) if issues[0].code == ControllerValidationCode::SchemaVersion
+            ));
+            document.schema_version = 1;
+            match &mut document.connection {
+                NativeControllerConnection::Sitl { program, .. } => program.clear(),
+                NativeControllerConnection::Hitl { baud_rate, .. } => *baud_rate = 0,
+            }
+            assert!(matches!(
+                NativeControllerConnection::decode(&[b"\xef\xbb\xbf".as_slice(), &serde_json::to_vec(&document).unwrap()].concat()),
+                Err(ControllerFormatError::Validation(issues)) if issues[0].code == ControllerValidationCode::Transport
+            ));
+        }
+        for invalid in [b"\xef\xbb\xbf{".as_slice(), b"\xef\xbb\xbf\xff"] {
+            assert!(matches!(
+                NativeControllerConnection::decode(invalid),
+                Err(ControllerFormatError::Json(_))
+            ));
+        }
+    }
+
     #[test]
     fn finite_oversized_requests_remain_raw_and_stale_responses_are_rejected() {
         let frame =
