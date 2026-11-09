@@ -260,7 +260,21 @@ fn assert_touch_hud_lower_band(session: &GameSession, protected_cue: Option<&str
                 })
                 .collect::<Vec<_>>()
         };
-        assert_eq!(values(hud), values(&baseline));
+        let hud_values = values(hud);
+        let baseline_values = values(&baseline);
+        if width < height {
+            // Portrait touch folds auxiliary readouts so the rail stays
+            // above the center band; every retained node keeps its
+            // baseline value, in the baseline order.
+            let retained = baseline_values
+                .iter()
+                .filter(|(id, ..)| hud_values.iter().any(|(kept, ..)| kept == id))
+                .cloned()
+                .collect::<Vec<_>>();
+            assert_eq!(hud_values, retained);
+        } else {
+            assert_eq!(hud_values, baseline_values);
+        }
     }
     assert_eq!(session.snapshot(), snapshot);
 }
@@ -331,6 +345,116 @@ fn portrait_touch_instruments_clear_the_frame_rate_badge() {
             "{}: top {top} overlaps the frame-rate badge ending at {badge_bottom}",
             node.id
         );
+    }
+}
+
+#[test]
+fn portrait_touch_hud_clears_the_center_band() {
+    let session = launched();
+    let full = difficulty().with_information(InformationLevel::Full);
+    for height in [740.0, 844.0] {
+        let mut platform = platform();
+        platform.touch_available = true;
+        platform.viewport = GameUiViewport {
+            width: 390.0,
+            height,
+            root_font_size: 16.0,
+        };
+        let state = GameUiState::default();
+        let view = game_ui_view(&state, &context(&session, full, &platform)).unwrap();
+        let hud = view.hud.as_ref().unwrap();
+        let rail_top = height - hud.layout.offset_px[1] - hud.layout.height_px;
+        let band_top = height * 0.35;
+        let nodes: Vec<_> = hud.groups.iter().flat_map(|group| &group.nodes).collect();
+        assert!(!nodes.is_empty());
+        for node in &nodes {
+            let top = rail_top + node.bounds.y * hud.layout.height_px;
+            let bottom = top + node.bounds.height * hud.layout.height_px;
+            assert!(
+                bottom <= band_top,
+                "{}: {top}..{bottom} enters the center band starting at {band_top}",
+                node.id
+            );
+        }
+        if height == 844.0 {
+            // Instruments, primary readouts and the pilot position
+            // readout stay on screen at the canonical phone size.
+            for id in [
+                "hud-attitude",
+                "hud-heading",
+                "hud-wind",
+                "hud-angle-of-attack",
+                "hud-accepted-keys",
+                "hud-primary-readouts",
+                "hud-altitude",
+                "hud-groundspeed",
+                "hud-distance",
+                "hud-elapsed",
+                "hud-pilot-position",
+            ] {
+                assert!(nodes.iter().any(|node| node.id == id), "{id} missing");
+            }
+        }
+    }
+    // A viewport tall enough for the complete rail folds nothing.
+    let mut platform = platform();
+    platform.touch_available = true;
+    platform.viewport = GameUiViewport {
+        width: 390.0,
+        height: 1200.0,
+        root_font_size: 16.0,
+    };
+    let state = GameUiState::default();
+    let view = game_ui_view(&state, &context(&session, full, &platform)).unwrap();
+    let hud = view.hud.as_ref().unwrap();
+    let rail_top = 1200.0 - hud.layout.offset_px[1] - hud.layout.height_px;
+    let nodes: Vec<_> = hud.groups.iter().flat_map(|group| &group.nodes).collect();
+    assert_eq!(nodes.len(), 16);
+    for node in &nodes {
+        let bottom = rail_top + (node.bounds.y + node.bounds.height) * hud.layout.height_px;
+        assert!(
+            bottom <= 1200.0 * 0.35,
+            "{} enters the center band",
+            node.id
+        );
+    }
+    // At a 24 px root font the instruments and primary readouts alone
+    // exceed the space above the band, so the rail is scaled down after
+    // folding. Every displayed node still clears the band, and the
+    // instruments and primary readouts stay on screen.
+    platform.viewport = GameUiViewport {
+        width: 390.0,
+        height: 844.0,
+        root_font_size: 24.0,
+    };
+    let state = GameUiState::default();
+    let view = game_ui_view(&state, &context(&session, full, &platform)).unwrap();
+    let hud = view.hud.as_ref().unwrap();
+    let rail_top = 844.0 - hud.layout.offset_px[1] - hud.layout.height_px;
+    let band_top = 844.0 * 0.35;
+    let nodes: Vec<_> = hud.groups.iter().flat_map(|group| &group.nodes).collect();
+    assert!(!nodes.is_empty());
+    for node in &nodes {
+        let top = rail_top + node.bounds.y * hud.layout.height_px;
+        let bottom = top + node.bounds.height * hud.layout.height_px;
+        assert!(
+            bottom <= band_top,
+            "{}: {top}..{bottom} enters the center band starting at {band_top}",
+            node.id
+        );
+    }
+    for id in [
+        "hud-attitude",
+        "hud-heading",
+        "hud-wind",
+        "hud-angle-of-attack",
+        "hud-primary-readouts",
+        "hud-altitude",
+        "hud-groundspeed",
+        "hud-distance",
+        "hud-elapsed",
+    ] {
+        assert!(nodes.iter().any(|node| node.id == id), "{id} missing");
     }
 }
 
