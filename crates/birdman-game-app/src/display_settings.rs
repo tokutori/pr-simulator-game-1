@@ -86,11 +86,6 @@ impl Default for DisplayAdjustment {
 }
 
 impl DisplayAdjustment {
-    /// Whether the adjustment leaves every linear color unchanged.
-    pub fn is_identity(self) -> bool {
-        self == Self::default()
-    }
-
     /// Applies the shared adjustment formula to one linear RGB color.
     pub fn apply_linear_rgb(self, rgb: [f64; 3]) -> [f64; 3] {
         let exposed = rgb.map(|channel| channel * self.exposure_multiplier);

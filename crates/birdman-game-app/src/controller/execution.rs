@@ -61,10 +61,6 @@ impl SelectedControllerExecution {
     pub const fn is_builtin(&self) -> bool {
         matches!(self.artifact, SelectedArtifact::BuiltIn)
     }
-    /// Whether this connection requires Native process or serial I/O.
-    pub const fn requires_native(&self) -> bool {
-        matches!(self.artifact, SelectedArtifact::Native(_))
-    }
     /// Player-facing execution label supplied by shared Rust.
     pub fn label(&self) -> &'static str {
         match self.artifact {

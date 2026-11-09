@@ -374,7 +374,14 @@ fn adopted_shape_contact_matches_independent_rotated_support_and_record_query() 
     let surfaces = definition.surfaces().unwrap();
     let trim = definition.trim().unwrap();
     let mapping = TailPilotPositionMapping::try_new(&aircraft, trim.pilot_position_m()).unwrap();
-    let preparation = HybridSessionPreparation::try_default().unwrap();
+    let preparation = HybridSessionPreparation::try_new(
+        &birdman_game_app::SelectedAircraft::bundled().unwrap(),
+        &birdman_game_app::SelectedController::bundled().unwrap(),
+        ControlMode::Manual,
+        DEFAULT_MAXIMUM_FLIGHT_TICKS,
+        birdman_game_app::DEFAULT_SESSION_SEED,
+    )
+    .unwrap();
     let profile = preparation
         .controller_profile()
         .expect("default preparation uses the built-in controller");

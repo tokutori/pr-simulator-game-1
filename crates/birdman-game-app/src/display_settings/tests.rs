@@ -63,7 +63,6 @@ fn every_offered_step_is_valid() {
 #[test]
 fn default_adjustment_is_the_identity() {
     let adjustment = DisplaySettings::default().adjustment();
-    assert!(adjustment.is_identity());
     assert_eq!(adjustment.exposure_multiplier, 1.0);
     assert_eq!(adjustment.exposure_ev_shift, 0.0);
     assert_eq!(adjustment.contrast, 1.0);

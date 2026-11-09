@@ -1,4 +1,5 @@
 use super::*;
+use crate::{DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED};
 use birdman_game_core::{
     FbwAuthority, FlightRecordControls, GameSession, SessionEndReason, SessionPhase,
     TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
@@ -305,32 +306,6 @@ fn repeated_hybrid_preparation_is_deterministic_and_rejects_invalid_tick_limit()
             GameSessionError::InvalidFlightTickLimit
         ))
     ));
-}
-
-#[test]
-fn default_configuration_matches_public_web_selection() {
-    let selected = crate::SelectedAircraft::bundled().unwrap();
-    let preparation = HybridSessionPreparation::try_default().unwrap();
-    let (configuration, record_identity) = preparation.into_parts();
-    let expected = HybridSessionPreparation::try_new_for_weather(
-        &selected,
-        &crate::SelectedController::bundled().unwrap(),
-        ControlMode::Manual,
-        4_000,
-        (0x5f98_u64 << 32) | 0x55aa,
-        WeatherClass::Typical,
-    )
-    .unwrap()
-    .into_parts();
-    assert_eq!(configuration.identity(), expected.0.identity());
-    assert_eq!(record_identity, expected.1);
-    let session = launch(&selected, configuration);
-    let expected_session = launch(&selected, expected.0);
-    assert_eq!(session.snapshot(), expected_session.snapshot());
-    assert_eq!(
-        session.telemetry().unwrap(),
-        expected_session.telemetry().unwrap()
-    );
 }
 
 #[test]

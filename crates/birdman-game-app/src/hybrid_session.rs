@@ -12,8 +12,7 @@ use birdman_game_format::{
 };
 
 use crate::{
-    DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, DEFAULT_WEATHER, LaunchPlatform,
-    LaunchVenueError,
+    DEFAULT_WEATHER, LaunchPlatform, LaunchVenueError,
     environment::{bundled_environment, preset_wind_for_version},
     environment_snapshot::EnvironmentIdentity,
     launch_venue,
@@ -116,29 +115,6 @@ pub struct HybridSessionPreparation {
 }
 
 impl HybridSessionPreparation {
-    /// Builds the same default configuration selected by the public Web application.
-    pub fn try_default() -> Result<Self, HybridSessionPreparationError> {
-        let aircraft =
-            crate::SelectedAircraft::bundled().map_err(HybridSessionPreparationError::Aircraft)?;
-        let controller = crate::SelectedController::bundled().map_err(|cause| {
-            HybridSessionPreparationError::Controller(crate::ControllerPreparationError::Document(
-                cause,
-            ))
-        })?;
-        let mode = crate::application::commands::control_mode(
-            crate::DEFAULT_ASSISTANCE,
-            controller.document().shared_authority,
-        )
-        .map_err(HybridSessionPreparationError::Control)?;
-        Self::try_new(
-            &aircraft,
-            &controller,
-            mode,
-            DEFAULT_MAXIMUM_FLIGHT_TICKS,
-            DEFAULT_SESSION_SEED,
-        )
-    }
-
     /// Seals an explicitly selected aircraft into an owned numerical configuration.
     ///
     /// ```
