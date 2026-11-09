@@ -133,6 +133,7 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 
 ## 機体JSON
 
+- 作成案内: 書き手向けの作成手順とフィールドリファレンスは[機体JSON作成ガイド](aircraft-json-guide.md)に置く。本節は開発者向けの規則を定める。
 - 選択: 共有appが検証済み定義と原文bytesを所有し、物理・接触・mesh・cameraへ同じ定義を渡す。入力上限は256 KiBである。
 - 保存: 原文bytesをWebのlocalStorageキー`tokutori.pr-simulator-game-1.aircraft`、Nativeの利用者設定ディレクトリ`birdman-game/aircraft.json`へ保存する。保存成功後に選択を確定し、起動時に原文を再検証する。
 - 識別: `configuration_id`と原文bytesのSHA-256を併用する。空白・キー順の変更も別の原文identityとなる。hashは読込時の導出値であり、設定文書の包みを追加しない。
