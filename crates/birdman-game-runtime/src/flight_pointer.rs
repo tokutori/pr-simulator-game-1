@@ -69,12 +69,14 @@ impl ApplicationRuntime {
     fn touch_controls_available(&self) -> bool {
         self.screen_pointer_available()
             && self.endpoint.platform.touch_available
-            && self.application.core_session().snapshot().phase() == SessionPhase::FlightRunning
+            && self.authority.application.core_session().snapshot().phase()
+                == SessionPhase::FlightRunning
     }
 
     fn release_flight_pointer(&mut self, slot: usize) {
         if let Some(pointer) = self.endpoint.flight_pointers[slot].take() {
-            self.application
+            self.authority
+                .application
                 .observe_flight_touch(FlightTouchObservation {
                     generation: pointer.generation,
                     control: pointer.control,
@@ -91,7 +93,8 @@ impl ApplicationRuntime {
                 .is_some_and(|pointer| {
                     !self.touch_controls_available()
                         || pointer.viewport != self.endpoint.platform.viewport
-                        || self.application.flight_touch_generation() != Some(pointer.generation)
+                        || self.authority.application.flight_touch_generation()
+                            != Some(pointer.generation)
                 });
             if stale {
                 self.release_flight_pointer(slot);
@@ -100,7 +103,7 @@ impl ApplicationRuntime {
         if self.endpoint.look_pointer.is_some_and(|pointer| {
             !self.screen_pointer_available()
                 || pointer.viewport != self.endpoint.platform.viewport
-                || pointer.phase != self.application.core_session().snapshot().phase()
+                || pointer.phase != self.authority.application.core_session().snapshot().phase()
         }) {
             self.endpoint.look_pointer = None;
         }
@@ -129,7 +132,7 @@ impl ApplicationRuntime {
             && self.endpoint.look_pointer.is_none()
             && position.into_iter().all(f64::is_finite)
             && matches!(
-                self.application.core_session().snapshot().phase(),
+                self.authority.application.core_session().snapshot().phase(),
                 SessionPhase::FlightRunning
                     | SessionPhase::FlightPaused { .. }
                     | SessionPhase::Result
@@ -148,7 +151,7 @@ impl ApplicationRuntime {
                 kind,
                 minimum_revision: revision,
                 viewport: self.endpoint.platform.viewport,
-                phase: self.application.core_session().snapshot().phase(),
+                phase: self.authority.application.core_session().snapshot().phase(),
                 position,
             });
         } else if let Some(pointer) = &mut self.endpoint.look_pointer
@@ -279,7 +282,7 @@ impl ApplicationRuntime {
             let Some(axes) = flight_touch_axes(control, position, position, bounds, radius) else {
                 return Ok(true);
             };
-            let generation = match self.application.flight_touch_generation() {
+            let generation = match self.authority.application.flight_touch_generation() {
                 Some(generation) => generation,
                 None => {
                     let Some(generation) = self.endpoint.next_touch_generation.checked_add(1)
@@ -291,6 +294,7 @@ impl ApplicationRuntime {
                 }
             };
             if self
+                .authority
                 .application
                 .observe_flight_touch(FlightTouchObservation {
                     generation,
@@ -327,6 +331,7 @@ impl ApplicationRuntime {
                 if let Some(axes) = axes {
                     let generation = pointer.generation;
                     if self
+                        .authority
                         .application
                         .observe_flight_touch(FlightTouchObservation {
                             generation,

@@ -4,6 +4,8 @@
 #[cfg(not(verus_only))]
 mod assets;
 #[cfg(not(verus_only))]
+mod authority;
+#[cfg(not(verus_only))]
 mod boot;
 mod display;
 #[cfg(not(verus_only))]
@@ -191,19 +193,8 @@ impl PresentationWork {
 /// Owns the application and its presentation state across all platform adapters.
 #[cfg(not(verus_only))]
 pub struct ApplicationRuntime {
+    authority: authority::ApplicationAuthority,
     endpoint: endpoint::ApplicationEndpoint,
-    application: ApplicationSession,
-    ui: GameUiState,
-    previous_frame_ms: Option<f64>,
-    controller_gamepads: Vec<FlightGamepadObservation>,
-    controller_wake: Option<(u32, f64)>,
-    controller_next_tick_ms: Option<f64>,
-    next_request_id: u32,
-    replay_supported: bool,
-    observed_ms: f64,
-    storage: storage::StorageOwner,
-    diagnostic: Option<String>,
-    shutdown: shutdown::ShutdownOwner,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -239,25 +230,14 @@ impl ApplicationRuntime {
             .screen_render_scope(),
         )?;
         Ok(Self {
+            authority: authority::ApplicationAuthority::new(application, replay_supported),
             endpoint,
-            application,
-            ui: GameUiState::default(),
-            previous_frame_ms: None,
-            controller_gamepads: Vec::new(),
-            controller_wake: None,
-            controller_next_tick_ms: None,
-            next_request_id: 1,
-            replay_supported,
-            observed_ms: 0.0,
-            storage: storage::StorageOwner::default(),
-            diagnostic: None,
-            shutdown: shutdown::ShutdownOwner::default(),
         })
     }
 
     /// Read-only access for native resource generation and record projection.
     pub fn application(&self) -> &ApplicationSession {
-        &self.application
+        &self.authority.application
     }
 
     /// Borrows a read-only typed upload for the current output, valid until the next mutable update.
@@ -308,7 +288,7 @@ impl ApplicationRuntime {
     ) -> Result<(ApplicationOutput, Option<PresentationWork>), ApplicationRuntimeError> {
         if self.endpoint.presentation_lease.is_some()
             && matches!(&observation.input, ApplicationInput::Wake {request_id}
-                if !self.controller_wake.is_some_and(|(current,_)| current == *request_id))
+                if !self.authority.controller_wake.is_some_and(|(current,_)| current == *request_id))
         {
             return Ok((self.output(None, Vec::new(), false), None));
         }
@@ -374,7 +354,7 @@ impl ApplicationRuntime {
     fn presentation_scope(&self) -> Result<PresentationScope, ApplicationRuntimeError> {
         let environment = self.environment()?;
         Ok(PresentationScope {
-            structure: GameUiStructureKey::new(&self.ui, &self.context(&environment)?),
+            structure: GameUiStructureKey::new(&self.authority.ui, &self.context(&environment)?),
             resource: self.endpoint.last_ready_resources,
             display: self
                 .endpoint
@@ -383,7 +363,7 @@ impl ApplicationRuntime {
                 .active_mode()
                 .map(|mode| (mode, self.endpoint.display.active_resource())),
             font: self.endpoint.surface_observation.clone(),
-            closed: self.shutdown.closed(),
+            closed: self.authority.shutdown.closed(),
         })
     }
 
@@ -395,7 +375,7 @@ impl ApplicationRuntime {
             mut observed_ms,
             input,
         } = observation;
-        let arrival_valid = observed_ms.is_finite() && observed_ms >= self.observed_ms;
+        let arrival_valid = observed_ms.is_finite() && observed_ms >= self.authority.observed_ms;
         if !arrival_valid {
             let kind = match &input {
                 ApplicationInput::Frame { .. } => "frame",
@@ -407,9 +387,9 @@ impl ApplicationRuntime {
                 }
                 _ => "event_or_completion",
             };
-            self.diagnostic = Some(format!(
+            self.authority.diagnostic = Some(format!(
                 "Observation timestamp rejected: domain=arrival input={kind} raw={observed_ms} last={}",
-                self.observed_ms
+                self.authority.observed_ms
             ));
             if matches!(
                 &input,
@@ -420,7 +400,7 @@ impl ApplicationRuntime {
             if let ApplicationInput::Wake { request_id } = &input {
                 // The platform already consumed its timer. Preserve the owner operation and
                 // request one new notification without advancing its deadline clock.
-                let wake = if let Some((id, at_ms)) = self.controller_wake
+                let wake = if let Some((id, at_ms)) = self.authority.controller_wake
                     && id == *request_id
                 {
                     Some(ApplicationRequest::ScheduleWake {
@@ -444,7 +424,7 @@ impl ApplicationRuntime {
             }
             // Completion identities, key releases and cleanup still need admission. A bad
             // envelope supplies no new elapsed time; raw I/O sample times remain untouched.
-            observed_ms = self.observed_ms;
+            observed_ms = self.authority.observed_ms;
         }
         let source_time = match &input {
             ApplicationInput::Frame { timestamp_ms, .. } => Some(("frame", *timestamp_ms, false)),
@@ -458,34 +438,40 @@ impl ApplicationRuntime {
                 || timestamp_ms < 0.0
                 || (event_time && timestamp_ms > observed_ms))
         {
-            self.diagnostic = Some(format!(
+            self.authority.diagnostic = Some(format!(
                 "Observation timestamp rejected: domain=source input={kind} raw={timestamp_ms} arrival={observed_ms} last={}",
-                self.observed_ms
+                self.authority.observed_ms
             ));
             true
         } else {
             false
         };
-        self.observed_ms = observed_ms;
+        self.authority.observed_ms = observed_ms;
         if arrival_valid {
-            self.application
+            self.authority
+                .application
                 .observe_controller_time(observed_ms)
                 .map_err(ApplicationRuntimeError::Application)?;
-            self.reconcile_controller_observation(observed_ms)?;
+            self.authority.reconcile_controller_observation(
+                observed_ms,
+                self.endpoint.resource_readiness,
+                self.presentation_input_focused(),
+            )?;
         }
         if source_rejected {
             let mut requests = Vec::new();
-            self.collect_controller_requests(&mut requests)?;
+            self.authority
+                .collect_controller_requests(&mut requests, self.presentation_input_focused())?;
             return Ok(self.output(None, requests, false));
         }
         let input = match input {
             ApplicationInput::PageHide { persisted: false } => ApplicationInput::Dispose,
             input => input,
         };
-        let admitted_terminal = self.shutdown.observe(&input);
+        let admitted_terminal = self.authority.shutdown.observe(&input);
         let current_controller_wake = matches!(&input,ApplicationInput::Wake {request_id}
-            if self.controller_wake.is_some_and(|(id,_)|id==*request_id));
-        let input = if self.shutdown.closed()
+            if self.authority.controller_wake.is_some_and(|(id,_)|id==*request_id));
+        let input = if self.authority.shutdown.closed()
             && !current_controller_wake
             && !matches!(
                 input,
@@ -526,7 +512,7 @@ impl ApplicationRuntime {
                 && !self.endpoint.display.state().pending()
                 && self.presentation_input_focused()
                 && matches!(
-                    self.application.core_session().snapshot().phase(),
+                    self.authority.application.core_session().snapshot().phase(),
                     SessionPhase::FlightRunning
                         | SessionPhase::FlightPaused { .. }
                         | SessionPhase::Result
@@ -561,6 +547,7 @@ impl ApplicationRuntime {
                 | ApplicationInput::RecordSaveOpened { .. } => true,
                 ApplicationInput::Wake { request_id }
                     if self
+                        .authority
                         .controller_wake
                         .is_some_and(|(id, _)| id == *request_id) =>
                 {
@@ -587,11 +574,16 @@ impl ApplicationRuntime {
         let mut render_spatial = false;
         match input {
             ApplicationInput::ControllerIo { observation } => {
-                self.application
+                self.authority
+                    .application
                     .observe_controller_io(observation, arrival_valid)
                     .map_err(ApplicationRuntimeError::Application)?;
                 if arrival_valid {
-                    self.reconcile_controller_observation(observed_ms)?;
+                    self.authority.reconcile_controller_observation(
+                        observed_ms,
+                        self.endpoint.resource_readiness,
+                        self.presentation_input_focused(),
+                    )?;
                 }
             }
             ApplicationInput::ConfigurationLoaded {
@@ -599,18 +591,18 @@ impl ApplicationRuntime {
                 request_id,
                 completion,
             } => {
-                let write_id = self.allocate_request()?;
-                let (selected, request) = self.storage.configuration_read_completed(
+                let write_id = self.authority.allocate_request()?;
+                let (selected, request) = self.authority.storage.configuration_read_completed(
                     document,
                     request_id,
                     completion,
-                    &self.application,
+                    &self.authority.application,
                     write_id,
                 );
                 requests.extend(request);
                 if let Some(selected) = selected {
                     selected
-                        .apply(&mut self.application)
+                        .apply(&mut self.authority.application)
                         .map_err(ApplicationRuntimeError::Session)?;
                 }
             }
@@ -619,14 +611,14 @@ impl ApplicationRuntime {
                 request_id,
                 failure,
             } => {
-                if let Some(selected) = self.storage.configuration_saved(
+                if let Some(selected) = self.authority.storage.configuration_saved(
                     document,
                     request_id,
                     failure,
-                    &self.application,
+                    &self.authority.application,
                 ) {
                     selected
-                        .apply(&mut self.application)
+                        .apply(&mut self.authority.application)
                         .map_err(ApplicationRuntimeError::Session)?;
                 }
             }
@@ -634,15 +626,19 @@ impl ApplicationRuntime {
                 request_id,
                 completion,
             } => {
-                if let Some(settings) = self.storage.keyboard_loaded(request_id, completion)
-                    && !self.shutdown.closed()
+                if let Some(settings) = self
+                    .authority
+                    .storage
+                    .keyboard_loaded(request_id, completion)
+                    && !self.authority.shutdown.closed()
                     && self.endpoint.boot.active()
                     && matches!(
-                        self.application.core_session().snapshot().phase(),
+                        self.authority.application.core_session().snapshot().phase(),
                         SessionPhase::Title | SessionPhase::FlightSetup
                     )
                 {
-                    self.application
+                    self.authority
+                        .application
                         .execute(
                             birdman_game_app::application::SessionCommand::SetKeyboardControls {
                                 settings,
@@ -656,23 +652,27 @@ impl ApplicationRuntime {
                 request_id,
                 failure,
             } => {
-                self.storage.keyboard_written(request_id, failure);
+                self.authority.storage.keyboard_written(request_id, failure);
             }
             ApplicationInput::DisplaySettingsLoaded {
                 request_id,
                 completion,
             } => {
-                if let Some(settings) = self.storage.display_loaded(request_id, completion)
-                    && !self.shutdown.closed()
+                if let Some(settings) = self
+                    .authority
+                    .storage
+                    .display_loaded(request_id, completion)
+                    && !self.authority.shutdown.closed()
                     && self.endpoint.boot.active()
                     && matches!(
-                        self.application.core_session().snapshot().phase(),
+                        self.authority.application.core_session().snapshot().phase(),
                         SessionPhase::Title
                             | SessionPhase::FlightSetup
                             | SessionPhase::FlightPaused { .. }
                     )
                 {
-                    self.application
+                    self.authority
+                        .application
                         .execute(
                             birdman_game_app::application::SessionCommand::SetDisplaySettings {
                                 settings,
@@ -686,7 +686,7 @@ impl ApplicationRuntime {
                 request_id,
                 failure,
             } => {
-                self.storage.display_written(request_id, failure);
+                self.authority.storage.display_written(request_id, failure);
             }
             ApplicationInput::PhoneSensorsStarted {
                 resource_id,
@@ -698,7 +698,7 @@ impl ApplicationRuntime {
                     observed_ms,
                     &mut requests,
                 ) {
-                    self.diagnostic = failure;
+                    self.authority.diagnostic = failure;
                 }
             }
             ApplicationInput::PhoneSensorsStopped {
@@ -706,7 +706,7 @@ impl ApplicationRuntime {
                 failure,
             } => {
                 if self.endpoint.phone.stopped(resource_id, failure.as_deref()) {
-                    self.diagnostic = failure;
+                    self.authority.diagnostic = failure;
                 }
             }
             ApplicationInput::RendererFailed {
@@ -719,9 +719,11 @@ impl ApplicationRuntime {
                     .invalidate_renderer(renderer_resource_id, observed_ms)
                     .map_err(ApplicationRuntimeError::Graphics)?
                 {
-                    self.diagnostic = Some(cause);
+                    self.authority.diagnostic = Some(cause);
                     if self.endpoint.boot.active() {
-                        self.endpoint.boot.fail(self.diagnostic.as_deref());
+                        self.endpoint
+                            .boot
+                            .fail(self.authority.diagnostic.as_deref());
                     } else {
                         self.endpoint.platform.renderer_failure = Some(
                             "描画を続けられない。ゲームを再読み込みして再試行する。".to_owned(),
@@ -733,9 +735,9 @@ impl ApplicationRuntime {
                 self.endpoint.document_focused = focused;
                 if !focused {
                     if self.presentation_input_focused() {
-                        self.application.retire_surface_flight_input();
+                        self.authority.application.retire_surface_flight_input();
                     } else {
-                        self.application.invalidate_flight_input();
+                        self.authority.application.invalidate_flight_input();
                     }
                     if self.endpoint.display.state().active_mode()
                         != Some(GameUiPresentationMode::Hmd)
@@ -747,9 +749,9 @@ impl ApplicationRuntime {
             ApplicationInput::DisplayEnded { resource_id, cause } => {
                 if self.endpoint.display.active_resource() == Some(resource_id) {
                     if let Some(cause) = cause {
-                        self.diagnostic = Some(cause);
+                        self.authority.diagnostic = Some(cause);
                     }
-                    let next_id = self.allocate_request()?;
+                    let next_id = self.authority.allocate_request()?;
                     requests.extend(
                         self.endpoint
                             .display
@@ -765,14 +767,14 @@ impl ApplicationRuntime {
             ApplicationInput::PageHide { persisted: true } => {
                 self.endpoint.page_frozen = true;
                 self.endpoint.page_visible = false;
-                self.application.invalidate_flight_input();
+                self.authority.application.invalidate_flight_input();
             }
             ApplicationInput::PageHide { persisted: false } => unreachable!(),
             ApplicationInput::RendererReleased { failure, .. }
             | ApplicationInput::DisplayReleased { failure, .. }
             | ApplicationInput::RecordIoCancelled { failure, .. } => {
                 if admitted_terminal && let Some(cause) = failure {
-                    self.diagnostic = Some(cause);
+                    self.authority.diagnostic = Some(cause);
                 }
             }
             ApplicationInput::RendererCreated { request_id, result } => {
@@ -786,8 +788,10 @@ impl ApplicationRuntime {
                             self.endpoint.boot = boot::BootOwner::Preparing;
                         }
                         ApplicationRendererCreation::Failed { cause } => {
-                            self.diagnostic = Some(cause);
-                            self.endpoint.boot.fail(self.diagnostic.as_deref());
+                            self.authority.diagnostic = Some(cause);
+                            self.endpoint
+                                .boot
+                                .fail(self.authority.diagnostic.as_deref());
                         }
                     }
                 } else if let ApplicationRendererCreation::Ready { renderer } = result
@@ -807,7 +811,8 @@ impl ApplicationRuntime {
                 observation,
             } => {
                 if let Some(items) =
-                    self.storage
+                    self.authority
+                        .storage
                         .preview_observed(request_id, observation, &mut requests)
                 {
                     self.endpoint.platform.stored_records = items
@@ -827,7 +832,7 @@ impl ApplicationRuntime {
                 request_id,
                 failure,
             } => {
-                if let Some(notification) = self.storage.downloaded(request_id, failure) {
+                if let Some(notification) = self.authority.storage.downloaded(request_id, failure) {
                     self.endpoint.platform.notification = notification;
                 }
             }
@@ -835,11 +840,12 @@ impl ApplicationRuntime {
                 request_id,
                 completion,
             } => {
-                let previous_phase = self.application.core_session().snapshot().phase();
-                if let Some(notification) =
-                    self.storage
-                        .loaded(request_id, completion, &mut self.application)
-                {
+                let previous_phase = self.authority.application.core_session().snapshot().phase();
+                if let Some(notification) = self.authority.storage.loaded(
+                    request_id,
+                    completion,
+                    &mut self.authority.application,
+                ) {
                     self.endpoint.platform.notification = notification;
                 }
                 self.observe_replay_entry(previous_phase);
@@ -848,14 +854,18 @@ impl ApplicationRuntime {
                 request_id,
                 unix_milliseconds,
             } => {
-                requests.extend(self.storage.opened(request_id, unix_milliseconds));
+                requests.extend(self.authority.storage.opened(request_id, unix_milliseconds));
             }
             ApplicationInput::RecordSaveObserved {
                 request_id,
                 observation,
             } => {
-                self.storage
-                    .observe(request_id, observation, &self.application, &mut requests);
+                self.authority.storage.observe(
+                    request_id,
+                    observation,
+                    &self.authority.application,
+                    &mut requests,
+                );
             }
             ApplicationInput::Graphics {
                 renderer_resource_id,
@@ -867,7 +877,7 @@ impl ApplicationRuntime {
                     .observe(renderer_resource_id, observation, observed_ms)
                     .map_err(ApplicationRuntimeError::Graphics)?
                 {
-                    self.diagnostic = Some(cause);
+                    self.authority.diagnostic = Some(cause);
                 }
             }
             ApplicationInput::ResourcesReleased {
@@ -880,7 +890,7 @@ impl ApplicationRuntime {
                     .released(resource_id, failure.is_some())
                     && let Some(cause) = failure
                 {
-                    self.diagnostic = Some(cause);
+                    self.authority.diagnostic = Some(cause);
                     self.endpoint
                         .graphics
                         .cleanup_failed(observed_ms)
@@ -970,33 +980,38 @@ impl ApplicationRuntime {
                     .screen_changed(resource_id, angle_degrees);
             }
             ApplicationInput::Wake { request_id } => {
-                if let Some((id, at_ms)) = self.controller_wake
+                if let Some((id, at_ms)) = self.authority.controller_wake
                     && id == request_id
                 {
-                    self.controller_wake = None;
+                    self.authority.controller_wake = None;
                     if observed_ms >= at_ms {
-                        self.application
+                        self.authority
+                            .application
                             .observe_controller_deadline()
                             .map_err(ApplicationRuntimeError::Application)?;
-                        if !self.shutdown.closed()
-                            && self.application.controller_realtime()
-                            && self.application.core_session().snapshot().phase()
+                        if !self.authority.shutdown.closed()
+                            && self.authority.application.controller_realtime()
+                            && self.authority.application.core_session().snapshot().phase()
                                 == SessionPhase::FlightRunning
-                            && let Some(tick_at) = self.controller_next_tick_ms
+                            && let Some(tick_at) = self.authority.controller_next_tick_ms
                             && observed_ms >= tick_at
                         {
                             let next=tick_at+birdman_game_format::external_controller::HITL_INTERVAL_MILLISECONDS;
                             if observed_ms > next {
-                                self.application
+                                self.authority
+                                    .application
                                     .miss_controller_clock()
                                     .map_err(ApplicationRuntimeError::Application)?;
                             } else {
-                                self.controller_next_tick_ms = Some(next);
-                                self.application.arm_controller_tick_deadline(next);
-                                self.application
+                                self.authority.controller_next_tick_ms = Some(next);
+                                self.authority
+                                    .application
+                                    .arm_controller_tick_deadline(next);
+                                self.authority
+                                    .application
                                     .advance_flight_frame(
                                         observed_ms,
-                                        &self.controller_gamepads,
+                                        &self.authority.controller_gamepads,
                                         self.presentation_input_focused(),
                                     )
                                     .map_err(ApplicationRuntimeError::Flight)?;
@@ -1038,8 +1053,10 @@ impl ApplicationRuntime {
                             .filter(|_| self.presentation_input_focused())
                             .filter_map(ApplicationGamepadObservation::flight)
                             .collect();
-                        self.controller_gamepads.clone_from(&flight_gamepads);
-                        self.advance_frame(
+                        self.authority
+                            .controller_gamepads
+                            .clone_from(&flight_gamepads);
+                        self.authority.advance_frame(
                             observed_ms,
                             &flight_gamepads,
                             self.presentation_input_focused(),
@@ -1227,7 +1244,7 @@ impl ApplicationRuntime {
                 self.endpoint.platform.touch_available |= capabilities.touch_available;
                 self.endpoint.phone.configure(capabilities.phone_sensors);
                 self.endpoint.platform.analysis_available = capabilities.analysis_available;
-                self.replay_supported = capabilities.replay_available;
+                self.authority.replay_supported = capabilities.replay_available;
                 self.endpoint.platform.replay_available = capabilities.replay_available;
                 self.endpoint.platform.stored_records_available =
                     capabilities.stored_records_available;
@@ -1245,7 +1262,7 @@ impl ApplicationRuntime {
                         .graphics
                         .invalidate_renderer(renderer, observed_ms)
                         .map_err(ApplicationRuntimeError::Graphics)?;
-                    self.diagnostic = completion
+                    self.authority.diagnostic = completion
                         .failed
                         .as_ref()
                         .map(|failed| failed.cause.clone());
@@ -1259,7 +1276,7 @@ impl ApplicationRuntime {
                         observed_ms,
                     )
                 {
-                    self.diagnostic = Some(format!(
+                    self.authority.diagnostic = Some(format!(
                         "描画資源の確定値を受理できない: {}",
                         birdman_game_app::technical_error_text(&error)
                     ));
@@ -1299,7 +1316,7 @@ impl ApplicationRuntime {
                             birdman_game_core::BriefingFailure::AssetUnavailable,
                         ),
                         Some(failed) => {
-                            self.diagnostic = Some(failed.cause);
+                            self.authority.diagnostic = Some(failed.cause);
                             if !self.endpoint.boot.active() {
                                 self.endpoint.platform.notification =
                                     "描画資源を準備できない。".to_owned();
@@ -1318,16 +1335,19 @@ impl ApplicationRuntime {
                             BackendReadiness::Failed(_)
                         )
                     {
-                        self.endpoint.boot.fail(self.diagnostic.as_deref());
+                        self.endpoint
+                            .boot
+                            .fail(self.authority.diagnostic.as_deref());
                     }
                 }
-                if !self.shutdown.closed()
+                if !self.authority.shutdown.closed()
                     && matches!(
-                        self.application.core_session().snapshot().phase(),
+                        self.authority.application.core_session().snapshot().phase(),
                         SessionPhase::BriefingPreparing
                     )
                 {
-                    self.application
+                    self.authority
+                        .application
                         .observe_readiness(self.endpoint.resource_readiness)
                         .map_err(ApplicationRuntimeError::Session)?;
                 }
@@ -1342,7 +1362,7 @@ impl ApplicationRuntime {
                     .display
                     .completion_advances(request_id, &completion)
                 {
-                    self.allocate_request()?
+                    self.authority.allocate_request()?
                 } else {
                     0
                 };
@@ -1356,13 +1376,14 @@ impl ApplicationRuntime {
                 if was_pending
                     && let DisplayState::Failed { cause, .. } = self.endpoint.display.state()
                 {
-                    self.diagnostic = Some(cause.clone());
+                    self.authority.diagnostic = Some(cause.clone());
                     self.endpoint.platform.notification =
                         format!("表示を切り替えられない。原因: {cause}");
                 }
             }
         }
-        self.collect_controller_requests(&mut requests)?;
+        self.authority
+            .collect_controller_requests(&mut requests, self.presentation_input_focused())?;
         if io_continuation {
             return Ok(self.output(None, requests, keyboard_consumed));
         }
@@ -1371,53 +1392,64 @@ impl ApplicationRuntime {
             ConfigurationDocumentKind::Controller,
             ConfigurationDocumentKind::ControllerExecution,
         ] {
-            if !self.shutdown.closed() && self.storage.configuration_needs_read(document) {
-                let request_id = self.allocate_request()?;
-                requests.push(self.storage.read_configuration(document, request_id));
+            if !self.authority.shutdown.closed()
+                && self.authority.storage.configuration_needs_read(document)
+            {
+                let request_id = self.authority.allocate_request()?;
+                requests.push(
+                    self.authority
+                        .storage
+                        .read_configuration(document, request_id),
+                );
             }
         }
-        if !self.shutdown.closed() && self.storage.keyboard_needs_read() {
-            let request_id = self.allocate_request()?;
-            requests.push(self.storage.read_keyboard(request_id));
+        if !self.authority.shutdown.closed() && self.authority.storage.keyboard_needs_read() {
+            let request_id = self.authority.allocate_request()?;
+            requests.push(self.authority.storage.read_keyboard(request_id));
         }
-        if self.storage.keyboard_needs_write() {
-            let request_id = self.allocate_request()?;
-            requests.extend(self.storage.write_keyboard(request_id));
+        if self.authority.storage.keyboard_needs_write() {
+            let request_id = self.authority.allocate_request()?;
+            requests.extend(self.authority.storage.write_keyboard(request_id));
         }
-        if !self.shutdown.closed() && self.storage.display_needs_read() {
-            let request_id = self.allocate_request()?;
-            requests.push(self.storage.read_display(request_id));
+        if !self.authority.shutdown.closed() && self.authority.storage.display_needs_read() {
+            let request_id = self.authority.allocate_request()?;
+            requests.push(self.authority.storage.read_display(request_id));
         }
-        if self.storage.display_needs_write() {
-            let request_id = self.allocate_request()?;
-            requests.extend(self.storage.write_display(request_id));
+        if self.authority.storage.display_needs_write() {
+            let request_id = self.authority.allocate_request()?;
+            requests.extend(self.authority.storage.write_display(request_id));
         }
         self.synchronize_phone(&mut requests)?;
         self.synchronize_xr()?;
         self.synchronize_graphics()?;
         if let Err(error) = self.synchronize_resources(&mut requests) {
             if self.endpoint.boot.active() {
-                self.diagnostic = Some(birdman_game_app::technical_error_text(&error));
-                self.endpoint.boot.fail(self.diagnostic.as_deref());
+                self.authority.diagnostic = Some(birdman_game_app::technical_error_text(&error));
+                self.endpoint
+                    .boot
+                    .fail(self.authority.diagnostic.as_deref());
             } else {
                 return Err(error);
             }
         }
         if matches!(self.endpoint.boot, boot::BootOwner::Initial) {
-            let request_id = self.allocate_request()?;
+            let request_id = self.authority.allocate_request()?;
             requests.push(self.endpoint.boot.start(request_id));
         }
         if matches!(self.endpoint.boot, boot::BootOwner::Preparing) {
             match self.endpoint.resource_readiness {
                 BackendReadiness::Ready
-                    if !self.storage.configuration_loading()
-                        && !self.storage.keyboard_loading()
-                        && !self.storage.display_loading() =>
+                    if !self.authority.storage.configuration_loading()
+                        && !self.authority.storage.keyboard_loading()
+                        && !self.authority.storage.display_loading() =>
                 {
                     self.endpoint.boot = boot::BootOwner::Ready
                 }
                 BackendReadiness::Ready => {}
-                BackendReadiness::Failed(_) => self.endpoint.boot.fail(self.diagnostic.as_deref()),
+                BackendReadiness::Failed(_) => self
+                    .endpoint
+                    .boot
+                    .fail(self.authority.diagnostic.as_deref()),
                 BackendReadiness::Preparing => {}
             }
             if matches!(self.endpoint.boot, boot::BootOwner::Ready) {
@@ -1451,22 +1483,34 @@ impl ApplicationRuntime {
                 self.synchronize_resources(&mut requests)?;
             }
         }
-        if !self.shutdown.closed() {
-            self.storage.reconcile(&self.application);
+        if !self.authority.shutdown.closed() {
+            self.authority
+                .storage
+                .reconcile(&self.authority.application);
         }
-        if !self.shutdown.closed()
+        if !self.authority.shutdown.closed()
             && self.endpoint.platform.stored_records_available
-            && self.storage.needs_preview(&self.application)
+            && self
+                .authority
+                .storage
+                .needs_preview(&self.authority.application)
         {
-            let request_id = self.allocate_request()?;
-            requests.push(self.storage.begin_preview(request_id));
+            let request_id = self.authority.allocate_request()?;
+            requests.push(self.authority.storage.begin_preview(request_id));
         }
-        if !self.shutdown.closed()
+        if !self.authority.shutdown.closed()
             && self.endpoint.platform.stored_records_available
-            && self.storage.needs_save(&self.application)
+            && self
+                .authority
+                .storage
+                .needs_save(&self.authority.application)
         {
-            let request_id = self.allocate_request()?;
-            requests.push(self.storage.begin(&self.application, request_id)?);
+            let request_id = self.authority.allocate_request()?;
+            requests.push(
+                self.authority
+                    .storage
+                    .begin(&self.authority.application, request_id)?,
+            );
         }
         self.endpoint.platform.presentation_mode = self
             .endpoint
@@ -1475,20 +1519,24 @@ impl ApplicationRuntime {
             .active_mode()
             .unwrap_or(GameUiPresentationMode::Screen);
         self.endpoint.platform.replay_available =
-            self.replay_supported && self.application.replay_available();
+            self.authority.replay_supported && self.authority.application.replay_available();
         self.endpoint.platform.operation_pending = self.endpoint.display.state().pending()
-            || self.storage.load_pending()
-            || self.storage.configuration_pending();
+            || self.authority.storage.load_pending()
+            || self.authority.storage.configuration_pending();
         self.endpoint.platform.stored_records_retry_available =
             self.endpoint.platform.stored_records_available
-                && self.storage.can_retry_preview(&self.application);
+                && self
+                    .authority
+                    .storage
+                    .can_retry_preview(&self.authority.application);
         self.endpoint.platform.render_quality_confirmed =
             self.endpoint.graphics.resource().is_some();
         self.endpoint.platform.screen_render_scale = self.endpoint.graphics.snapshot();
         self.endpoint.platform.water_quality =
             self.endpoint.platform.screen_render_scale.water_quality;
         self.endpoint.platform.water_quality_operation = self.endpoint.graphics.water_operation();
-        self.application
+        self.authority
+            .application
             .observe_presentation(PresentationObservation::Backend {
                 ready: self.endpoint.display.state().active_mode().is_some()
                     && !self.endpoint.display.state().pending()
@@ -1535,7 +1583,7 @@ impl ApplicationRuntime {
             .as_ref()
             .is_none_or(|view| view.view_revision != revision)
         {
-            let mut view = game_ui_view(&self.ui, &self.context(&environment)?)
+            let mut view = game_ui_view(&self.authority.ui, &self.context(&environment)?)
                 .map_err(ApplicationRuntimeError::Ui)?;
             if self.endpoint.boot.active() {
                 view = self.endpoint.boot.view(view);
@@ -1547,7 +1595,7 @@ impl ApplicationRuntime {
             ApplicationUiProjection::View { view }
         } else {
             let mut frame = game_ui_frame(
-                &self.ui,
+                &self.authority.ui,
                 &self.context(&environment)?,
                 self.endpoint.retained.as_ref().unwrap(),
                 revision,
@@ -1558,8 +1606,11 @@ impl ApplicationRuntime {
                 frame: Box::new(frame),
             }
         };
-        let scene_source =
-            scene::SceneSource::capture(&self.application, &self.ui, &mut self.endpoint.assets)?;
+        let scene_source = scene::SceneSource::capture(
+            &self.authority.application,
+            &self.authority.ui,
+            &mut self.endpoint.assets,
+        )?;
         let drawable_resources = self.drawable_resources_available();
         let presentation_visible = self.presentation_visible();
         let scene_frame =
@@ -1568,9 +1619,13 @@ impl ApplicationRuntime {
         let view = self.endpoint.retained.as_ref().unwrap();
         let structural_frame = if matches!(projection, ApplicationUiProjection::View { .. }) {
             Some({
-                let mut frame =
-                    game_ui_frame(&self.ui, &self.context(&environment)?, view, revision)
-                        .map_err(ApplicationRuntimeError::Ui)?;
+                let mut frame = game_ui_frame(
+                    &self.authority.ui,
+                    &self.context(&environment)?,
+                    view,
+                    revision,
+                )
+                .map_err(ApplicationRuntimeError::Ui)?;
                 self.project_flight_pointers(&mut frame);
                 frame
             })
@@ -1603,22 +1658,22 @@ impl ApplicationRuntime {
             .projection(render_spatial, observed_ms)
             .map_err(ApplicationRuntimeError::Graphics)?;
         let drawing = ApplicationDrawingOutput {
-            display: self.application.display_settings().adjustment(),
+            display: self.authority.application.display_settings().adjustment(),
             presentation: ApplicationDrawingPresentation {
                 frame_rate_label: self.endpoint.frame_rate.label(),
                 mode: self.endpoint.display.state().active_mode(),
-                screen_ui_visible: !self.shutdown.closed()
+                screen_ui_visible: !self.authority.shutdown.closed()
                     && self
                         .endpoint
                         .display
                         .state()
                         .active_mode()
                         .is_none_or(|mode| mode == GameUiPresentationMode::Screen),
-                screen_hud_visible: !self.shutdown.closed()
+                screen_hud_visible: !self.authority.shutdown.closed()
                     && self.endpoint.display.state().active_mode()
                         == Some(GameUiPresentationMode::Screen)
                     && view.hud.is_some(),
-                scene_visible: !self.shutdown.closed()
+                scene_visible: !self.authority.shutdown.closed()
                     && self.presentation_visible()
                     && self.drawable_resources_available()
                     && scene_frame.projection.camera.is_some(),
@@ -1669,7 +1724,9 @@ impl ApplicationRuntime {
             _ => None,
         };
         if !pressed && let Some(key) = action_key {
-            self.application.observe_flight_action_key(key, false);
+            self.authority
+                .application
+                .observe_flight_action_key(key, false);
         }
         let control_key = match key {
             KeyboardKey::Up => Some(FlightControlKey::ArrowUp),
@@ -1689,17 +1746,20 @@ impl ApplicationRuntime {
             && !self.endpoint.display.state().pending()
         {
             if let Some(key) = control_key {
-                keyboard_consumed = self.application.observe_flight_key(FlightKeyObservation {
-                    key,
-                    pressed,
-                    repeat,
-                });
+                keyboard_consumed =
+                    self.authority
+                        .application
+                        .observe_flight_key(FlightKeyObservation {
+                            key,
+                            pressed,
+                            repeat,
+                        });
             } else if key == KeyboardKey::C
-                && !self.ui.credits_open
+                && !self.authority.ui.credits_open
                 && pressed
                 && !repeat
                 && matches!(
-                    self.application.core_session().snapshot().phase(),
+                    self.authority.application.core_session().snapshot().phase(),
                     SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
                 )
             {
@@ -1708,11 +1768,12 @@ impl ApplicationRuntime {
                 self.apply_action(
                     revision,
                     GameUiAction::SetFlightCamera {
-                        camera: self.ui.flight_camera.toggled(),
+                        camera: self.authority.ui.flight_camera.toggled(),
                     },
                     requests,
                 )?;
-                self.application
+                self.authority
+                    .application
                     .observe_flight_action_key(FlightActionKey::Camera, true);
                 keyboard_consumed = true;
             } else if matches!(key, KeyboardKey::P | KeyboardKey::Escape)
@@ -1720,7 +1781,7 @@ impl ApplicationRuntime {
                 && !repeat
                 && !self.endpoint.boot.active()
             {
-                let command = match self.application.core_session().snapshot().phase() {
+                let command = match self.authority.application.core_session().snapshot().phase() {
                     SessionPhase::FlightRunning => {
                         Some(birdman_game_app::application::SessionCommand::Pause {})
                     }
@@ -1733,7 +1794,8 @@ impl ApplicationRuntime {
                     let environment = self.environment()?;
                     let revision = self.structure_revision(&environment)?;
                     self.apply_action(revision, GameUiAction::Session { command }, requests)?;
-                    self.application
+                    self.authority
+                        .application
                         .observe_flight_action_key(action_key.unwrap(), true);
                     keyboard_consumed = true;
                 }
@@ -1743,13 +1805,13 @@ impl ApplicationRuntime {
     }
 
     fn close(&mut self, requests: &mut Vec<ApplicationRequest>) {
-        self.application.shutdown_controller();
+        self.authority.application.shutdown_controller();
         let renderer = self.endpoint.graphics.retire();
-        requests.extend(self.shutdown.begin(renderer));
+        requests.extend(self.authority.shutdown.begin(renderer));
         self.endpoint.boot = boot::BootOwner::Closed;
         self.endpoint.chart_pointer = None;
         self.endpoint.page_visible = false;
-        self.storage.close();
+        self.authority.storage.close();
         self.endpoint.phone.close(requests);
         if let Some(request_id) = self.endpoint.phone_wake.take() {
             requests.push(ApplicationRequest::CancelWake { request_id });
@@ -1770,21 +1832,24 @@ impl ApplicationRuntime {
         mut requests: Vec<ApplicationRequest>,
         keyboard_consumed: bool,
     ) -> ApplicationOutput {
-        self.shutdown.requests(&requests);
-        if let Some(request) = self.shutdown.release_renderer() {
-            self.shutdown.requests(std::slice::from_ref(&request));
+        self.authority.shutdown.requests(&requests);
+        if let Some(request) = self.authority.shutdown.release_renderer() {
+            self.authority
+                .shutdown
+                .requests(std::slice::from_ref(&request));
             requests.push(request);
         }
-        if let Some(request) = self.shutdown.take_reload() {
+        if let Some(request) = self.authority.shutdown.take_reload() {
             requests.push(request);
         }
         ApplicationOutput {
             drawing,
-            lifecycle: self.shutdown.lifecycle(),
+            lifecycle: self.authority.shutdown.lifecycle(),
             diagnostic: self
+                .authority
                 .diagnostic
                 .take()
-                .or_else(|| self.storage.take_diagnostic()),
+                .or_else(|| self.authority.storage.take_diagnostic()),
             requests,
             keyboard_consumed,
         }
@@ -1891,7 +1956,7 @@ impl ApplicationRuntime {
                 GameUiAction::Platform {
                     command: GameUiPlatformCommand::ReloadApplication {},
                 } => birdman_game_presentation::game_ui::GameUiUpdate {
-                    state: self.ui.clone(),
+                    state: self.authority.ui.clone(),
                     effects: vec![GameUiEffect::Platform {
                         command: GameUiPlatformCommand::ReloadApplication {},
                     }],
@@ -1923,19 +1988,19 @@ impl ApplicationRuntime {
             {
                 return Err(ApplicationRuntimeError::Ui(GameUiError::StaleView));
             }
-            update_game_ui(&self.ui, action, &self.context(&environment)?)
+            update_game_ui(&self.authority.ui, action, &self.context(&environment)?)
                 .map_err(ApplicationRuntimeError::Ui)?
         };
-        if self.ui.flight_camera != update.state.flight_camera {
+        if self.authority.ui.flight_camera != update.state.flight_camera {
             self.endpoint.scene.reset_look();
         }
-        self.ui = update.state;
+        self.authority.ui = update.state;
         for effect in update.effects {
             match effect {
                 GameUiEffect::Platform {
                     command: GameUiPlatformCommand::ReloadApplication {},
                 } => {
-                    self.shutdown.request_reload();
+                    self.authority.shutdown.request_reload();
                     self.close(requests);
                 }
                 GameUiEffect::Session { command } => {
@@ -1954,23 +2019,28 @@ impl ApplicationRuntime {
                         &command,
                         birdman_game_app::application::SessionCommand::SetDisplaySettings { .. }
                     );
-                    let previous_phase = self.application.core_session().snapshot().phase();
-                    self.application
+                    let previous_phase =
+                        self.authority.application.core_session().snapshot().phase();
+                    self.authority
+                        .application
                         .execute(command, self.endpoint.resource_readiness)
                         .map_err(ApplicationRuntimeError::Application)?;
                     if keyboard_change {
-                        self.storage
-                            .keyboard_changed(self.application.keyboard_controls());
+                        self.authority
+                            .storage
+                            .keyboard_changed(self.authority.application.keyboard_controls());
                     }
                     if display_change {
-                        self.storage
-                            .display_changed(self.application.display_settings());
+                        self.authority
+                            .storage
+                            .display_changed(self.authority.application.display_settings());
                     }
                     self.observe_replay_entry(previous_phase);
-                    self.previous_frame_ms = None;
+                    self.authority.previous_frame_ms = None;
                 }
                 GameUiEffect::Record { action } => {
-                    self.application
+                    self.authority
+                        .application
                         .execute_record(action)
                         .map_err(ApplicationRuntimeError::Application)?;
                 }
@@ -1983,33 +2053,33 @@ impl ApplicationRuntime {
                 } => {
                     self.endpoint
                         .graphics
-                        .select(&command, self.observed_ms)
+                        .select(&command, self.authority.observed_ms)
                         .map_err(ApplicationRuntimeError::Graphics)?;
                 }
                 GameUiEffect::Platform {
                     command: GameUiPlatformCommand::LoadConfiguration { document },
                 } => {
-                    let request_id = self.allocate_request()?;
-                    requests.extend(self.storage.pick_configuration(
+                    let request_id = self.authority.allocate_request()?;
+                    requests.extend(self.authority.storage.pick_configuration(
                         document,
                         request_id,
-                        &self.application,
+                        &self.authority.application,
                     ));
                 }
                 GameUiEffect::Platform {
                     command: GameUiPlatformCommand::DeleteConfiguration { document },
                 } => {
-                    let request_id = self.allocate_request()?;
-                    requests.extend(self.storage.delete_configuration(
+                    let request_id = self.authority.allocate_request()?;
+                    requests.extend(self.authority.storage.delete_configuration(
                         document,
                         request_id,
-                        &self.application,
+                        &self.authority.application,
                     ));
                 }
                 GameUiEffect::Platform {
                     command: GameUiPlatformCommand::SetPresentation { mode },
                 } => {
-                    let request_id = self.allocate_request()?;
+                    let request_id = self.authority.allocate_request()?;
                     match self.endpoint.display.request(mode, request_id) {
                         display::DisplayRequestOutcome::Accepted(request) => {
                             requests.push(ApplicationRequest::Display { request })
@@ -2053,16 +2123,23 @@ impl ApplicationRuntime {
                 GameUiEffect::Platform {
                     command: GameUiPlatformCommand::OpenStoredRecord { id },
                 } => {
-                    let request_id = self.allocate_request()?;
-                    requests.push(self.storage.read(request_id, id, &self.application));
+                    let request_id = self.authority.allocate_request()?;
+                    requests.push(self.authority.storage.read(
+                        request_id,
+                        id,
+                        &self.authority.application,
+                    ));
                 }
                 GameUiEffect::Platform {
                     command: GameUiPlatformCommand::RetryStoredRecords {},
-                } => self.storage.retry_preview(&self.application),
+                } => self
+                    .authority
+                    .storage
+                    .retry_preview(&self.authority.application),
                 GameUiEffect::Platform {
                     command: GameUiPlatformCommand::DownloadSoftwareLicenses {},
                 } => {
-                    let request_id = self.allocate_request()?;
+                    let request_id = self.authority.allocate_request()?;
                     requests.push(ApplicationRequest::DownloadFile {
                         request_id,
                         file_name: "SHARED-RUST-LICENSES.html".to_owned(),
@@ -2073,17 +2150,22 @@ impl ApplicationRuntime {
                 GameUiEffect::Platform {
                     command: GameUiPlatformCommand::DownloadRecordJson {},
                 } => {
-                    let request_id = self.allocate_request()?;
-                    requests.push(
-                        self.storage
-                            .download(&self.application, request_id, false)?,
-                    );
+                    let request_id = self.authority.allocate_request()?;
+                    requests.push(self.authority.storage.download(
+                        &self.authority.application,
+                        request_id,
+                        false,
+                    )?);
                 }
                 GameUiEffect::Platform {
                     command: GameUiPlatformCommand::DownloadFlightCsv {},
                 } => {
-                    let request_id = self.allocate_request()?;
-                    requests.push(self.storage.download(&self.application, request_id, true)?);
+                    let request_id = self.authority.allocate_request()?;
+                    requests.push(self.authority.storage.download(
+                        &self.authority.application,
+                        request_id,
+                        true,
+                    )?);
                 }
             }
         }
@@ -2092,14 +2174,14 @@ impl ApplicationRuntime {
 
     fn observe_replay_entry(&mut self, previous_phase: SessionPhase) {
         if previous_phase != SessionPhase::Replay
-            && self.application.core_session().snapshot().phase() == SessionPhase::Replay
+            && self.authority.application.core_session().snapshot().phase() == SessionPhase::Replay
         {
-            self.ui.replay_view = if self.application.replay_available() {
+            self.authority.ui.replay_view = if self.authority.application.replay_available() {
                 birdman_game_presentation::game_ui::GameUiReplayView::Cinematic
             } else {
                 birdman_game_presentation::game_ui::GameUiReplayView::Analysis
             };
-            self.ui.technical_open = false;
+            self.authority.ui.technical_open = false;
         }
     }
 
@@ -2137,7 +2219,7 @@ impl ApplicationRuntime {
     ) -> Result<(), ApplicationRuntimeError> {
         self.endpoint.platform.notification = message.to_owned();
         if !self.endpoint.display.state().pending() {
-            let request_id = self.allocate_request()?;
+            let request_id = self.authority.allocate_request()?;
             match self
                 .endpoint
                 .display
@@ -2159,7 +2241,8 @@ impl ApplicationRuntime {
         let document_available = !self.endpoint.page_frozen
             && (self.endpoint.display.state().active_mode() == Some(GameUiPresentationMode::Hmd)
                 || self.presentation_input_focused());
-        self.application
+        self.authority
+            .application
             .observe_availability(ExternalPauseReason::DocumentHidden, document_available)
             .map_err(ApplicationRuntimeError::Application)?;
         let resource = (self.endpoint.display.state().active_mode()
@@ -2180,7 +2263,8 @@ impl ApplicationRuntime {
                 Some(XrViewerFrame::RuntimeDerived { .. })
             ),
         });
-        self.application
+        self.authority
+            .application
             .observe_presentation(PresentationObservation::Xr { observation })
             .map_err(ApplicationRuntimeError::Application)
     }
@@ -2202,13 +2286,13 @@ impl ApplicationRuntime {
                 requests.push(ApplicationRequest::CancelWake { request_id });
             }
         }
-        self.endpoint.phone.observe_time(self.observed_ms);
+        self.endpoint.phone.observe_time(self.authority.observed_ms);
         self.endpoint.phone.release_unused(requests);
-        if !self.shutdown.closed()
+        if !self.authority.shutdown.closed()
             && (resource.is_some() || matches!(self.endpoint.boot, boot::BootOwner::Ready))
             && self.endpoint.phone.needs_subscription()
         {
-            let resource_id = self.allocate_request()?;
+            let resource_id = self.authority.allocate_request()?;
             self.endpoint.phone.subscribe(resource_id, requests);
         }
         self.endpoint.platform.phone_vr_available = self.endpoint.phone.available();
@@ -2235,7 +2319,7 @@ impl ApplicationRuntime {
         }
         match (self.endpoint.phone.deadline(), self.endpoint.phone_wake) {
             (Some(at_ms), None) => {
-                let request_id = self.allocate_request()?;
+                let request_id = self.authority.allocate_request()?;
                 self.endpoint.phone_wake = Some(request_id);
                 requests.push(ApplicationRequest::ScheduleWake {
                     request_id,
@@ -2252,17 +2336,9 @@ impl ApplicationRuntime {
         Ok(())
     }
 
-    fn allocate_request(&mut self) -> Result<u32, ApplicationRuntimeError> {
-        let id = self.next_request_id;
-        self.next_request_id = id
-            .checked_add(1)
-            .ok_or(ApplicationRuntimeError::RequestExhausted)?;
-        Ok(id)
-    }
-
     fn render_scope(&self) -> birdman_game_presentation::screen_render_auto::ScreenRenderScope {
         birdman_game_presentation::game_ui::game_ui_scene(
-            self.application.core_session().snapshot().phase(),
+            self.authority.application.core_session().snapshot().phase(),
         )
         .screen_render_scope()
     }
@@ -2273,7 +2349,7 @@ impl ApplicationRuntime {
             .graphics
             .resolution_constraint(
                 self.endpoint.display.state().active_mode() != Some(GameUiPresentationMode::Hmd),
-                self.observed_ms,
+                self.authority.observed_ms,
             )
             .map_err(ApplicationRuntimeError::Graphics)?;
         let eligible = self.endpoint.page_visible
@@ -2281,7 +2357,7 @@ impl ApplicationRuntime {
             && self.endpoint.display.state().active_mode().is_some();
         self.endpoint
             .graphics
-            .synchronize(self.render_scope(), eligible, self.observed_ms)
+            .synchronize(self.render_scope(), eligible, self.authority.observed_ms)
             .map_err(ApplicationRuntimeError::Graphics)?;
         Ok(())
     }
@@ -2297,7 +2373,7 @@ impl ApplicationRuntime {
         };
         matches!(self.endpoint.resource_readiness, BackendReadiness::Ready)
             || !matches!(
-                self.application.core_session().snapshot().phase(),
+                self.authority.application.core_session().snapshot().phase(),
                 SessionPhase::BriefingPreparing
                     | SessionPhase::BriefingReady
                     | SessionPhase::BriefingFailed { .. }
@@ -2338,10 +2414,11 @@ impl ApplicationRuntime {
             self.endpoint.resource_readiness = BackendReadiness::Preparing;
             return Ok(());
         };
-        let environment = EnvironmentSelection::for_session(&self.application)
+        let environment = EnvironmentSelection::for_session(&self.authority.application)
             .map_err(ApplicationRuntimeError::Environment)?;
         let desired_key = ResourceKey {
             aircraft_identity: self
+                .authority
                 .application
                 .aircraft()
                 .map_err(|cause| {
@@ -2398,7 +2475,7 @@ impl ApplicationRuntime {
                 .prepared(
                     matches!(self.endpoint.resource_readiness, BackendReadiness::Ready),
                     false,
-                    self.observed_ms,
+                    self.authority.observed_ms,
                 )
                 .map_err(ApplicationRuntimeError::Graphics)?;
             return Ok(());
@@ -2416,14 +2493,14 @@ impl ApplicationRuntime {
                     || previous.display_resource_id != key.display_resource_id
                     || previous.graphics.renderer_resource_id != key.graphics.renderer_resource_id
             });
-        let request_id = self.allocate_request()?;
+        let request_id = self.authority.allocate_request()?;
         let assets = self
             .endpoint
             .assets
             .prepare(
                 request_id,
                 environment,
-                self.application.aircraft().map_err(|cause| {
+                self.authority.application.aircraft().map_err(|cause| {
                     ApplicationRuntimeError::Application(
                         birdman_game_app::application::ApplicationError::Preparation(
                             birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
@@ -2443,7 +2520,7 @@ impl ApplicationRuntime {
         self.endpoint.resource_readiness = BackendReadiness::Preparing;
         self.endpoint
             .graphics
-            .prepared(false, external_change, self.observed_ms)
+            .prepared(false, external_change, self.authority.observed_ms)
             .map_err(ApplicationRuntimeError::Graphics)?;
         requests.push(ApplicationRequest::PrepareResources {
             assets: Box::new(assets),
@@ -2455,160 +2532,17 @@ impl ApplicationRuntime {
         Ok(())
     }
 
-    fn synchronize_controller_wake(
-        &mut self,
-        requests: &mut Vec<ApplicationRequest>,
-    ) -> Result<(), ApplicationRuntimeError> {
-        let running = !self.shutdown.closed()
-            && self.application.controller_realtime()
-            && self.application.controller_fault().is_none()
-            && self.application.core_session().snapshot().phase() == SessionPhase::FlightRunning;
-        if !running {
-            self.controller_next_tick_ms = None;
-        } else if self.controller_next_tick_ms.is_none() {
-            self.application
-                .advance_flight_frame(
-                    self.observed_ms,
-                    &self.controller_gamepads,
-                    self.presentation_input_focused(),
-                )
-                .map_err(ApplicationRuntimeError::Flight)?;
-            if self.application.controller_fault().is_none()
-                && self.application.core_session().snapshot().phase() == SessionPhase::FlightRunning
-            {
-                self.controller_next_tick_ms = Some(
-                    self.observed_ms
-                        + birdman_game_format::external_controller::HITL_INTERVAL_MILLISECONDS,
-                );
-            }
-        }
-        let desired = match (
-            self.controller_next_tick_ms,
-            self.application.controller_next_deadline(),
-        ) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (Some(at), None) | (None, Some(at)) => Some(at),
-            (None, None) => None,
-        };
-        if self
-            .controller_wake
-            .is_some_and(|(_, at)| Some(at) != desired)
-            && let Some((request_id, _)) = self.controller_wake.take()
-        {
-            requests.push(ApplicationRequest::CancelWake { request_id });
-        }
-        if self.controller_wake.is_none()
-            && let Some(at_ms) = desired
-        {
-            let request_id = self.allocate_request()?;
-            self.controller_wake = Some((request_id, at_ms));
-            requests.push(ApplicationRequest::ScheduleWake {
-                request_id,
-                at_ms,
-                realtime: true,
-            });
-        }
-        Ok(())
-    }
-
-    fn collect_controller_requests(
-        &mut self,
-        requests: &mut Vec<ApplicationRequest>,
-    ) -> Result<(), ApplicationRuntimeError> {
-        if let Some(cause) = self.application.take_controller_cleanup_diagnostic() {
-            self.diagnostic.get_or_insert(cause);
-        }
-        self.synchronize_controller_wake(requests)?;
-        requests.extend(
-            self.application
-                .take_controller_io()
-                .into_iter()
-                .map(|request| ApplicationRequest::ControllerIo { request }),
-        );
-        Ok(())
-    }
-
     // A previously received candidate precedes the current event; a new I/O reply
     // uses this same reconciliation after its own dispatch. Sealed demand is consumed once.
-    fn reconcile_controller_observation(
-        &mut self,
-        observed_ms: f64,
-    ) -> Result<(), ApplicationRuntimeError> {
-        if !self.shutdown.closed()
-            && self.application.core_session().snapshot().phase() == SessionPhase::BriefingPreparing
-        {
-            self.application
-                .observe_readiness(self.endpoint.resource_readiness)
-                .map_err(ApplicationRuntimeError::Session)?;
-        }
-        if !self.shutdown.closed()
-            && self.application.controller_realtime()
-            && self.application.controller_has_candidate()
-            && self.application.core_session().snapshot().phase() == SessionPhase::FlightRunning
-        {
-            self.application
-                .advance_flight_frame(
-                    observed_ms,
-                    &self.controller_gamepads,
-                    self.presentation_input_focused(),
-                )
-                .map_err(ApplicationRuntimeError::Flight)?;
-        }
-        Ok(())
-    }
-
-    fn advance_frame(
-        &mut self,
-        timestamp_ms: f64,
-        gamepads: &[FlightGamepadObservation],
-        available: bool,
-    ) -> Result<(), ApplicationRuntimeError> {
-        if !timestamp_ms.is_finite()
-            || timestamp_ms < 0.0
-            || self
-                .previous_frame_ms
-                .is_some_and(|previous| timestamp_ms < previous)
-        {
-            return Err(ApplicationRuntimeError::InvalidTimestamp);
-        }
-        let elapsed = self
-            .previous_frame_ms
-            .map_or(0.0, |previous| (timestamp_ms - previous) / 1000.0);
-        let phase = self.application.core_session().snapshot().phase();
-        let countdown = self.application.core_session().countdown_token();
-        if !(self.application.controller_realtime()
-            && matches!(
-                phase,
-                SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
-            ))
-        {
-            self.application
-                .advance_flight_frame(timestamp_ms, gamepads, available)
-                .map_err(ApplicationRuntimeError::Flight)?;
-        }
-        if let Some(token) = countdown {
-            self.application
-                .observe_countdown(token, elapsed, available)
-                .map_err(ApplicationRuntimeError::Session)?;
-        }
-        if matches!(phase, SessionPhase::Replay | SessionPhase::Attract)
-            && available
-            && self.application.presentation_available()
-        {
-            self.application
-                .advance_playback(elapsed)
-                .map_err(ApplicationRuntimeError::Session)?;
-        }
-        self.previous_frame_ms = Some(timestamp_ms);
-        Ok(())
-    }
 
     fn identity(&self) -> Result<Option<SessionScenarioIdentity>, ApplicationRuntimeError> {
-        if self.application.core_session().snapshot().phase() == SessionPhase::FlightSetup {
+        if self.authority.application.core_session().snapshot().phase() == SessionPhase::FlightSetup
+        {
             let scenario = HybridSessionPreparation::select_scenario(
-                self.application.difficulty().weather(),
-                self.application.seed(),
-                self.application
+                self.authority.application.difficulty().weather(),
+                self.authority.application.seed(),
+                self.authority
+                    .application
                     .aircraft()
                     .map_err(|cause| {
                         ApplicationRuntimeError::Application(ApplicationError::Preparation(
@@ -2624,6 +2558,7 @@ impl ApplicationRuntime {
             })?;
             let mut identity = identity_for_selection(scenario);
             identity.aircraft_identity = self
+                .authority
                 .application
                 .aircraft()
                 .map_err(|cause| {
@@ -2632,17 +2567,22 @@ impl ApplicationRuntime {
                     ))
                 })?
                 .identity();
-            identity.controller_identity = self.application.selected_execution_identity();
+            identity.controller_identity = self.authority.application.selected_execution_identity();
             Ok(Some(identity))
         } else {
-            Ok(self.application.core_session().configuration_identity())
+            Ok(self
+                .authority
+                .application
+                .core_session()
+                .configuration_identity())
         }
     }
 
     fn environment(&self) -> Result<String, ApplicationRuntimeError> {
         game_ui_environment_readout(
             self.identity()?,
-            self.application
+            self.authority
+                .application
                 .aircraft()
                 .map_err(|cause| {
                     ApplicationRuntimeError::Application(ApplicationError::Preparation(
@@ -2663,15 +2603,19 @@ impl ApplicationRuntime {
         environment: &'view str,
     ) -> Result<GameUiContext<'view>, ApplicationRuntimeError> {
         Ok(GameUiContext {
-            record_notification: self.storage.save_notification(&self.application),
-            session: self.application.core_session(),
-            resume_available: self.application.can_resume(),
-            flight_failure: self.application.flight_failure(),
-            presentation_available: self.application.presentation_available(),
-            difficulty: self.application.display_difficulty(),
-            keyboard_controls: self.application.keyboard_controls(),
-            keyboard_controls_notification: self.storage.keyboard_notification(),
+            record_notification: self
+                .authority
+                .storage
+                .save_notification(&self.authority.application),
+            session: self.authority.application.core_session(),
+            resume_available: self.authority.application.can_resume(),
+            flight_failure: self.authority.application.flight_failure(),
+            presentation_available: self.authority.application.presentation_available(),
+            difficulty: self.authority.application.display_difficulty(),
+            keyboard_controls: self.authority.application.keyboard_controls(),
+            keyboard_controls_notification: self.authority.storage.keyboard_notification(),
             aircraft_name: self
+                .authority
                 .application
                 .aircraft()
                 .map(|selected| {
@@ -2683,12 +2627,15 @@ impl ApplicationRuntime {
                 })
                 .unwrap_or("機体を準備できない"),
             aircraft_notification: self
+                .authority
                 .storage
                 .configuration_notification(ConfigurationDocumentKind::Aircraft),
             aircraft_can_delete: self
+                .authority
                 .storage
                 .configuration_can_delete(ConfigurationDocumentKind::Aircraft),
             controller_name: self
+                .authority
                 .application
                 .controller()
                 .map(|selected| {
@@ -2700,48 +2647,60 @@ impl ApplicationRuntime {
                 })
                 .unwrap_or("制御設定を準備できない"),
             controller_notification: self
+                .authority
                 .storage
                 .configuration_notification(ConfigurationDocumentKind::Controller),
             controller_can_delete: self
+                .authority
                 .storage
                 .configuration_can_delete(ConfigurationDocumentKind::Controller),
-            controller_execution_name: self.application.controller_execution().label(),
+            controller_execution_name: self.authority.application.controller_execution().label(),
             controller_execution_notification: self
+                .authority
                 .storage
                 .configuration_notification(ConfigurationDocumentKind::ControllerExecution),
             controller_execution_can_delete: self
+                .authority
                 .storage
                 .configuration_can_delete(ConfigurationDocumentKind::ControllerExecution),
-            controller_fault: self.application.display_controller_fault(),
-            controller_fault_terminal: self.application.display_controller_fault_is_terminal(),
+            controller_fault: self.authority.application.display_controller_fault(),
+            controller_fault_terminal: self
+                .authority
+                .application
+                .display_controller_fault_is_terminal(),
             controller_execution_status: self
+                .authority
                 .application
                 .display_controller_fault()
                 .map(|fault| format!("制御器の異常（tick {}）: {}", fault.tick, fault.cause))
                 .or_else(|| {
-                    self.application
+                    self.authority
+                        .application
                         .controller_waiting()
                         .then(|| "制御器の応答を待っている。".into())
                 }),
             controller_pair_diagnostic: self
+                .authority
                 .application
                 .controller_pair()
                 .err()
                 .map(|cause| cause.to_string()),
             controller_shared_authority: self
+                .authority
                 .application
                 .controller()
                 .ok()
                 .map(|selected| selected.document().shared_authority),
-            controller_effective_authority: self.application.display_control_mode().map(|mode| {
-                match mode {
+            controller_effective_authority: self.authority.application.display_control_mode().map(
+                |mode| match mode {
                     birdman_game_core::ControlMode::Manual => 0.0,
                     birdman_game_core::ControlMode::Shared(authority) => authority.value(),
                     birdman_game_core::ControlMode::Automatic => 1.0,
-                }
-            }),
-            aircraft_replay_available: self.application.replay_available(),
+                },
+            ),
+            aircraft_replay_available: self.authority.application.replay_available(),
             representative_position_ned_m: self
+                .authority
                 .application
                 .aircraft()
                 .map_err(|cause| {
@@ -2754,13 +2713,14 @@ impl ApplicationRuntime {
                     ApplicationRuntimeError::Application(ApplicationError::Preparation(cause))
                 })?
                 .components(),
-            display_settings: self.application.display_settings(),
-            display_settings_notification: self.storage.display_notification(),
-            accepted_flight_keys: self.application.accepted_flight_keys(),
-            preset: self.application.display_preset(),
+            display_settings: self.authority.application.display_settings(),
+            display_settings_notification: self.authority.storage.display_notification(),
+            accepted_flight_keys: self.authority.application.accepted_flight_keys(),
+            preset: self.authority.application.display_preset(),
             identity: self.identity()?,
-            record: self.application.core_session().playback_record(),
+            record: self.authority.application.core_session().playback_record(),
             archived_identity: self
+                .authority
                 .application
                 .archive()
                 .map(|archive| archive.identity_metadata()),
@@ -2775,10 +2735,10 @@ impl ApplicationRuntime {
         } else {
             environment.to_owned()
         };
-        let key = GameUiStructureKey::new(&self.ui, &self.context(&environment)?);
+        let key = GameUiStructureKey::new(&self.authority.ui, &self.context(&environment)?);
         self.endpoint
             .structure
-            .observe(key, self.application.record_source_id())
+            .observe(key, self.authority.application.record_source_id())
             .map_err(ApplicationRuntimeError::Ui)
     }
 }
