@@ -48,9 +48,9 @@ pub(crate) use update::range_value;
 #[cfg(not(verus_only))]
 pub use update::update_game_ui;
 #[cfg(not(verus_only))]
-pub use view::game_ui_view;
-#[cfg(not(verus_only))]
 pub use view::scene as game_ui_scene;
+#[cfg(not(verus_only))]
+pub use view::{game_ui_boot_view, game_ui_view};
 
 #[cfg(test)]
 #[cfg(not(verus_only))]

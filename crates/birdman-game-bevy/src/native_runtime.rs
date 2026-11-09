@@ -34,6 +34,24 @@ impl NativeBuffers {
     }
 }
 
+#[derive(Resource)]
+struct NativeNetworking(Mutex<birdman_game_host::network_io::NativeNetworkIo>);
+impl Drop for NativeNetworking {
+    fn drop(&mut self) {
+        if let Err(cause) = self
+            .0
+            .get_mut()
+            .expect("Native network I/O poisoned")
+            .shutdown()
+        {
+            error!("Native network shutdown: {cause}");
+        }
+    }
+}
+
+#[derive(Resource)]
+pub(crate) struct NativeConnection(pub(crate) String);
+
 #[derive(Default, Resource)]
 pub(crate) struct NativeInputs(pub(crate) Vec<ApplicationInput>);
 
@@ -452,7 +470,13 @@ pub(crate) fn initialize(world: &mut World) {
     let observation = platform(world);
     #[cfg(feature = "verify-harness")]
     super::verification::trace::initialize(world, &observation);
-    match NativeRuntime::new(observation) {
+    let created = match world.get_resource::<NativeConnection>() {
+        Some(connection) => {
+            ApplicationRuntime::connect(observation, &connection.0).map(NativeRuntime::from_runtime)
+        }
+        None => NativeRuntime::new(observation),
+    };
+    match created {
         Ok(runtime) => {
             let epoch = world.resource::<NativeIo>().origin;
             #[cfg(feature = "verify-harness")]
@@ -576,85 +600,35 @@ pub(crate) fn update(world: &mut World) {
             return;
         }
     }
-    while let Some(mut input) = queue.pop_front() {
-        world
-            .resource::<super::flight_devices::FlightDevices>()
-            .populate_frame_gamepads(&mut input);
-        let observation = ApplicationObservation {
-            observed_ms: now,
-            input,
-        };
-        #[cfg(feature = "verify-harness")]
-        let trace_input = super::verification::trace::observation(world, &observation);
-        #[cfg(feature = "verify-harness")]
-        let mut trace_fonts = Vec::new();
-        #[cfg(feature = "verify-harness")]
-        let mut font_failures = Vec::new();
-        let update = |measure: &mut dyn FnMut(
-            &birdman_game_runtime::ApplicationTextProbe,
-        ) -> Result<
-            birdman_game_runtime::ApplicationGlyphMetrics,
-            birdman_game_presentation::xr::MenuLayoutFailure,
-        >| {
-            let (mut output, work, earlier) = begin_native(&runtime, &shared, observation)?;
-            if let Some(work) = work {
-                let result = work.project(&mut |probe| {
-                    let result = measure(probe);
-                    #[cfg(feature = "verify-harness")]
-                    if trace_input.is_some() {
-                        let font =
-                            super::verification::trace::wire_value(&probe).and_then(|probe| {
-                                super::verification::trace::wire_value(&result)
-                            .map(|result| serde_json::json!({ "probe": probe, "result": result }))
-                            });
-                        match font {
-                            Ok(font) => trace_fonts.push(font),
-                            Err(cause) => font_failures.push(cause),
-                        }
-                    }
-                    #[cfg(not(feature = "verify-harness"))]
-                    let _ = probe;
-                    result
-                });
-                match admit_native(&runtime, &shared, now, result) {
-                    Ok(drawing) => output.drawing = drawing,
-                    Err(cause) => {
-                        output.drawing = None;
-                        output.diagnostic = Some(cause);
-                    }
-                }
-            }
-            Ok::<_, String>((earlier, output))
-        };
-        #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
-        let output = super::ui::xr_surface::with_metrics(world, update);
-        #[cfg(not(all(feature = "openxr", any(target_os = "windows", target_os = "linux"))))]
-        let output = update(&mut |_| {
-            Err(birdman_game_presentation::xr::MenuLayoutFailure::MeasurementUnavailable)
-        });
-        #[cfg(feature = "verify-harness")]
-        for cause in font_failures {
-            super::verification::trace::report(world, Err(cause));
+    let mut host_completed = Vec::new();
+    super::host::poll(world, |world, input| {
+        host_completed.extend(admit_input(world, &runtime, &shared, now, input));
+    });
+    for output in host_completed {
+        if apply_output(world, &runtime, &mut queue, output) {
+            world.insert_resource(runtime);
+            return;
         }
-        let (earlier, output) = match output {
-            Ok(output) => output,
-            Err(cause) => {
-                #[cfg(feature = "verify-harness")]
-                super::verification::trace::failed(world, trace_input, trace_fonts, cause.clone());
-                error!("Native application observation: {}", cause);
-                continue;
-            }
-        };
-        #[cfg(feature = "verify-harness")]
-        {
-            let snapshot = runtime.lock().application().core_session().snapshot();
-            let flight = serde_json::json!({
-                "phase": format!("{:?}", snapshot.phase()),
-                "tick": snapshot.tail_flight_state().map(|state| state.tick_index()),
+    }
+    if let Some(mut network) = world.remove_resource::<NativeNetworking>() {
+        let mut completed = Vec::new();
+        network
+            .0
+            .get_mut()
+            .expect("Native network I/O poisoned")
+            .poll(|input| {
+                completed.extend(admit_input(world, &runtime, &shared, now, input));
             });
-            super::verification::trace::output(world, trace_input, trace_fonts, &output, flight);
+        world.insert_resource(network);
+        for output in completed {
+            if apply_output(world, &runtime, &mut queue, output) {
+                world.insert_resource(runtime);
+                return;
+            }
         }
-        for output in earlier.into_iter().chain(std::iter::once(output)) {
+    }
+    while let Some(input) = queue.pop_front() {
+        for output in admit_input(world, &runtime, &shared, now, input) {
             if apply_output(world, &runtime, &mut queue, output) {
                 world.insert_resource(runtime);
                 return;
@@ -662,6 +636,98 @@ pub(crate) fn update(world: &mut World) {
         }
     }
     world.insert_resource(runtime);
+}
+
+fn admit_input(
+    world: &mut World,
+    runtime: &NativeRuntime,
+    shared: &Arc<ControllerShared>,
+    now: f64,
+    mut input: ApplicationInput,
+) -> Vec<ApplicationOutput> {
+    world
+        .resource::<super::flight_devices::FlightDevices>()
+        .populate_frame_gamepads(&mut input);
+    let observation = ApplicationObservation {
+        observed_ms: now,
+        input,
+    };
+    #[cfg(feature = "verify-harness")]
+    let trace_input = super::verification::trace::observation(world, &observation);
+    #[cfg(feature = "verify-harness")]
+    let mut trace_fonts = Vec::new();
+    #[cfg(feature = "verify-harness")]
+    let mut font_failures = Vec::new();
+    let update = |measure: &mut dyn FnMut(
+        &birdman_game_runtime::ApplicationTextProbe,
+    ) -> Result<
+        birdman_game_runtime::ApplicationGlyphMetrics,
+        birdman_game_presentation::xr::MenuLayoutFailure,
+    >| {
+        let (mut output, work, earlier) = begin_native(runtime, shared, observation)?;
+        if let Some(work) = work {
+            let result = work.project(&mut |probe| {
+                let result = measure(probe);
+                #[cfg(feature = "verify-harness")]
+                if trace_input.is_some() {
+                    let font = super::verification::trace::wire_value(&probe).and_then(|probe| {
+                        super::verification::trace::wire_value(&result)
+                            .map(|result| serde_json::json!({ "probe": probe, "result": result }))
+                    });
+                    match font {
+                        Ok(font) => trace_fonts.push(font),
+                        Err(cause) => font_failures.push(cause),
+                    }
+                }
+                #[cfg(not(feature = "verify-harness"))]
+                let _ = probe;
+                result
+            });
+            match admit_native(runtime, shared, now, result) {
+                Ok(drawing) => output.drawing = drawing,
+                Err(cause) => {
+                    output.drawing = None;
+                    output.diagnostic = Some(cause);
+                }
+            }
+        }
+        Ok::<_, String>((earlier, output))
+    };
+    #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+    let output = super::ui::xr_surface::with_metrics(world, update);
+    #[cfg(not(all(feature = "openxr", any(target_os = "windows", target_os = "linux"))))]
+    let output = update(&mut |_| {
+        Err(birdman_game_presentation::xr::MenuLayoutFailure::MeasurementUnavailable)
+    });
+    #[cfg(feature = "verify-harness")]
+    for cause in font_failures {
+        super::verification::trace::report(world, Err(cause));
+    }
+    let (earlier, output) = match output {
+        Ok(output) => output,
+        Err(cause) => {
+            #[cfg(feature = "verify-harness")]
+            super::verification::trace::failed(world, trace_input, trace_fonts, cause.clone());
+            error!("Native application observation: {}", cause);
+            return Vec::new();
+        }
+    };
+    #[cfg(feature = "verify-harness")]
+    {
+        let guard = runtime.lock();
+        let flight = guard
+            .local_application()
+            .map_or(serde_json::Value::Null, |application| {
+                let snapshot = application.core_session().snapshot();
+                serde_json::json!({
+                    "phase": format!("{:?}", snapshot.phase()),
+                    "tick": snapshot.tail_flight_state().map(|state| state.tick_index()),
+                })
+            });
+        drop(guard);
+        super::verification::trace::output(world, trace_input, trace_fonts, &output, flight);
+    }
+    earlier.into_iter().chain(std::iter::once(output)).collect()
 }
 
 fn apply_output(
@@ -675,6 +741,66 @@ fn apply_output(
     }
     let mut restart_failed = false;
     for request in output.requests {
+        match super::host::execute(world, &request) {
+            Ok(Some(inputs)) => {
+                queue.extend(inputs);
+                continue;
+            }
+            Ok(None) => {}
+            Err(cause) => {
+                error!("Native host transport: {cause}");
+                queue.push_back(ApplicationInput::Dispose);
+                continue;
+            }
+        }
+        if matches!(
+            &request,
+            ApplicationRequest::ReadHost { .. }
+                | ApplicationRequest::CancelHostRead { .. }
+                | ApplicationRequest::NetworkOpen { .. }
+                | ApplicationRequest::NetworkSend { .. }
+                | ApplicationRequest::NetworkClose { .. }
+                | ApplicationRequest::ObserveNetwork { .. }
+        ) {
+            let created = if !world.contains_resource::<NativeNetworking>() {
+                let signal = world
+                    .resource::<NativeIo>()
+                    .controller
+                    .as_ref()
+                    .expect("Native I/O initialized")
+                    .shared
+                    .signal
+                    .clone();
+                birdman_game_host::network_io::NativeNetworkIo::new(signal).map(|network| {
+                    world.insert_resource(NativeNetworking(Mutex::new(network)));
+                })
+            } else {
+                Ok(())
+            };
+            let failed = match created {
+                Ok(()) => world
+                    .resource::<NativeNetworking>()
+                    .0
+                    .lock()
+                    .expect("Native network I/O poisoned")
+                    .submit(request)
+                    .err()
+                    .map(|request| {
+                        (
+                            *request,
+                            "Native network I/O queue or byte capacity exhausted".to_owned(),
+                            false,
+                        )
+                    }),
+                Err(cause) => Some((request, cause, true)),
+            };
+            if let Some((request, cause, unavailable)) = failed
+                && let Some(input) = failed_network_request(request, cause, unavailable)
+            {
+                queue.push_back(input);
+            }
+            continue;
+        }
         #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
         if let ApplicationRequest::Display { request: display } = &request {
             match super::native_xr::execute(world, display) {
@@ -802,6 +928,22 @@ fn apply_output(
         world.resource_mut::<NativeIo>().drawing = Some(drawing);
     }
     if output.lifecycle == ApplicationLifecycle::Drained {
+        if let Some(host) = world.get_resource::<super::host::NativeHost>()
+            && let Err(cause) = host.shutdown()
+        {
+            error!("Native host shutdown: {cause}");
+            restart_failed = true;
+        }
+        if let Some(network) = world.get_resource::<NativeNetworking>()
+            && let Err(cause) = network
+                .0
+                .lock()
+                .expect("Native network I/O poisoned")
+                .shutdown()
+        {
+            error!("Native network shutdown: {cause}");
+            restart_failed = true;
+        }
         world.write_message(if restart_failed {
             AppExit::error()
         } else {
@@ -810,4 +952,62 @@ fn apply_output(
         return true;
     }
     false
+}
+
+fn failed_network_request(
+    request: ApplicationRequest,
+    cause: String,
+    unavailable: bool,
+) -> Option<ApplicationInput> {
+    match request {
+        ApplicationRequest::CancelHostRead { request_id } if !unavailable => {
+            warn!("Native HTTP cancellation queue: {cause} (request {request_id})");
+            None
+        }
+        ApplicationRequest::ObserveNetwork { socket_id } if !unavailable => {
+            warn!("Native network observation queue: {cause} (socket {socket_id})");
+            None
+        }
+        ApplicationRequest::ReadHost { request_id, .. }
+        | ApplicationRequest::CancelHostRead { request_id } => Some(ApplicationInput::HostRead {
+            request_id,
+            status: 0,
+            content_type: None,
+            bytes: Vec::new(),
+            failure: Some(cause),
+        }),
+        ApplicationRequest::NetworkOpen { socket_id, .. } => {
+            Some(ApplicationInput::NetworkOpened {
+                socket_id,
+                failure: Some(cause),
+            })
+        }
+        ApplicationRequest::NetworkSend {
+            socket_id, send_id, ..
+        } => Some(ApplicationInput::NetworkSendObserved {
+            socket_id,
+            send_id,
+            queued: false,
+            ready_state: None,
+            buffered_amount: 0.0,
+            cause: Some(cause),
+        }),
+        ApplicationRequest::NetworkClose { socket_id, .. } => {
+            Some(ApplicationInput::NetworkCloseObserved {
+                socket_id,
+                present: !unavailable,
+                requested: false,
+                ready_state: None,
+                cause: Some(cause),
+            })
+        }
+        ApplicationRequest::ObserveNetwork { socket_id } => {
+            Some(ApplicationInput::NetworkObserved {
+                socket_id,
+                ready_state: 3,
+                buffered_amount: 0.0,
+            })
+        }
+        _ => None,
+    }
 }

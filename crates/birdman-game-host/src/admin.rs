@@ -2,51 +2,16 @@
 
 use crate::{
     server_cli::ServerOptions,
-    service::{
-        HostListenConfig, HostManagementCommand, HostService, HostServiceHandle, HostTlsConfig,
-    },
-    web_distribution::WebDistribution,
+    service::{HostListenConfig, HostManagementCommand, HostService, HostServiceHandle},
 };
-use birdman_game_app::application::ApplicationSession;
-use birdman_game_runtime::{
-    APPLICATION_CONTRACT_SHA256, ApplicationHostIdentity, ApplicationServer,
-    ApplicationServerCommand,
-};
+use birdman_game_runtime::ApplicationServerCommand;
 use eframe::egui;
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 /// Launch the native management UI after validating the selected same-version bundle.
 pub fn run(options: ServerOptions, source_sha: &str) -> Result<(), String> {
-    let web = Arc::new(
-        WebDistribution::open(&options.web_root, source_sha, APPLICATION_CONTRACT_SHA256)
-            .map_err(|error| error.to_string())?,
-    );
-    let server = ApplicationServer::new(
-        ApplicationSession::default(),
-        ApplicationHostIdentity {
-            source_sha: source_sha.to_owned(),
-            contract_sha256: APPLICATION_CONTRACT_SHA256.to_owned(),
-            web_bundle_sha256: web.manifest_sha256().to_owned(),
-        },
-    )
-    .map_err(|error| error.to_string())?;
-    let service = HostService::new(server, Instant::now(), options.records)?;
+    let (service, initial) = HostService::start(options, source_sha, Instant::now())?;
     let handle = service.handle();
-    let tls = options.certificate.zip(options.private_key).map(
-        |(certificate_chain_pem, private_key_pem)| HostTlsConfig {
-            certificate_chain_pem,
-            private_key_pem,
-        },
-    );
-    let initial = HostListenConfig {
-        bind: options.bind,
-        tls,
-        web,
-    };
-    handle.administer(HostManagementCommand::Start(initial.clone()))?;
     let result = eframe::run_native(
         "鳥人間滑空ゲーム 配信管理",
         eframe::NativeOptions {

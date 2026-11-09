@@ -1013,7 +1013,9 @@ mod tests {
             .unwrap();
         owner.offer(
             1,
-            (&birdman_game_app::SelectedAircraft::bundled().unwrap()).identity(),
+            birdman_game_app::SelectedAircraft::bundled()
+                .unwrap()
+                .identity(),
             target(WaterQuality::High),
             None,
             &first,
@@ -1114,7 +1116,9 @@ mod tests {
             .unwrap();
         owner.offer(
             2,
-            (&birdman_game_app::SelectedAircraft::bundled().unwrap()).identity(),
+            birdman_game_app::SelectedAircraft::bundled()
+                .unwrap()
+                .identity(),
             target(WaterQuality::Low),
             None,
             &second,
@@ -1188,7 +1192,9 @@ mod tests {
             .unwrap();
         owner.offer(
             3,
-            (&birdman_game_app::SelectedAircraft::bundled().unwrap()).identity(),
+            birdman_game_app::SelectedAircraft::bundled()
+                .unwrap()
+                .identity(),
             target(WaterQuality::Low),
             None,
             &third,
@@ -1258,7 +1264,9 @@ mod tests {
             .unwrap();
         owner.offer(
             4,
-            (&birdman_game_app::SelectedAircraft::bundled().unwrap()).identity(),
+            birdman_game_app::SelectedAircraft::bundled()
+                .unwrap()
+                .identity(),
             replacement,
             None,
             &replacement_assets,
@@ -1308,7 +1316,7 @@ mod tests {
             .unwrap();
         owner.offer(
             5,
-            (&custom).identity(),
+            custom.identity(),
             target(WaterQuality::Low),
             None,
             &changed,
@@ -1365,7 +1373,9 @@ mod tests {
             .unwrap();
         owner.offer(
             6,
-            (&birdman_game_app::SelectedAircraft::bundled().unwrap()).identity(),
+            birdman_game_app::SelectedAircraft::bundled()
+                .unwrap()
+                .identity(),
             target(WaterQuality::Low),
             None,
             &fallback,

@@ -58,6 +58,8 @@ pub struct ApplicationTransmission {
 /// Current managed connection and its input authority generation.
 #[derive(Clone, Debug)]
 pub struct ApplicationServerPeer {
+    /// The shared handshake has admitted this connection for role management.
+    pub ready: bool,
     /// Host-issued connection identity.
     pub id: ApplicationPeerId,
     /// Current input role.
@@ -180,7 +182,6 @@ struct FrameCandidate {
 struct ResourcePin {
     aircraft_identity: [u8; 32],
     generation: u64,
-    target: ApplicationGraphicsTarget,
     ready: bool,
     buffers: Vec<assets::BufferSnapshot>,
     transfers: Vec<u64>,
@@ -352,6 +353,7 @@ impl ApplicationServer {
                 .peers
                 .iter()
                 .map(|(id, peer)| ApplicationServerPeer {
+                    ready: matches!(peer.state, PeerState::Ready(_)),
                     id: *id,
                     role: peer.role,
                     role_generation: peer.role_generation,
@@ -798,14 +800,13 @@ impl ApplicationServer {
                 view_revision,
             } => {
                 self.check_peer(id, peer)?;
-                if let PeerState::Ready(display) = &mut self.peers.get_mut(&id).unwrap().state {
-                    if display
+                if let PeerState::Ready(display) = &mut self.peers.get_mut(&id).unwrap().state
+                    && display
                         .view
                         .as_ref()
                         .is_some_and(|view| view.view_revision == view_revision)
-                    {
-                        display.acknowledged_view = view_revision;
-                    }
+                {
+                    display.acknowledged_view = view_revision;
                 }
             }
             ClientMessage::FrameAck {
@@ -1416,10 +1417,9 @@ impl ApplicationServer {
                 .resolve()
                 .map_err(ApplicationRuntimeError::Environment)?,
             EnvironmentProjection::Unavailable { .. }
-        ) {
-            if let Some((identity, _)) = self.asset_selection {
-                selection.identity = identity;
-            }
+        ) && let Some((identity, _)) = self.asset_selection
+        {
+            selection.identity = identity;
         }
         let aircraft_identity = self
             .authority
@@ -1526,6 +1526,17 @@ impl ApplicationServer {
                 "preparation identity was already issued",
             ));
         }
+        if self.peers[&id].resource_pins.len() >= 8 {
+            return self.queue_message(
+                id,
+                ServerMessage::AssetsFailed {
+                    peer: self.peers[&id].scope,
+                    request_id,
+                    cause: "Peer resource lifetime window is full".to_owned(),
+                },
+            );
+        }
+
         let selection = self.update_assets_generation()?;
         let aircraft = self.authority.application.aircraft().map_err(|error| {
             ApplicationRuntimeError::Application(ApplicationError::Preparation(
@@ -1579,7 +1590,6 @@ impl ApplicationServer {
             ResourcePin {
                 aircraft_identity,
                 generation: self.assets_generation,
-                target,
                 ready: false,
                 buffers: snapshots,
                 transfers,

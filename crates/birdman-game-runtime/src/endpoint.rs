@@ -916,8 +916,7 @@ impl ApplicationEndpoint {
     pub(super) fn offer_remote_resources(
         &mut self,
         request_id: u32,
-        connection_lifetime: u32,
-        assets_generation: u64,
+        source: ResourceSource,
         aircraft_identity: [u8; 32],
         target: ApplicationGraphicsTarget,
         assets: ApplicationEnvironmentAssets,
@@ -930,11 +929,7 @@ impl ApplicationEndpoint {
             || pending.completed
             || pending.key.aircraft_identity != aircraft_identity
             || pending.key.graphics != target
-            || pending.key.environment
-                != (ResourceSource::Remote {
-                    connection_lifetime,
-                    assets_generation,
-                })
+            || pending.key.environment != source
             || self.display.state().active_mode() != Some(pending.key.mode)
             || self.display.active_resource() != pending.key.display_resource_id
             || assets.revision != request_id

@@ -23,7 +23,7 @@ impl BufferTransfer {
         if manifest.transfer_id.is_none_or(|id| id == 0)
             || manifest.key.buffer_id == 0
             || length > APPLICATION_RENDER_BUFFER_BYTES
-            || length % width != 0
+            || !length.is_multiple_of(width)
         {
             return Err(WireError::Invalid("render transfer manifest is invalid"));
         }
@@ -425,9 +425,6 @@ impl RemoteSession {
         self.stage = ConnectionStage::Closing;
         self.grants.clear();
         self.retire_incomplete();
-        if let Some(request_id) = self.wake.take() {
-            requests.push(super::ApplicationRequest::CancelWake { request_id });
-        }
         if let Some(socket_id) = self.socket_id {
             requests.push(super::ApplicationRequest::NetworkClose {
                 socket_id,
@@ -828,9 +825,12 @@ impl RemoteSession {
         let prepared = endpoint
             .offer_remote_resources(
                 pending.request_id,
-                self.socket_id
-                    .ok_or(WireError::Invalid("resource socket lifetime is absent"))?,
-                pending.assets_generation,
+                super::ResourceSource::Remote {
+                    connection_lifetime: self
+                        .socket_id
+                        .ok_or(WireError::Invalid("resource socket lifetime is absent"))?,
+                    assets_generation: pending.assets_generation,
+                },
                 pending.aircraft_identity,
                 pending.target,
                 *pending.assets,
@@ -936,7 +936,9 @@ impl RemoteSession {
                     return Ok(());
                 };
                 self.queued_bytes = self.queued_bytes.saturating_sub(length);
-                self.observe_buffered(*buffered_amount)?;
+                if ready_state.is_some() {
+                    self.observe_buffered(*buffered_amount)?;
+                }
                 if !queued || *ready_state != Some(1) {
                     return Err(cause.clone().map(WireError::Transport).unwrap_or(
                         WireError::Invalid("remote socket did not accept the issued packet"),
@@ -961,6 +963,15 @@ impl RemoteSession {
                 present: false,
                 ..
             } if Some(*socket_id) == self.socket_id => self.socket_closed(),
+            Input::NetworkCloseObserved {
+                socket_id,
+                present: true,
+                requested: false,
+                cause: Some(cause),
+                ..
+            } if Some(*socket_id) == self.socket_id => {
+                self.diagnostic = Some(cause.clone());
+            }
             Input::NetworkClosed {
                 socket_id,
                 code,
@@ -1368,39 +1379,43 @@ impl RemoteSession {
                 self.platform = observation.clone();
                 if let Some(peer) = self.peer
                     && self.stage == ConnectionStage::Connected
-                {
-                    if let Err(error) = self.send(
+                    && let Err(error) = self.send(
                         super::wire::ClientMessage::Platform {
                             peer,
                             observation: Box::new(observation.clone()),
                         },
                         &mut requests,
-                    ) {
-                        self.close(error.to_string(), &mut requests);
-                    }
+                    )
+                {
+                    self.close(error.to_string(), &mut requests);
                 }
             }
             Input::Wake { request_id } if self.wake == Some(*request_id) => {
                 self.wake = None;
-                if !matches!(
-                    self.stage,
-                    ConnectionStage::Closing | ConnectionStage::Closed
-                ) {
+                if self.stage == ConnectionStage::Closing {
+                    if let Some(socket_id) = self.socket_id {
+                        requests.push(super::ApplicationRequest::NetworkClose {
+                            socket_id,
+                            code: 4000,
+                            reason: "Session ended".to_owned(),
+                        });
+                        requests.push(super::ApplicationRequest::ObserveNetwork { socket_id });
+                    }
+                } else if self.stage != ConnectionStage::Closed {
                     if self.observed_ms - self.last_received_ms > super::wire::CONNECTION_TIMEOUT_MS
                     {
                         self.close("Remote host heartbeat timed out".to_owned(), &mut requests);
-                    } else if let Some(peer) = self.peer {
-                        if let Err(error) = self.send(
+                    } else if let Some(peer) = self.peer
+                        && let Err(error) = self.send(
                             super::wire::ClientMessage::Heartbeat { peer },
                             &mut requests,
-                        ) {
-                            self.close(error.to_string(), &mut requests);
-                        }
+                        )
+                    {
+                        self.close(error.to_string(), &mut requests);
                     }
                     if let Some(socket_id) = self.socket_id {
                         requests.push(super::ApplicationRequest::ObserveNetwork { socket_id });
                     }
-                    self.schedule_probe(endpoint, &mut requests)?;
                 }
             }
             _ => {}
@@ -1413,16 +1428,15 @@ impl RemoteSession {
         for resource_epoch in effects.retired_resource_epochs {
             if self.stage == ConnectionStage::Connected
                 && let Some(peer) = self.peer
-            {
-                if let Err(error) = self.send(
+                && let Err(error) = self.send(
                     super::wire::ClientMessage::ReleaseAssets {
                         peer,
                         resource_epoch,
                     },
                     &mut requests,
-                ) {
-                    self.close(error.to_string(), &mut requests);
-                }
+                )
+            {
+                self.close(error.to_string(), &mut requests);
             }
         }
         for surface in effects.actions {
@@ -1483,23 +1497,22 @@ impl RemoteSession {
                 timestamp_ms,
                 ..
             } = &input
+            && let Some(surface) = endpoint.observe_surface_frame(spatial.clone(), *timestamp_ms)?
         {
-            if let Some(surface) = endpoint.observe_surface_frame(spatial.clone(), *timestamp_ms)? {
-                let action = if surface.back {
-                    endpoint
-                        .retained
-                        .as_ref()
-                        .and_then(|view| view.back_action.clone())
-                } else {
-                    surface.input.map(|input| {
-                        birdman_game_presentation::game_ui::GameUiAction::ControlInput { input }
-                    })
-                };
-                if let Some(action) = action {
-                    self.forward_action(endpoint, surface.view_revision, action, &mut requests)?;
-                }
-                endpoint.project_platform();
+            let action = if surface.back {
+                endpoint
+                    .retained
+                    .as_ref()
+                    .and_then(|view| view.back_action.clone())
+            } else {
+                surface.input.map(|input| {
+                    birdman_game_presentation::game_ui::GameUiAction::ControlInput { input }
+                })
+            };
+            if let Some(action) = action {
+                self.forward_action(endpoint, surface.view_revision, action, &mut requests)?;
             }
+            endpoint.project_platform();
         }
         if let Some(view) = &self.canonical_view {
             self.view_changed |= endpoint.project_retained(Arc::clone(view));
@@ -1518,6 +1531,13 @@ impl RemoteSession {
             None
         };
         let work = endpoint.presentation_work.take();
+        if self.stage == ConnectionStage::Closed {
+            if let Some(request_id) = self.wake.take() {
+                requests.push(super::ApplicationRequest::CancelWake { request_id });
+            }
+        } else {
+            self.schedule_probe(endpoint, &mut requests)?;
+        }
         self.shutdown.requests(&requests);
         if let Some(request) = self.shutdown.release_renderer() {
             self.shutdown.requests(std::slice::from_ref(&request));
@@ -1863,22 +1883,21 @@ impl RemoteSession {
         } = input
             && *view_revision == revision
             && matches!(endpoint.boot, super::boot::BootOwner::Failed(_))
+            && control_id == "game-boot-retry"
         {
-            if control_id == "game-boot-retry" {
-                if matches!(
-                    self.stage,
-                    ConnectionStage::Closing | ConnectionStage::Closed
-                ) {
-                    self.retry_after_close = true;
-                    if self.stage == ConnectionStage::Closed {
-                        self.restart(endpoint, requests)?;
-                    }
-                } else {
-                    endpoint.retry_boot(requests);
+            if matches!(
+                self.stage,
+                ConnectionStage::Closing | ConnectionStage::Closed
+            ) {
+                self.retry_after_close = true;
+                if self.stage == ConnectionStage::Closed {
+                    self.restart(endpoint, requests)?;
                 }
-                self.view_changed = true;
-                return Ok(false);
+            } else {
+                endpoint.retry_boot(requests);
             }
+            self.view_changed = true;
+            return Ok(false);
         }
         if let Input::Control {
             view_revision,
@@ -1904,19 +1923,18 @@ impl RemoteSession {
             failure,
         } = input
         {
-            if let Some(server_id) = self.downloads.remove(request_id) {
-                if let Some(peer) = self.peer {
-                    if let Err(error) = self.send(
-                        super::wire::ClientMessage::DownloadCompleted {
-                            peer,
-                            request_id: server_id,
-                            failure: failure.clone(),
-                        },
-                        requests,
-                    ) {
-                        self.close(error.to_string(), requests);
-                    }
-                }
+            if let Some(server_id) = self.downloads.remove(request_id)
+                && let Some(peer) = self.peer
+                && let Err(error) = self.send(
+                    super::wire::ClientMessage::DownloadCompleted {
+                        peer,
+                        request_id: server_id,
+                        failure: failure.clone(),
+                    },
+                    requests,
+                )
+            {
+                self.close(error.to_string(), requests);
             }
             return Ok(false);
         }

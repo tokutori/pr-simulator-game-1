@@ -72,7 +72,8 @@ impl ReplayCaptureRecord {
     pub(super) fn retain(session: &NativeRuntime) -> Result<Self, String> {
         let runtime = session.lock();
         let record = runtime
-            .application()
+            .local_application()
+            .ok_or("Replay record capture requires a local authority")?
             .core_session()
             .flight_record()
             .ok_or("Replay camera capture requires a retained flight record")?;
@@ -94,7 +95,8 @@ impl ReplayCaptureRecord {
     pub(super) fn verify(&self, session: &NativeRuntime) -> Result<(), String> {
         let runtime = session.lock();
         let record = runtime
-            .application()
+            .local_application()
+            .ok_or("Replay record capture requires a local authority")?
             .core_session()
             .flight_record()
             .ok_or("Replay camera capture lost the retained record")?;

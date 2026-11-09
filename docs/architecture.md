@@ -19,7 +19,8 @@
 ```text
 WASM ── runtime ── presentation ── app ── content ── format ── core
           └─────── scene ──────────┘
-Native ── runtime
+Native ── host ── runtime
+   └───────────────┘
 CLI ────────────────────────── app
 ```
 
@@ -34,6 +35,7 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 | `birdman-game-presentation` | 共有UI・camera・XR layout・適応画質の方針と、live・prepared・記録状態からの描画poseの直接導出 |
 | `birdman-game-scene` | contentから導出する機体・地形mesh、水面・天空・画像の描画資産生成 |
 | `birdman-game-runtime` | app・presentation・sceneを束ねる単一application owner、入力・frame進行・XR・記録I/O・資源準備と完了認可、最終描画データとprimitive I/O要求の出力 |
+| `birdman-game-host` | Native OSの保存・controller・timer・HTTP/WebSocket I/O、同版Web配布物の検証と配信、共通管理snapshot・command。Bevyと管理アプリが再用する |
 | `birdman-game-wasm` | JavaScript ABI、入力のdecode、共有処理の呼出し、DTOのencode |
 | `birdman-game-cli` | CLI/WASIのI/O、offline検査・出力・計測入口 |
 | `birdman-game-bevy` | nativeウィンドウ、ECS・入力・時刻、共有Viewの投影、GPU資源 |
@@ -62,7 +64,7 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 
 ### ApplicationRuntimeと描画資源
 
-- runtimeの合成ownerは生観測・UI操作・I/O完了を受け、最終描画データとprimitive I/O要求を返す。Nativeは同じbuffer descriptorの型付きsliceを借用し、WASMは必要なbufferをLittle Endianの所有コピーで提出する。動的属性の借用は次のupdateまで有効とする。
+- runtimeの合成ownerは生観測・UI操作・I/O完了を受け、最終描画データとprimitive I/O要求を返す。描画bufferは`(lease_id, buffer_id, revision)`に束縛した不変bytesで取得し、Native・WASMとも同じscopeを使う。描画leaseは`BuffersConsumed`、準備leaseは取消完了または実GPU資源の解放まで保持する。
 - 材質IDは全meshの頂点色と材質設定が確定した後に共有Rustが同値群ごとに発行し、既存の資産ID採番を使ってapplicationの寿命中に再利用しない。Webはrendererごと、Nativeは描画資源候補ごとにID別のGPU handleを再用し、それぞれの所有期間の終了時に一度ずつ解放する。
 - 空のpanorama、光源・霧、波の係数とdetail画像は登録環境からRustが準備する。画像は同じ生成条件で共有し、水面品質の変更では波の投影、mesh密度、detail画像の異方性フィルタ上限（Low 4、Medium/High 8）を更新する。GPU画像は画像IDとフィルタ上限の組で保持し、候補準備中は使用中の設定を維持する。
 - GPU資源は候補作成、ownerのcommit認可、atomicなbinding完了の順に進む。ownerはcommitを直列化し、確認した適用状態から次の候補と旧資源の解放を決定する。
@@ -73,6 +75,16 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 
 - 空間paint: `begin_update`は入力認可とI/O要求を一度返し、元のSurfaceOwnerを唯一のowned PresentationWorkへ貸し出す。font計測と既存surface投影はruntime lock外で実行し、`admit_presentation`がscopeとlease IDを照合してownerを返却する。Webのupdateも同じ3段階を内部で同期実行する。
 - lease中の進行: ControllerIo・現在のcontroller Wake・終端cleanupだけを認可する。同じScene/layoutの物理tick進行は旧観測paintの採用を許し、phase・表示資源・font・interaction/scroll scopeの変更時は旧publicationを退役する。失敗時もbeginのI/O要求を一度返し、ownerを回収する。
+
+### Local・Remoteと共有ホスト
+
+- 実行形態: `ApplicationRuntime`はLocal・Discovering・Remoteを排他的に保持する。LocalだけがApplicationSessionを所有し、Remoteは共有Endpointによる入力・camera・XR・GPU準備と接続状態を所有する。
+- Web起動: Rustが同originの`/api/host`を照会し、404ではLocalを構築する。配信ホストへ接続するときはfull source SHA・protocol版・application契約hash・Web manifest hashを照合し、同じoriginの`/api/session/ws`を使う。
+- ホスト: `ApplicationServer`が一つのcanonical authorityと接続ごとの認可を所有する。変更Viewの受理ACK後に対応Frameを送り、操作担当を一接続に限定する。head tracking・camera・描画資源は各Endpointで処理する。
+- 管理: Bevyと管理アプリはHostServiceの同じsnapshotとtyped commandを使う。Bevy自機も同じRemote ownerとwireを通るlocal peerとして接続し、listener停止中も自機とauthorityを保持する。
+- 転送: Hostは受理時刻、socket、原文bytes、送信受付・完了を通知する。role世代・入力認可・heartbeat・資源の採用・再接続はruntimeが決定し、buffer転送はrevisionごとの完全なmanifestとchunkを照合する。
+- 同版Web配布: 一回生成したWeb bundleを6種類のNativeアーカイブへ同梱する。全manifest列挙fileの長さ・hash・MIMEとsource/contractを配信開始前に検証し、検証済み不変bytesを同じHTTP/TLS listenerから配る。Pagesは同source/contractから独立buildする。
+- TLS: 証明書と秘密鍵はホストの明示設定とし、クライアントは通常の証明書・hostname検証を行う。ブラウザーのsecure context条件も適用する。
 
 ### GameSessionとApplicationSession
 

@@ -2002,7 +2002,20 @@ pub(super) fn layout(
     context: &GameUiContext<'_>,
     phase: SessionPhase,
 ) -> Result<GameUiLayout, GameUiError> {
-    let viewport = context.platform.viewport;
+    layout_for_viewport(
+        state,
+        context.platform.viewport,
+        phase,
+        context.platform.renderer_failure.is_some(),
+    )
+}
+
+fn layout_for_viewport(
+    state: &GameUiState,
+    viewport: GameUiViewport,
+    phase: SessionPhase,
+    renderer_failed: bool,
+) -> Result<GameUiLayout, GameUiError> {
     if [viewport.width, viewport.height, viewport.root_font_size]
         .iter()
         .any(|value| !value.is_finite() || *value <= 0.0)
@@ -2019,8 +2032,7 @@ pub(super) fn layout(
         SessionPhase::FlightRunning => GameUiShell::FlightBar,
         SessionPhase::Countdown { .. } => GameUiShell::FlightBar,
         SessionPhase::FlightPaused { .. }
-            if (state.pause_overlay == GameUiPauseOverlay::Settings
-                || context.platform.renderer_failure.is_some())
+            if (state.pause_overlay == GameUiPauseOverlay::Settings || renderer_failed)
                 && viewport.width
                     >= super::hud::minimum_hud_width(font) + pause_settings_width + 2.25 * font =>
         {
@@ -2071,7 +2083,7 @@ pub(super) fn layout(
             phase,
             SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
         )
-        && context.platform.renderer_failure.is_some();
+        && renderer_failed;
     Ok(GameUiLayout {
         shell,
         width_px: width,
@@ -2163,4 +2175,29 @@ pub(super) fn theme(font: f64) -> GameUiTheme {
         button_min_height_px: 2.75 * font,
         primary_min_height_px: 3.25 * font,
     }
+}
+
+/// Projects the application-independent foundation for initialization and connection views.
+pub fn game_ui_boot_view(viewport: GameUiViewport) -> Result<GameUiView, GameUiError> {
+    Ok(GameUiView {
+        interaction_scope: "boot-initializing".into(),
+        schema_version: GAME_UI_SCHEMA_VERSION,
+        view_revision: 0,
+        selections: GameUiState::default(),
+        scene: GameUiScene::Boot,
+        title: "鳥人間滑空ゲーム".into(),
+        description: String::new(),
+        active_overlay: None,
+        back_action: None,
+        panels: Vec::new(),
+        layout: layout_for_viewport(
+            &GameUiState::default(),
+            viewport,
+            SessionPhase::Title,
+            false,
+        )?,
+        theme: theme(viewport.root_font_size),
+        hud: None,
+        countdown: None,
+    })
 }

@@ -19,6 +19,10 @@ mod keyboard;
 #[cfg(not(verus_only))]
 mod remote;
 #[cfg(not(verus_only))]
+mod transport_runtime;
+#[cfg(not(verus_only))]
+pub use transport_runtime::ApplicationRuntime;
+#[cfg(not(verus_only))]
 mod server;
 #[cfg(not(verus_only))]
 pub use server::{
@@ -236,7 +240,7 @@ struct PresentationScope {
 #[cfg(not(verus_only))]
 #[derive(PartialEq)]
 enum PresentationSourceScope {
-    Local(GameUiStructureKey),
+    Local(Box<GameUiStructureKey>),
     Remote {
         connection_lifetime: u32,
         connection_epoch: u64,
@@ -279,7 +283,7 @@ impl PresentationWork {
 
 /// Owns the application and its presentation state across all platform adapters.
 #[cfg(not(verus_only))]
-pub struct ApplicationRuntime {
+struct LocalRuntime {
     authority: authority::ApplicationAuthority,
     endpoint: endpoint::ApplicationEndpoint,
 }
@@ -312,7 +316,7 @@ struct ResourcePreparation {
 }
 
 #[cfg(not(verus_only))]
-impl ApplicationRuntime {
+impl LocalRuntime {
     /// Adopts the canonical application with observed platform capabilities.
     pub fn new(
         application: ApplicationSession,
@@ -328,14 +332,23 @@ impl ApplicationRuntime {
             .screen_render_scope(),
             request_ids.clone(),
         )?;
-        Ok(Self {
+        Ok(Self::with_endpoint(application, endpoint, replay_supported))
+    }
+
+    fn with_endpoint(
+        application: ApplicationSession,
+        endpoint: endpoint::ApplicationEndpoint,
+        replay_supported: bool,
+    ) -> Self {
+        let request_ids = endpoint.request_ids.clone();
+        Self {
             authority: authority::ApplicationAuthority::new(
                 application,
                 replay_supported,
                 request_ids,
             ),
             endpoint,
-        })
+        }
     }
 
     /// Read-only access for native resource generation and record projection.
@@ -343,31 +356,9 @@ impl ApplicationRuntime {
         &self.authority.application
     }
 
-    /// Borrows a read-only typed upload for the current output, valid until the next mutable update.
-    /// Static preparation data is retained across its resource lifetime; mutable attributes are submitted synchronously.
-    pub fn asset_buffer(
-        &self,
-        lease_id: u32,
-        buffer_id: u32,
-        revision: u32,
-    ) -> Option<ApplicationBufferSlice<'_>> {
-        self.endpoint.asset_leases.buffer(
-            lease_id,
-            ApplicationBufferKey {
-                buffer_id,
-                revision,
-            },
-        )
-    }
-
-    /// Copies one common GPU buffer into the platform-independent wire encoding.
-    pub fn asset_bytes(&self, lease_id: u32, buffer_id: u32, revision: u32) -> Option<Vec<u8>> {
-        self.asset_buffer(lease_id, buffer_id, revision)
-            .map(|buffer| buffer.to_bytes())
-    }
-
     /// Processes one observation with the same owned painting lease used by Native.
-    pub fn update(
+    #[cfg(test)]
+    fn update(
         &mut self,
         observation: ApplicationObservation,
         measure: &mut impl FnMut(
@@ -381,6 +372,7 @@ impl ApplicationRuntime {
         })
     }
 
+    #[cfg(test)]
     fn complete_presentation_update(
         &mut self,
         mut output: ApplicationOutput,
@@ -451,12 +443,12 @@ impl ApplicationRuntime {
     fn presentation_scope(&self) -> Result<PresentationScope, ApplicationRuntimeError> {
         let environment = self.authority.environment()?;
         Ok(PresentationScope {
-            structure: PresentationSourceScope::Local(GameUiStructureKey::new(
+            structure: PresentationSourceScope::Local(Box::new(GameUiStructureKey::new(
                 &self.authority.ui,
                 &self
                     .authority
                     .context(&environment, &self.endpoint.platform)?,
-            )),
+            ))),
             resource: self.endpoint.last_ready_resources,
             display: self
                 .endpoint
@@ -919,16 +911,17 @@ impl ApplicationRuntime {
                     } else {
                         false
                     };
-                    if camera || touch {
-                    } else if let Some(view) = self.endpoint.retained.as_ref() {
-                        if let Some(action) = chart_pointer::observe(
+                    if !camera
+                        && !touch
+                        && let Some(view) = self.endpoint.retained.as_ref()
+                        && let Some(action) = chart_pointer::observe(
                             &mut self.endpoint.chart_pointer,
                             view,
                             focused,
                             &raw,
-                        ) {
-                            self.apply_action(view_revision, action, &mut requests)?;
-                        }
+                        )
+                    {
+                        self.apply_action(view_revision, action, &mut requests)?;
                     }
                 }
 
@@ -1005,18 +998,18 @@ impl ApplicationRuntime {
         );
         if !self.endpoint.spatial_input_focused() {
             self.endpoint.surface.retire_input();
-        } else if let Some((spatial, timestamp_ms)) = spatial_frame {
-            if let Some(action) = self.endpoint.observe_surface_frame(spatial, timestamp_ms)? {
-                self.apply_surface_action(action, &mut requests)?;
-                self.endpoint.synchronize_phone(
-                    self.authority.observed_ms,
-                    self.authority.shutdown.closed(),
-                    &mut requests,
-                )?;
-                self.synchronize_xr()?;
-                self.synchronize_graphics()?;
-                self.synchronize_resources(&mut requests)?;
-            }
+        } else if let Some((spatial, timestamp_ms)) = spatial_frame
+            && let Some(action) = self.endpoint.observe_surface_frame(spatial, timestamp_ms)?
+        {
+            self.apply_surface_action(action, &mut requests)?;
+            self.endpoint.synchronize_phone(
+                self.authority.observed_ms,
+                self.authority.shutdown.closed(),
+                &mut requests,
+            )?;
+            self.synchronize_xr()?;
+            self.synchronize_graphics()?;
+            self.synchronize_resources(&mut requests)?;
         }
         self.authority.reconcile_storage(
             self.endpoint.platform.stored_records_available,

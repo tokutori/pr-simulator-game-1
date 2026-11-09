@@ -15,8 +15,7 @@ fn keyboard_preferences_validate_restore_and_drain_only_the_latest_accepted_writ
     };
     let json =
         serde_json::json!({ "schema_version": 1, "keyboard_controls": settings }).to_string();
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
     let mut initial = runtime
         .update(
             ApplicationObservation {
@@ -214,8 +213,7 @@ fn display_preferences_validate_restore_and_drain_only_the_latest_accepted_write
         saturation: 1.5,
     };
     let json = serde_json::json!({ "schema_version": 1, "display_settings": settings }).to_string();
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
     let mut initial = runtime
         .update(
             ApplicationObservation {
@@ -385,7 +383,7 @@ fn display_preferences_validate_restore_and_drain_only_the_latest_accepted_write
 
     let mut platform = screen_platform();
     platform.capabilities.replay_available = true;
-    let mut runtime = ApplicationRuntime::new(finalized_application(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(finalized_application(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform,
@@ -563,7 +561,7 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
         },
         ..screen_platform()
     };
-    let mut runtime = ApplicationRuntime::new(finalized_application(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(finalized_application(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform,
@@ -734,7 +732,7 @@ fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_de
     // Disposal during font work retires the old spatial publication at return.
     {
         let mut runtime =
-            ApplicationRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
+            LocalRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
         let (begin, work) = runtime
             .begin_update(ApplicationObservation {
                 observed_ms: 0.0,
@@ -807,7 +805,7 @@ fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_de
             ..screen_platform()
         };
         let mut runtime =
-            ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+            LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
         let initial = runtime
             .observe_test(ApplicationInput::Platform {
                 observation: platform.clone(),
@@ -1059,8 +1057,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         },
         ..screen_platform()
     };
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform.clone(),
@@ -1389,8 +1386,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         })
         .unwrap();
     assert!(duplicate.requests.is_empty());
-    let mut reload =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let mut reload = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = reload
         .observe_test(ApplicationInput::Platform {
             observation: platform,
@@ -1464,8 +1460,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
 #[test]
 fn briefing_retry_restarts_failed_resource_preparation_through_the_shared_action() {
     let platform = screen_platform();
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform,
@@ -1522,7 +1517,7 @@ fn briefing_retry_restarts_failed_resource_preparation_through_the_shared_action
 }
 
 fn resources_ready(
-    runtime: &mut ApplicationRuntime,
+    runtime: &mut LocalRuntime,
     request_id: u32,
 ) -> Result<ApplicationOutput, ApplicationRuntimeError> {
     let resource_id = 10_000 + request_id;
@@ -1536,10 +1531,7 @@ fn resources_ready(
     } else { Ok(prepared) }
 }
 
-fn finish_boot(
-    runtime: &mut ApplicationRuntime,
-    mut initial: ApplicationOutput,
-) -> ApplicationOutput {
+fn finish_boot(runtime: &mut LocalRuntime, mut initial: ApplicationOutput) -> ApplicationOutput {
     for (document, request_id) in initial
         .requests
         .iter()
@@ -1642,7 +1634,7 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
         },
         ..screen_platform()
     };
-    let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(application, platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform.clone(),
@@ -1700,7 +1692,7 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
         repeat,
     };
     use birdman_game_presentation::game_ui::GameUiControlContent;
-    let bounds = |runtime: &ApplicationRuntime, id: &str| {
+    let bounds = |runtime: &LocalRuntime, id: &str| {
         runtime
             .endpoint
             .retained
@@ -2241,7 +2233,7 @@ fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
             },
             ..screen_platform()
         };
-        let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+        let mut runtime = LocalRuntime::new(application, platform.clone()).unwrap();
         runtime.authority.ui.replay_view = GameUiReplayView::Analysis;
         runtime.authority.ui.technical_open = true;
         runtime.authority.ui.replay_camera = GameUiReplayCamera::Chase;
@@ -2341,7 +2333,7 @@ fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
                 Seen::Committed,
             ]
         };
-        let complete = |runtime: &mut ApplicationRuntime| {
+        let complete = |runtime: &mut LocalRuntime| {
             let mut completed = None;
             for observation in observations.iter().cloned() {
                 completed = Some(
@@ -2491,8 +2483,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         },
         ..screen_platform()
     };
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     runtime.authority.ui.replay_view = GameUiReplayView::Analysis;
     runtime.authority.ui.technical_open = true;
     runtime.authority.ui.replay_camera = GameUiReplayCamera::Chase;
@@ -2862,7 +2853,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         .unwrap();
     assert!(application.replay_available());
     let platform = screen_platform();
-    let mut legacy_runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+    let mut legacy_runtime = LocalRuntime::new(application, platform.clone()).unwrap();
     let initial = legacy_runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform,
@@ -2889,7 +2880,7 @@ trait ObservedInput {
     ) -> Result<ApplicationOutput, ApplicationRuntimeError>;
 }
 
-impl ObservedInput for ApplicationRuntime {
+impl ObservedInput for LocalRuntime {
     fn observe_test(
         &mut self,
         input: ApplicationInput,
@@ -2994,7 +2985,7 @@ impl ObservedInput for ApplicationRuntime {
 }
 
 fn activate(
-    runtime: &mut ApplicationRuntime,
+    runtime: &mut LocalRuntime,
     view: &GameUiView,
     command: SessionCommand,
 ) -> ApplicationOutput {
@@ -3002,7 +2993,7 @@ fn activate(
 }
 
 fn activate_action(
-    runtime: &mut ApplicationRuntime,
+    runtime: &mut LocalRuntime,
     view: &GameUiView,
     expected: GameUiAction,
 ) -> ApplicationOutput {
@@ -3033,7 +3024,7 @@ fn structure(output: ApplicationOutput) -> Arc<GameUiView> {
     }
 }
 
-fn started_display(mode: GameUiPresentationMode) -> (ApplicationRuntime, ApplicationOutput) {
+fn started_display(mode: GameUiPresentationMode) -> (LocalRuntime, ApplicationOutput) {
     let platform = ApplicationPlatformObservation {
         capabilities: ApplicationCapabilities {
             phone_sensors: Some(PhoneSensorApiObservation {
@@ -3045,8 +3036,7 @@ fn started_display(mode: GameUiPresentationMode) -> (ApplicationRuntime, Applica
         },
         ..screen_platform()
     };
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform,
@@ -3217,7 +3207,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             ControllerFault, ControllerFrame, NativeControllerConnection, NativeControllerDocument,
         };
         fn reply(
-            runtime: &mut ApplicationRuntime,
+            runtime: &mut LocalRuntime,
             output: &ApplicationOutput,
             time: f64,
             arrival: f64,
@@ -3306,7 +3296,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
                 .select_controller_execution(SelectedControllerExecution::decode(source).unwrap())
                 .unwrap();
             let platform = screen_platform();
-            let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+            let mut runtime = LocalRuntime::new(application, platform.clone()).unwrap();
             let initial = runtime
                 .observe_test(ApplicationInput::Platform {
                     observation: platform.clone(),
@@ -3506,8 +3496,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         gpu_timing_requested: true,
         ..screen_platform()
     };
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform.clone(),
@@ -4505,7 +4494,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
         assert!(output.drawing.unwrap().graphics.resource.is_some());
     }
     // Physical gamepads follow XR focus; window blur retires only surface controls.
-    let frame = |runtime: &mut ApplicationRuntime, pitch: f64, focused: bool| {
+    let frame = |runtime: &mut LocalRuntime, pitch: f64, focused: bool| {
         let mut xr = hmd_observation(Pose::IDENTITY);
         xr.input_focused = focused;
         let timestamp_ms = runtime.authority.observed_ms + 10.0;
@@ -4569,7 +4558,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
     );
     frame(&mut runtime, 0.0, true);
     frame(&mut runtime, 0.0, true);
-    let demand = |runtime: &ApplicationRuntime| {
+    let demand = |runtime: &LocalRuntime| {
         runtime
             .authority
             .application
@@ -4759,8 +4748,7 @@ fn display_completion_retains_owned_resources_and_reports_no_active_mode_after_s
         },
         ..screen_platform()
     };
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform,
@@ -5112,7 +5100,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
             ],
         }),
     };
-    let mut frame = |runtime: &mut ApplicationRuntime,
+    let mut frame = |runtime: &mut LocalRuntime,
                      timestamp_ms,
                      presented_id,
                      controller: &XrInputSourceObservation| {
@@ -5202,8 +5190,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
 fn shadow_off_preparation_keeps_live_shadows_until_the_complete_resource_ack() {
     use birdman_game_presentation::screen_render_auto::ScreenShadowMap;
     let platform = screen_platform();
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform,
@@ -5271,8 +5258,7 @@ fn shadow_off_preparation_keeps_live_shadows_until_the_complete_resource_ack() {
 #[test]
 fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
     let platform = screen_platform();
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform.clone(),

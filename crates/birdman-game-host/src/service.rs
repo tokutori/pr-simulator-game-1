@@ -79,6 +79,7 @@ enum Event {
         ApplicationPeerId,
         ApplicationNetworkMessage,
         OwnedSemaphorePermit,
+        Option<oneshot::Sender<()>>,
     ),
     Transmitted(ApplicationPeerId, u64, Result<(), String>),
     Disconnect(ApplicationPeerId),
@@ -95,6 +96,11 @@ pub struct HostServiceHandle {
 }
 
 impl HostServiceHandle {
+    /// Read the immutable descriptor encoded from this authority identity.
+    pub fn bootstrap_bytes(&self) -> &[u8] {
+        self.bootstrap_json.as_bytes()
+    }
+
     /// Read the latest shared native administration projection.
     pub fn snapshot(&self) -> HostManagementSnapshot {
         self.snapshot.borrow().clone()
@@ -143,11 +149,37 @@ impl HostServiceHandle {
             return Err(message);
         };
         self.events
-            .try_send(Event::Receive(peer, message, permit))
+            .try_send(Event::Receive(peer, message, permit, None))
             .map_err(|error| match error.into_inner() {
-                Event::Receive(_, message, _) => message,
+                Event::Receive(_, message, _, _) => message,
                 _ => unreachable!("raw receive event retained by the channel"),
             })
+    }
+
+    /// Queue raw local data and observe when the Host executor releases the packet.
+    pub fn try_receive_observed(
+        &self,
+        peer: ApplicationPeerId,
+        message: ApplicationNetworkMessage,
+    ) -> Result<oneshot::Receiver<()>, ApplicationNetworkMessage> {
+        let Some(length) = received_length(&message) else {
+            return Err(message);
+        };
+        let Ok(permit) = self
+            .receive_budget
+            .clone()
+            .try_acquire_many_owned(length as u32)
+        else {
+            return Err(message);
+        };
+        let (receipt, completed) = oneshot::channel();
+        self.events
+            .try_send(Event::Receive(peer, message, permit, Some(receipt)))
+            .map_err(|error| match error.into_inner() {
+                Event::Receive(_, message, _, _) => message,
+                _ => unreachable!("raw local receive event retained by the channel"),
+            })?;
+        Ok(completed)
     }
 
     /// Try a native transport acknowledgment without blocking an ECS update.
@@ -214,7 +246,7 @@ impl HostServiceHandle {
             return Err("Raw peer message exceeds its receive limit".to_owned());
         }
         self.events
-            .send(Event::Receive(peer, message, permit))
+            .send(Event::Receive(peer, message, permit, None))
             .await
             .map_err(|error| error.to_string())
     }
@@ -269,6 +301,46 @@ pub struct HostService {
 }
 
 impl HostService {
+    /// Validate one distribution and start the shared authority and listener.
+    pub fn start(
+        options: crate::server_cli::ServerOptions,
+        source_sha: &str,
+        epoch: Instant,
+    ) -> Result<(Self, HostListenConfig), String> {
+        let web = Arc::new(
+            WebDistribution::open(
+                &options.web_root,
+                source_sha,
+                birdman_game_runtime::APPLICATION_CONTRACT_SHA256,
+            )
+            .map_err(|error| error.to_string())?,
+        );
+        let server = ApplicationServer::new(
+            birdman_game_app::application::ApplicationSession::default(),
+            birdman_game_runtime::ApplicationHostIdentity {
+                source_sha: source_sha.to_owned(),
+                contract_sha256: birdman_game_runtime::APPLICATION_CONTRACT_SHA256.to_owned(),
+                web_bundle_sha256: web.manifest_sha256().to_owned(),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        let config = HostListenConfig {
+            bind: options.bind,
+            tls: options.certificate.zip(options.private_key).map(
+                |(certificate_chain_pem, private_key_pem)| HostTlsConfig {
+                    certificate_chain_pem,
+                    private_key_pem,
+                },
+            ),
+            web,
+        };
+        let service = Self::new(server, epoch, options.records)?;
+        service
+            .handle()
+            .administer(HostManagementCommand::Start(config.clone()))?;
+        Ok((service, config))
+    }
+
     /// Start a dedicated native executor using the application's original clock epoch.
     pub fn new(
         server: ApplicationServer,
@@ -565,11 +637,14 @@ async fn run(
                     .map_err(|error| error.to_string());
                 let _ = reply.send(response);
             }
-            Some(Event::Receive(id, message, permit)) => {
+            Some(Event::Receive(id, message, permit, receipt)) => {
                 result = server
                     .receive(id, epoch.elapsed().as_secs_f64() * 1000.0, message)
                     .map_err(|error| error.to_string());
                 drop(permit);
+                if let Some(receipt) = receipt {
+                    let _ = receipt.send(());
+                }
             }
             Some(Event::Transmitted(id, transmission, delivery)) => {
                 if !peers.contains_key(&id) {
@@ -610,16 +685,16 @@ async fn run(
                 closed.push(*id);
                 continue;
             }
-            if let Some(transmission) = server.next_transmission(*id) {
-                if let Err(error) = delivery.sender.try_send(transmission) {
-                    let transmission = error.into_inner();
-                    let _ = server.transmitted(
-                        *id,
-                        transmission.id,
-                        Err("transport delivery channel unavailable".into()),
-                    );
-                    closed.push(*id);
-                }
+            if let Some(transmission) = server.next_transmission(*id)
+                && let Err(error) = delivery.sender.try_send(transmission)
+            {
+                let transmission = error.into_inner();
+                let _ = server.transmitted(
+                    *id,
+                    transmission.id,
+                    Err("transport delivery channel unavailable".into()),
+                );
+                closed.push(*id);
             }
         }
         for id in closed {

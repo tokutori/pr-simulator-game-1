@@ -1,4 +1,3 @@
-use birdman_game_app::application::ApplicationSession;
 use birdman_game_presentation::xr::MenuLayoutFailure;
 use birdman_game_runtime::{
     ApplicationGlyphMetrics, ApplicationObservation, ApplicationPlatformObservation,
@@ -44,7 +43,7 @@ impl ApplicationRuntimeBridge {
     pub fn new(platform_json: &str) -> Result<ApplicationRuntimeBridge, JsValue> {
         let platform: ApplicationPlatformObservation =
             serde_json::from_str(platform_json).map_err(crate::error)?;
-        let runtime = ApplicationRuntime::new(ApplicationSession::default(), platform)
+        let runtime = ApplicationRuntime::discover(platform)
             .map_err(|cause| crate::error(birdman_game_app::technical_error_text(&cause)))?;
         Ok(Self { runtime })
     }

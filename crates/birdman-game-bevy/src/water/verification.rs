@@ -157,20 +157,24 @@ fn setup(
         let runtime = runtime.lock();
         (|| {
             let EnvironmentProjection::Available { metadata, .. } =
-                EnvironmentSelection::for_session(runtime.application())
-                    .map_err(|cause| {
-                        format!(
-                            "Shader probe environment: {}",
-                            birdman_game_app::technical_error_text(&cause)
-                        )
-                    })?
-                    .resolve()
-                    .map_err(|cause| {
-                        format!(
-                            "Shader probe environment: {}",
-                            birdman_game_app::technical_error_text(&cause)
-                        )
-                    })?
+                EnvironmentSelection::for_session(
+                    runtime
+                        .local_application()
+                        .ok_or("Shader probe requires a local authority")?,
+                )
+                .map_err(|cause| {
+                    format!(
+                        "Shader probe environment: {}",
+                        birdman_game_app::technical_error_text(&cause)
+                    )
+                })?
+                .resolve()
+                .map_err(|cause| {
+                    format!(
+                        "Shader probe environment: {}",
+                        birdman_game_app::technical_error_text(&cause)
+                    )
+                })?
             else {
                 return Err("Shader probe environment is unavailable".to_string());
             };
