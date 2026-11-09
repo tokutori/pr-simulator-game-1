@@ -179,9 +179,21 @@ impl Client {
                         trace_packet(&mut self.wire_trace, "send", text);
                         self.sent.push(text.clone());
                     }
-                    self.network
-                        .submit(request)
-                        .unwrap_or_else(|_| panic!("network request was not accepted"));
+                    self.network.submit(request).unwrap_or_else(|request| {
+                        let (kind, length) = match &*request {
+                            ApplicationRequest::ReadHost { .. } => ("read_host", 0),
+                            ApplicationRequest::CancelHostRead { .. } => ("cancel_host_read", 0),
+                            ApplicationRequest::NetworkOpen { .. } => ("network_open", 0),
+                            ApplicationRequest::NetworkClose { .. } => ("network_close", 0),
+                            ApplicationRequest::ObserveNetwork { .. } => ("observe_network", 0),
+                            ApplicationRequest::NetworkSend { payload, .. } => match payload {
+                                ApplicationNetworkData::Text { text } => ("network_send_text", text.len()),
+                                ApplicationNetworkData::Binary { bytes } => ("network_send_binary", bytes.len()),
+                            },
+                            _ => unreachable!("network-only request match"),
+                        };
+                        panic!("network I/O rejected {kind} ({length} bytes); diagnostic={:?}; wire={:?}", self.diagnostic, self.wire_trace)
+                    });
                 }
                 ApplicationRequest::ScheduleWake {
                     request_id, at_ms, ..

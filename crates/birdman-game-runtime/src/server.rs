@@ -207,6 +207,14 @@ struct OutgoingBuffer {
     peer_acknowledged: bool,
 }
 impl Peer {
+    fn acknowledge_transfer(&mut self, id: u64) {
+        if let Some(transfer) = self.transfers.get_mut(&id) {
+            transfer.peer_acknowledged = true;
+            if transfer.offset == transfer.bytes.len() {
+                self.transfers.remove(&id);
+            }
+        }
+    }
     fn refresh_known(&mut self) {
         self.known_buffers.clone_from(&self.adopted_buffers);
     }
@@ -808,6 +816,12 @@ impl ApplicationServer {
                     display.input_focused = input_focused && visible && mode.is_some();
                     display.resource_epoch = resource_epoch.unwrap_or(0);
                 }
+                if ready && let Some(epoch) = resource_epoch {
+                    let transfers = item.resource_pins[&epoch].transfers.clone();
+                    for transfer in transfers {
+                        item.acknowledge_transfer(transfer);
+                    }
+                }
                 item.refresh_known();
                 if self.operator == Some(id) {
                     self.reconcile_availability()?;
@@ -860,12 +874,7 @@ impl ApplicationServer {
             ClientMessage::TransferAck { peer, transfer_id } => {
                 self.check_peer(id, peer)?;
                 let item = self.peers.get_mut(&id).unwrap();
-                if let Some(transfer) = item.transfers.get_mut(&transfer_id) {
-                    transfer.peer_acknowledged = true;
-                    if transfer.offset == transfer.bytes.len() {
-                        item.transfers.remove(&transfer_id);
-                    }
-                }
+                item.acknowledge_transfer(transfer_id);
             }
             ClientMessage::ReleaseAssets {
                 peer,

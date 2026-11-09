@@ -816,7 +816,6 @@ impl RemoteSession {
         for transfer_id in pending.transfers.keys() {
             self.retired_transfer = self.retired_transfer.max(*transfer_id);
         }
-        let transfer_ids: Vec<_> = pending.transfers.keys().copied().collect();
         let buffers: Vec<_> = pending
             .transfers
             .into_values()
@@ -849,12 +848,6 @@ impl RemoteSession {
             )?;
         }
         requests.extend(prepared);
-        for transfer_id in transfer_ids {
-            self.send(
-                super::wire::ClientMessage::TransferAck { peer, transfer_id },
-                requests,
-            )?;
-        }
         Ok(())
     }
 }
