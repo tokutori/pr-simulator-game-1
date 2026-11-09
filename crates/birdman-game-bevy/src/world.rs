@@ -103,6 +103,7 @@ struct Candidate {
     water: [Handle<WaterMaterial>; 3],
     images: Vec<(u32, u16)>,
     meshes: Vec<Handle<Mesh>>,
+    preparation_culling: Vec<Entity>,
     sky_mesh: Handle<Mesh>,
 }
 
@@ -676,6 +677,7 @@ impl NativeGpu {
             });
         let mut materials = BTreeMap::<u32, Handle<TerrainMaterial>>::new();
         let mut meshes = Vec::new();
+        let mut preparation_culling = Vec::new();
         for asset in &manifest.meshes {
             for (source, mesh) in asset.materials.iter().zip(&self.meshes[&asset.mesh_id]) {
                 let material = materials
@@ -736,8 +738,11 @@ impl NativeGpu {
                         .entity_mut(entity)
                         .insert(bevy::light::NotShadowReceiver);
                 }
-                if !asset.frustum_culled {
-                    world.entity_mut(entity).insert(NoFrustumCulling);
+                // Isolated preparation must specialize every uploaded material,
+                // including aircraft outside the exhibition camera frustum.
+                world.entity_mut(entity).insert(NoFrustumCulling);
+                if asset.frustum_culled {
+                    preparation_culling.push(entity);
                 }
                 world
                     .entity_mut(attachments[attachment_index(asset.attachment)])
@@ -876,6 +881,7 @@ impl NativeGpu {
             water,
             images: acquired,
             meshes,
+            preparation_culling,
             sky_mesh: sky,
         })
     }
@@ -958,6 +964,9 @@ impl NativeGpu {
             .is_active = false;
         world.resource_mut::<DirectionalLightShadowMap>().size =
             candidate.target.shadow_extent_px[0] as usize;
+        for entity in candidate.preparation_culling.drain(..) {
+            world.entity_mut(entity).remove::<NoFrustumCulling>();
+        }
         candidate.stage = ResourceStage::Committing { request_id, after };
         self.active = Some(resource_id);
         Ok(())
@@ -1125,6 +1134,10 @@ pub(crate) fn submit(
             if matches!(candidate.stage, ResourceStage::Cancelling { .. }) {
                 continue;
             }
+            let preparing = matches!(
+                candidate.stage,
+                ResourceStage::Preparing | ResourceStage::Prepared
+            );
             let hidden_scene = screen_render::direct(world)
                 && matches!(
                     candidate.stage,
@@ -1141,24 +1154,25 @@ pub(crate) fn submit(
                 candidate.water_root,
                 pose_transform(drawing.scene.water_world_from_surface),
             );
-            world
-                .entity_mut(candidate.attachments[0])
-                .insert(if drawing.scene.venue_visible {
+            world.entity_mut(candidate.attachments[0]).insert(
+                if preparing || drawing.scene.venue_visible {
                     Visibility::Inherited
                 } else {
                     Visibility::Hidden
-                });
+                },
+            );
             submit_transform(
                 world,
                 candidate.attachments[1],
                 pose_transform(drawing.scene.world_from_aircraft),
             );
             world.entity_mut(candidate.attachments[1]).insert(
-                if drawing
-                    .scene
-                    .geometry
-                    .as_ref()
-                    .is_some_and(|geometry| geometry.aircraft_visible)
+                if preparing
+                    || drawing
+                        .scene
+                        .geometry
+                        .as_ref()
+                        .is_some_and(|geometry| geometry.aircraft_visible)
                 {
                     Visibility::Inherited
                 } else {
@@ -1684,6 +1698,7 @@ mod tests {
                 water: std::array::from_fn(|_| Handle::default()),
                 images: Vec::new(),
                 meshes: Vec::new(),
+                preparation_culling: Vec::new(),
                 sky_mesh: sky,
             },
         );
@@ -1992,19 +2007,54 @@ mod tests {
         full.extent_px = [1280, 720];
         full.quality.scale =
             birdman_game_presentation::screen_render_scale::ScreenRenderScale::Full;
-        let mut candidate = direct_gpu
+        let candidate = direct_gpu
             .prepare(&mut world, &runtime, full, &sampler_assets, None)
             .unwrap();
         let isolated = candidate.output.as_ref().unwrap().id();
         assert_eq!(candidate.output_format, TextureFormat::Bgra8UnormSrgb);
         assert!(!screen_render::direct(&world));
         assert_ne!(candidate.binding, final_target);
-        candidate.stage = ResourceStage::Prepared;
+        let sky_mesh = candidate.sky_mesh.id();
+        let always_unculled = world
+            .query::<(Entity, &Mesh3d)>()
+            .iter(&world)
+            .find_map(|(entity, mesh)| (mesh.0.id() == sky_mesh).then_some(entity))
+            .unwrap();
+        let preparation_culling = candidate.preparation_culling.clone();
+        assert!(!preparation_culling.is_empty());
+        let attachments = candidate.attachments;
         direct_gpu.candidates.insert(41, candidate);
+        world.insert_resource(direct_gpu);
+        let venue_visible = drawing.scene.venue_visible;
+        drawing.scene.venue_visible = false;
+        for stage in [ResourceStage::Preparing, ResourceStage::Prepared] {
+            world
+                .resource_mut::<NativeGpu>()
+                .candidates
+                .get_mut(&41)
+                .unwrap()
+                .stage = stage;
+            submit(&mut world, &runtime, &drawing).unwrap();
+            for attachment in &attachments[..2] {
+                assert_eq!(
+                    world.get::<Visibility>(*attachment),
+                    Some(&Visibility::Inherited)
+                );
+            }
+            for entity in &preparation_culling {
+                assert!(world.get::<NoFrustumCulling>(*entity).is_some());
+            }
+        }
+        let mut direct_gpu = world.remove_resource::<NativeGpu>().unwrap();
         direct_gpu
             .commit(&mut world, 77, 41)
             .unwrap_or_else(|_| panic!("Direct binding"));
         assert!(screen_render::direct(&world));
+        for entity in &preparation_culling {
+            assert!(world.get::<NoFrustumCulling>(*entity).is_none());
+        }
+        assert!(direct_gpu.candidates[&41].preparation_culling.is_empty());
+        assert!(world.get::<NoFrustumCulling>(always_unculled).is_some());
         assert!(!world.get::<Camera>(outer).unwrap().is_active);
         assert!(world.get::<IsDefaultUiCamera>(main).is_some());
         assert!(world.resource::<Assets<Image>>().get(isolated).is_some());
@@ -2028,6 +2078,13 @@ mod tests {
                 },
             );
         world.insert_resource(direct_gpu);
+        submit(&mut world, &runtime, &drawing).unwrap();
+        for attachment in &attachments[..2] {
+            assert_eq!(
+                world.get::<Visibility>(*attachment),
+                Some(&Visibility::Hidden)
+            );
+        }
         assert!(matches!(
             poll(&mut world).as_slice(),
             [ApplicationInput::Resources {
@@ -2045,6 +2102,13 @@ mod tests {
         drawing.presentation.scene_visible = false;
         submit(&mut world, &runtime, &drawing).unwrap();
         let hidden_root = world.resource::<NativeGpu>().candidates[&41].root;
+        for attachment in &attachments[..2] {
+            assert_eq!(
+                world.get::<Visibility>(*attachment),
+                Some(&Visibility::Hidden)
+            );
+        }
+        drawing.scene.venue_visible = venue_visible;
         assert_eq!(
             world.get::<Visibility>(hidden_root),
             Some(&Visibility::Hidden)
