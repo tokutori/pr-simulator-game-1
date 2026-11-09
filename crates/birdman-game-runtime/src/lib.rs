@@ -352,9 +352,14 @@ impl ApplicationRuntime {
     }
 
     fn presentation_scope(&self) -> Result<PresentationScope, ApplicationRuntimeError> {
-        let environment = self.environment()?;
+        let environment = self.authority.environment()?;
         Ok(PresentationScope {
-            structure: GameUiStructureKey::new(&self.authority.ui, &self.context(&environment)?),
+            structure: GameUiStructureKey::new(
+                &self.authority.ui,
+                &self
+                    .authority
+                    .context(&environment, &self.endpoint.platform)?,
+            ),
             resource: self.endpoint.last_ready_resources,
             display: self
                 .endpoint
@@ -1546,7 +1551,7 @@ impl ApplicationRuntime {
             })
             .map_err(ApplicationRuntimeError::Application)?;
         self.retire_stale_flight_pointers();
-        let environment = self.environment()?;
+        let environment = self.authority.environment()?;
         let revision = self.structure_revision(&environment)?;
         if !self.presentation_input_focused()
             || self
@@ -1583,8 +1588,13 @@ impl ApplicationRuntime {
             .as_ref()
             .is_none_or(|view| view.view_revision != revision)
         {
-            let mut view = game_ui_view(&self.authority.ui, &self.context(&environment)?)
-                .map_err(ApplicationRuntimeError::Ui)?;
+            let mut view = game_ui_view(
+                &self.authority.ui,
+                &self
+                    .authority
+                    .context(&environment, &self.endpoint.platform)?,
+            )
+            .map_err(ApplicationRuntimeError::Ui)?;
             if self.endpoint.boot.active() {
                 view = self.endpoint.boot.view(view);
             }
@@ -1596,7 +1606,9 @@ impl ApplicationRuntime {
         } else {
             let mut frame = game_ui_frame(
                 &self.authority.ui,
-                &self.context(&environment)?,
+                &self
+                    .authority
+                    .context(&environment, &self.endpoint.platform)?,
                 self.endpoint.retained.as_ref().unwrap(),
                 revision,
             )
@@ -1621,7 +1633,9 @@ impl ApplicationRuntime {
             Some({
                 let mut frame = game_ui_frame(
                     &self.authority.ui,
-                    &self.context(&environment)?,
+                    &self
+                        .authority
+                        .context(&environment, &self.endpoint.platform)?,
                     view,
                     revision,
                 )
@@ -1763,7 +1777,7 @@ impl ApplicationRuntime {
                     SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
                 )
             {
-                let environment = self.environment()?;
+                let environment = self.authority.environment()?;
                 let revision = self.structure_revision(&environment)?;
                 self.apply_action(
                     revision,
@@ -1791,7 +1805,7 @@ impl ApplicationRuntime {
                     _ => None,
                 };
                 if let Some(command) = command {
-                    let environment = self.environment()?;
+                    let environment = self.authority.environment()?;
                     let revision = self.structure_revision(&environment)?;
                     self.apply_action(revision, GameUiAction::Session { command }, requests)?;
                     self.authority
@@ -1977,7 +1991,7 @@ impl ApplicationRuntime {
                 _ => return Err(ApplicationRuntimeError::Ui(GameUiError::ActionUnavailable)),
             }
         } else {
-            let environment = self.environment()?;
+            let environment = self.authority.environment()?;
             let revision = self.structure_revision(&environment)?;
             if self
                 .endpoint
@@ -1988,8 +2002,14 @@ impl ApplicationRuntime {
             {
                 return Err(ApplicationRuntimeError::Ui(GameUiError::StaleView));
             }
-            update_game_ui(&self.authority.ui, action, &self.context(&environment)?)
-                .map_err(ApplicationRuntimeError::Ui)?
+            update_game_ui(
+                &self.authority.ui,
+                action,
+                &self
+                    .authority
+                    .context(&environment, &self.endpoint.platform)?,
+            )
+            .map_err(ApplicationRuntimeError::Ui)?
         };
         if self.authority.ui.flight_camera != update.state.flight_camera {
             self.endpoint.scene.reset_look();
@@ -2535,207 +2555,18 @@ impl ApplicationRuntime {
     // A previously received candidate precedes the current event; a new I/O reply
     // uses this same reconciliation after its own dispatch. Sealed demand is consumed once.
 
-    fn identity(&self) -> Result<Option<SessionScenarioIdentity>, ApplicationRuntimeError> {
-        if self.authority.application.core_session().snapshot().phase() == SessionPhase::FlightSetup
-        {
-            let scenario = HybridSessionPreparation::select_scenario(
-                self.authority.application.difficulty().weather(),
-                self.authority.application.seed(),
-                self.authority
-                    .application
-                    .aircraft()
-                    .map_err(|cause| {
-                        ApplicationRuntimeError::Application(ApplicationError::Preparation(
-                            birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
-                        ))
-                    })?
-                    .definition()
-                    .document()
-                    .model_version,
-            )
-            .map_err(|error| {
-                ApplicationRuntimeError::Application(ApplicationError::Preparation(error))
-            })?;
-            let mut identity = identity_for_selection(scenario);
-            identity.aircraft_identity = self
-                .authority
-                .application
-                .aircraft()
-                .map_err(|cause| {
-                    ApplicationRuntimeError::Application(ApplicationError::Preparation(
-                        birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
-                    ))
-                })?
-                .identity();
-            identity.controller_identity = self.authority.application.selected_execution_identity();
-            Ok(Some(identity))
-        } else {
-            Ok(self
-                .authority
-                .application
-                .core_session()
-                .configuration_identity())
-        }
-    }
-
-    fn environment(&self) -> Result<String, ApplicationRuntimeError> {
-        game_ui_environment_readout(
-            self.identity()?,
-            self.authority
-                .application
-                .aircraft()
-                .map_err(|cause| {
-                    ApplicationRuntimeError::Application(ApplicationError::Preparation(
-                        birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
-                    ))
-                })?
-                .launch_position()
-                .map_err(|cause| {
-                    ApplicationRuntimeError::Application(ApplicationError::Preparation(cause))
-                })?
-                .components(),
-        )
-        .map_err(|error| ApplicationRuntimeError::Ui(GameUiError::Environment(error)))
-    }
-
-    fn context<'view>(
-        &'view self,
-        environment: &'view str,
-    ) -> Result<GameUiContext<'view>, ApplicationRuntimeError> {
-        Ok(GameUiContext {
-            record_notification: self
-                .authority
-                .storage
-                .save_notification(&self.authority.application),
-            session: self.authority.application.core_session(),
-            resume_available: self.authority.application.can_resume(),
-            flight_failure: self.authority.application.flight_failure(),
-            presentation_available: self.authority.application.presentation_available(),
-            difficulty: self.authority.application.display_difficulty(),
-            keyboard_controls: self.authority.application.keyboard_controls(),
-            keyboard_controls_notification: self.authority.storage.keyboard_notification(),
-            aircraft_name: self
-                .authority
-                .application
-                .aircraft()
-                .map(|selected| {
-                    if selected.is_bundled() {
-                        "既定の機体"
-                    } else {
-                        selected.definition().document().configuration_id.as_str()
-                    }
-                })
-                .unwrap_or("機体を準備できない"),
-            aircraft_notification: self
-                .authority
-                .storage
-                .configuration_notification(ConfigurationDocumentKind::Aircraft),
-            aircraft_can_delete: self
-                .authority
-                .storage
-                .configuration_can_delete(ConfigurationDocumentKind::Aircraft),
-            controller_name: self
-                .authority
-                .application
-                .controller()
-                .map(|selected| {
-                    if selected.is_bundled() {
-                        "既定の制御設定"
-                    } else {
-                        selected.document().controller_id.as_str()
-                    }
-                })
-                .unwrap_or("制御設定を準備できない"),
-            controller_notification: self
-                .authority
-                .storage
-                .configuration_notification(ConfigurationDocumentKind::Controller),
-            controller_can_delete: self
-                .authority
-                .storage
-                .configuration_can_delete(ConfigurationDocumentKind::Controller),
-            controller_execution_name: self.authority.application.controller_execution().label(),
-            controller_execution_notification: self
-                .authority
-                .storage
-                .configuration_notification(ConfigurationDocumentKind::ControllerExecution),
-            controller_execution_can_delete: self
-                .authority
-                .storage
-                .configuration_can_delete(ConfigurationDocumentKind::ControllerExecution),
-            controller_fault: self.authority.application.display_controller_fault(),
-            controller_fault_terminal: self
-                .authority
-                .application
-                .display_controller_fault_is_terminal(),
-            controller_execution_status: self
-                .authority
-                .application
-                .display_controller_fault()
-                .map(|fault| format!("制御器の異常（tick {}）: {}", fault.tick, fault.cause))
-                .or_else(|| {
-                    self.authority
-                        .application
-                        .controller_waiting()
-                        .then(|| "制御器の応答を待っている。".into())
-                }),
-            controller_pair_diagnostic: self
-                .authority
-                .application
-                .controller_pair()
-                .err()
-                .map(|cause| cause.to_string()),
-            controller_shared_authority: self
-                .authority
-                .application
-                .controller()
-                .ok()
-                .map(|selected| selected.document().shared_authority),
-            controller_effective_authority: self.authority.application.display_control_mode().map(
-                |mode| match mode {
-                    birdman_game_core::ControlMode::Manual => 0.0,
-                    birdman_game_core::ControlMode::Shared(authority) => authority.value(),
-                    birdman_game_core::ControlMode::Automatic => 1.0,
-                },
-            ),
-            aircraft_replay_available: self.authority.application.replay_available(),
-            representative_position_ned_m: self
-                .authority
-                .application
-                .aircraft()
-                .map_err(|cause| {
-                    ApplicationRuntimeError::Application(ApplicationError::Preparation(
-                        birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
-                    ))
-                })?
-                .launch_position()
-                .map_err(|cause| {
-                    ApplicationRuntimeError::Application(ApplicationError::Preparation(cause))
-                })?
-                .components(),
-            display_settings: self.authority.application.display_settings(),
-            display_settings_notification: self.authority.storage.display_notification(),
-            accepted_flight_keys: self.authority.application.accepted_flight_keys(),
-            preset: self.authority.application.display_preset(),
-            identity: self.identity()?,
-            record: self.authority.application.core_session().playback_record(),
-            archived_identity: self
-                .authority
-                .application
-                .archive()
-                .map(|archive| archive.identity_metadata()),
-            environment_readout: environment,
-            platform: &self.endpoint.platform,
-        })
-    }
-
     fn structure_revision(&mut self, environment: &str) -> Result<u32, ApplicationRuntimeError> {
         let environment = if self.endpoint.boot.active() {
             format!("{environment}\n{}", self.endpoint.boot.scope())
         } else {
             environment.to_owned()
         };
-        let key = GameUiStructureKey::new(&self.authority.ui, &self.context(&environment)?);
+        let key = GameUiStructureKey::new(
+            &self.authority.ui,
+            &self
+                .authority
+                .context(&environment, &self.endpoint.platform)?,
+        );
         self.endpoint
             .structure
             .observe(key, self.authority.application.record_source_id())

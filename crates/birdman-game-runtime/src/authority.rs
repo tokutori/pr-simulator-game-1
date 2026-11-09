@@ -185,4 +185,173 @@ impl ApplicationAuthority {
         self.previous_frame_ms = Some(timestamp_ms);
         Ok(())
     }
+
+    pub(super) fn identity(
+        &self,
+    ) -> Result<Option<SessionScenarioIdentity>, ApplicationRuntimeError> {
+        if self.application.core_session().snapshot().phase() == SessionPhase::FlightSetup {
+            let scenario = HybridSessionPreparation::select_scenario(
+                self.application.difficulty().weather(),
+                self.application.seed(),
+                self.application
+                    .aircraft()
+                    .map_err(|cause| {
+                        ApplicationRuntimeError::Application(ApplicationError::Preparation(
+                            birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
+                        ))
+                    })?
+                    .definition()
+                    .document()
+                    .model_version,
+            )
+            .map_err(|error| {
+                ApplicationRuntimeError::Application(ApplicationError::Preparation(error))
+            })?;
+            let mut identity = identity_for_selection(scenario);
+            identity.aircraft_identity = self
+                .application
+                .aircraft()
+                .map_err(|cause| {
+                    ApplicationRuntimeError::Application(ApplicationError::Preparation(
+                        birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
+                    ))
+                })?
+                .identity();
+            identity.controller_identity = self.application.selected_execution_identity();
+            Ok(Some(identity))
+        } else {
+            Ok(self.application.core_session().configuration_identity())
+        }
+    }
+
+    pub(super) fn environment(&self) -> Result<String, ApplicationRuntimeError> {
+        game_ui_environment_readout(
+            self.identity()?,
+            self.application
+                .aircraft()
+                .map_err(|cause| {
+                    ApplicationRuntimeError::Application(ApplicationError::Preparation(
+                        birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
+                    ))
+                })?
+                .launch_position()
+                .map_err(|cause| {
+                    ApplicationRuntimeError::Application(ApplicationError::Preparation(cause))
+                })?
+                .components(),
+        )
+        .map_err(|error| ApplicationRuntimeError::Ui(GameUiError::Environment(error)))
+    }
+
+    pub(super) fn context<'view>(
+        &'view self,
+        environment: &'view str,
+        platform: &'view GameUiPlatformInput,
+    ) -> Result<GameUiContext<'view>, ApplicationRuntimeError> {
+        Ok(GameUiContext {
+            record_notification: self.storage.save_notification(&self.application),
+            session: self.application.core_session(),
+            resume_available: self.application.can_resume(),
+            flight_failure: self.application.flight_failure(),
+            presentation_available: self.application.presentation_available(),
+            difficulty: self.application.display_difficulty(),
+            keyboard_controls: self.application.keyboard_controls(),
+            keyboard_controls_notification: self.storage.keyboard_notification(),
+            aircraft_name: self
+                .application
+                .aircraft()
+                .map(|selected| {
+                    if selected.is_bundled() {
+                        "既定の機体"
+                    } else {
+                        selected.definition().document().configuration_id.as_str()
+                    }
+                })
+                .unwrap_or("機体を準備できない"),
+            aircraft_notification: self
+                .storage
+                .configuration_notification(ConfigurationDocumentKind::Aircraft),
+            aircraft_can_delete: self
+                .storage
+                .configuration_can_delete(ConfigurationDocumentKind::Aircraft),
+            controller_name: self
+                .application
+                .controller()
+                .map(|selected| {
+                    if selected.is_bundled() {
+                        "既定の制御設定"
+                    } else {
+                        selected.document().controller_id.as_str()
+                    }
+                })
+                .unwrap_or("制御設定を準備できない"),
+            controller_notification: self
+                .storage
+                .configuration_notification(ConfigurationDocumentKind::Controller),
+            controller_can_delete: self
+                .storage
+                .configuration_can_delete(ConfigurationDocumentKind::Controller),
+            controller_execution_name: self.application.controller_execution().label(),
+            controller_execution_notification: self
+                .storage
+                .configuration_notification(ConfigurationDocumentKind::ControllerExecution),
+            controller_execution_can_delete: self
+                .storage
+                .configuration_can_delete(ConfigurationDocumentKind::ControllerExecution),
+            controller_fault: self.application.display_controller_fault(),
+            controller_fault_terminal: self.application.display_controller_fault_is_terminal(),
+            controller_execution_status: self
+                .application
+                .display_controller_fault()
+                .map(|fault| format!("制御器の異常（tick {}）: {}", fault.tick, fault.cause))
+                .or_else(|| {
+                    self.application
+                        .controller_waiting()
+                        .then(|| "制御器の応答を待っている。".into())
+                }),
+            controller_pair_diagnostic: self
+                .application
+                .controller_pair()
+                .err()
+                .map(|cause| cause.to_string()),
+            controller_shared_authority: self
+                .application
+                .controller()
+                .ok()
+                .map(|selected| selected.document().shared_authority),
+            controller_effective_authority: self.application.display_control_mode().map(|mode| {
+                match mode {
+                    birdman_game_core::ControlMode::Manual => 0.0,
+                    birdman_game_core::ControlMode::Shared(authority) => authority.value(),
+                    birdman_game_core::ControlMode::Automatic => 1.0,
+                }
+            }),
+            aircraft_replay_available: self.application.replay_available(),
+            representative_position_ned_m: self
+                .application
+                .aircraft()
+                .map_err(|cause| {
+                    ApplicationRuntimeError::Application(ApplicationError::Preparation(
+                        birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
+                    ))
+                })?
+                .launch_position()
+                .map_err(|cause| {
+                    ApplicationRuntimeError::Application(ApplicationError::Preparation(cause))
+                })?
+                .components(),
+            display_settings: self.application.display_settings(),
+            display_settings_notification: self.storage.display_notification(),
+            accepted_flight_keys: self.application.accepted_flight_keys(),
+            preset: self.application.display_preset(),
+            identity: self.identity()?,
+            record: self.application.core_session().playback_record(),
+            archived_identity: self
+                .application
+                .archive()
+                .map(|archive| archive.identity_metadata()),
+            environment_readout: environment,
+            platform,
+        })
+    }
 }

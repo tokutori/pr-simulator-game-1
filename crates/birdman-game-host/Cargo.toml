@@ -7,11 +7,30 @@ license.workspace = true
 repository.workspace = true
 description = "Native I/O and network hosting for shared Birdman application sessions"
 
+[features]
+server-ui = ["dep:eframe"]
+
 [dependencies]
+birdman-game-app.workspace = true
+birdman-game-format.workspace = true
+birdman-game-presentation.workspace = true
 birdman-game-runtime.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio", "ws", "json"] }
+axum-server = { version = "=0.8.0", default-features = false, features = ["tls-rustls-no-provider"] }
+tokio = { version = "=1.53.2", default-features = false, features = ["rt-multi-thread", "net", "process", "io-util", "sync", "time", "macros"] }
+futures-util = { version = "=0.3.34", default-features = false, features = ["sink", "std"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+log = "=0.4.34"
+url = "=2.5.8"
+eframe = { version = "=0.33.3", default-features = false, features = ["glow", "wayland", "x11"], optional = true }
+rfd = "=0.15.4"
+serialport = { version = "=4.10.1", default-features = false }
+
+[dev-dependencies]
+birdman-game-core.workspace = true
 
 [lints]
 workspace = true

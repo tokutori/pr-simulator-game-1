@@ -142,7 +142,7 @@ mod tests {
             serde_json::to_string(&value).unwrap()
         );
         assert_ne!(recorded, serde_json::to_value(value).unwrap());
-        let directory = crate::app::native_storage::tests::Directory::new();
+        let directory = crate::app::test_support::Directory::new();
         let mut world = World::new();
         world.insert_resource(ApplicationTrace::create(&directory.0).unwrap());
         let input = ApplicationObservation {

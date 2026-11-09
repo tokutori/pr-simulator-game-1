@@ -8,12 +8,8 @@ mod flight_devices;
 mod mip_filter;
 #[path = "native_assets.rs"]
 mod native_assets;
-#[path = "native_controller.rs"]
-mod native_controller;
 #[path = "native_runtime.rs"]
 mod native_runtime;
-#[path = "native_storage.rs"]
-mod native_storage;
 #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
 #[path = "native_xr.rs"]
 mod native_xr;
@@ -26,6 +22,9 @@ mod projection;
 mod screen_render;
 #[path = "terrain_haze.rs"]
 mod terrain_haze;
+#[cfg(test)]
+#[path = "test_support.rs"]
+mod test_support;
 #[path = "ui.rs"]
 mod ui;
 #[cfg(feature = "verify-harness")]
@@ -138,10 +137,10 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "verify-harness")]
     let keyboard_directory = verification
         .keyboard_config_directory()
-        .map_or_else(native_storage::keyboard_config_directory, Ok);
+        .map_or_else(birdman_game_host::storage_io::keyboard_config_directory, Ok);
     #[cfg(not(feature = "verify-harness"))]
-    let keyboard_directory = native_storage::keyboard_config_directory();
-    let storage = native_storage::NativeStorage::new(directory, keyboard_directory)?;
+    let keyboard_directory = birdman_game_host::storage_io::keyboard_config_directory();
+    let storage = birdman_game_host::storage_io::NativeStorage::new(directory, keyboard_directory)?;
     let font_bytes = match font_path {
         Some(path) => std::fs::read(&path).map_err(|error| {
             format!("指定した日本語fontを読めない: {} ({error})", path.display())
@@ -180,7 +179,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     app.add_plugins(plugins)
         .add_plugins(UiMaterialPlugin::<ui::DirectionMaterial>::default())
         .add_plugins(bevy::input_focus::tab_navigation::TabNavigationPlugin)
-        .insert_resource(storage)
+        .insert_resource(native_runtime::NativeStorageResource(storage))
         .init_resource::<native_runtime::NativeInputs>()
         .init_resource::<native_runtime::NativeIo>();
     native_assets::register(&mut app);

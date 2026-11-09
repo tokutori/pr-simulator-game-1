@@ -17,6 +17,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[derive(Resource)]
+pub(crate) struct NativeStorageResource(pub(crate) birdman_game_host::storage_io::NativeStorage);
+
 #[derive(Clone, Resource)]
 pub(crate) struct NativeRuntime(Arc<Mutex<ApplicationRuntime>>);
 
@@ -76,14 +79,14 @@ impl NativeRuntime {
 const MAX_MAIN_CONTINUATIONS: usize = 64;
 
 struct ControllerState {
-    transport: super::native_controller::NativeControllerIo,
+    transport: birdman_game_host::controller_io::NativeControllerIo,
     wakes: BTreeMap<u32, f64>,
     main: VecDeque<ApplicationOutput>,
     failure: Option<String>,
 }
 struct ControllerShared {
     state: Mutex<ControllerState>,
-    signal: Arc<super::native_controller::NativeIoSignal>,
+    signal: Arc<birdman_game_host::controller_io::NativeIoSignal>,
     stopping: AtomicBool,
     epoch: Instant,
     actual_clock: bool,
@@ -94,10 +97,13 @@ struct ControllerDriver {
 }
 impl ControllerDriver {
     fn start(runtime: NativeRuntime, epoch: Instant, actual_clock: bool) -> Result<Self, String> {
-        let signal = Arc::new(super::native_controller::NativeIoSignal::default());
+        let signal = Arc::new(birdman_game_host::controller_io::NativeIoSignal::default());
         let shared = Arc::new(ControllerShared {
             state: Mutex::new(ControllerState {
-                transport: super::native_controller::NativeControllerIo::new(epoch, signal.clone()),
+                transport: birdman_game_host::controller_io::NativeControllerIo::new(
+                    epoch,
+                    signal.clone(),
+                ),
                 wakes: BTreeMap::new(),
                 main: VecDeque::new(),
                 failure: None,
@@ -662,7 +668,8 @@ fn apply_output(
             }
         }
         if let Some(inputs) = world
-            .resource_mut::<super::native_storage::NativeStorage>()
+            .resource_mut::<NativeStorageResource>()
+            .0
             .execute(&request)
         {
             queue.extend(inputs);

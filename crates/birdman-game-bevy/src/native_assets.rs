@@ -38,7 +38,7 @@ fn display_adjustment_shader_path() -> AssetPath<'static> {
 mod tests {
     use super::*;
     use crate::app::{
-        native_storage::tests::Directory as TestDirectory, terrain_haze::TerrainHazeExtension,
+        terrain_haze::TerrainHazeExtension, test_support::Directory as TestDirectory,
         ui::DirectionMaterial, water::WaterMaterial,
     };
     use bevy::{

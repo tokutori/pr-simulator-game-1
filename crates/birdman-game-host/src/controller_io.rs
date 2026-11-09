@@ -30,20 +30,30 @@ const STDERR_BYTES: usize = 8192;
 
 /// OS I/O notification only; the shared owner continues to authorize every wake/input.
 #[derive(Default)]
-pub(crate) struct NativeIoSignal {
+pub struct NativeIoSignal {
     version: Mutex<u64>,
     changed: Condvar,
+    async_changed: tokio::sync::Notify,
 }
 impl NativeIoSignal {
-    pub(crate) fn snapshot(&self) -> u64 {
+    /// Returns the raw notification version.
+    pub fn snapshot(&self) -> u64 {
         *self.version.lock().expect("Native I/O signal poisoned")
     }
-    pub(crate) fn notify(&self) {
+    /// Wakes an observer after new OS work.
+    pub fn notify(&self) {
         let mut version = self.version.lock().expect("Native I/O signal poisoned");
         *version = version.wrapping_add(1);
         self.changed.notify_all();
+        self.async_changed.notify_one();
     }
-    pub(crate) fn wait(&self, observed: u64, timeout: Option<Duration>) {
+    /// Waits asynchronously for raw OS work; a notification permit closes arrival races.
+    pub async fn notified(&self) {
+        self.async_changed.notified().await;
+    }
+
+    /// Waits for new OS work or the supplied bounded interval.
+    pub fn wait(&self, observed: u64, timeout: Option<Duration>) {
         let version = self.version.lock().expect("Native I/O signal poisoned");
         match timeout {
             Some(timeout) => drop(
@@ -84,9 +94,12 @@ impl CompletionPublisher {
     }
 }
 
-pub(crate) struct NativeControllerCompletion {
-    pub(crate) observed_ms: f64,
-    pub(crate) observation: ControllerIoObservation,
+/// One raw OS transport completion using the original host clock.
+pub struct NativeControllerCompletion {
+    /// Original receipt time from the shared host epoch.
+    pub observed_ms: f64,
+    /// Raw transport result for canonical authorization.
+    pub observation: ControllerIoObservation,
 }
 struct Worker {
     requests: mpsc::Sender<(u64, Vec<u8>)>,
@@ -103,14 +116,16 @@ impl Worker {
     }
 }
 
-pub(crate) struct NativeControllerIo {
+/// Bounded OS controller transports, without application or renderer ownership.
+pub struct NativeControllerIo {
     epoch: Instant,
     workers: BTreeMap<u64, Worker>,
     sender: CompletionPublisher,
     completions: mpsc::Receiver<NativeControllerCompletion>,
 }
 impl NativeControllerIo {
-    pub(crate) fn new(epoch: Instant, signal: Arc<NativeIoSignal>) -> Self {
+    /// Creates OS transports using the shared host epoch.
+    pub fn new(epoch: Instant, signal: Arc<NativeIoSignal>) -> Self {
         let (sender, completions) = mpsc::channel(COMPLETION_CAPACITY);
         let sender = CompletionPublisher { sender, signal };
         Self {
@@ -120,7 +135,8 @@ impl NativeControllerIo {
             completions,
         }
     }
-    pub(crate) fn submit(&mut self, request: ControllerIoRequest) -> Result<(), String> {
+    /// Submits one owner-authorized native transport request.
+    pub fn submit(&mut self, request: ControllerIoRequest) -> Result<(), String> {
         if self.completions.is_closed() {
             return Err("Controller transport has shut down".into());
         }
@@ -207,7 +223,8 @@ impl NativeControllerIo {
             }
         }
     }
-    pub(crate) fn poll(&mut self) -> Vec<NativeControllerCompletion> {
+    /// Drains completed raw OS observations.
+    pub fn poll(&mut self) -> Vec<NativeControllerCompletion> {
         let mut result = Vec::new();
         while let Ok(completion) = self.completions.try_recv() {
             result.push(completion);
@@ -224,7 +241,8 @@ impl NativeControllerIo {
         }
         result
     }
-    pub(crate) fn close_all(&mut self) {
+    /// Closes and joins all OS resources.
+    pub fn close_all(&mut self) {
         for worker in self.workers.values_mut() {
             worker.stop();
         }

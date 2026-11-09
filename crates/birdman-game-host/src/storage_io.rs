@@ -6,7 +6,6 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use bevy::{ecs as bevy_ecs, prelude::Resource};
 use birdman_game_app::record_persistence::{
     RecordPreviewObservation, RecordPreviewRequest, RecordPreviewRow, RecordWriteObservation,
     RecordWriteRequest,
@@ -60,8 +59,8 @@ struct WriteTransaction {
     created: Vec<PathBuf>,
 }
 
-#[derive(Resource)]
-pub(crate) struct NativeStorage {
+/// Transactional native file storage shared by graphical and headless hosts.
+pub struct NativeStorage {
     directory: PathBuf,
     keyboard_directory: Result<PathBuf, String>,
     writes: BTreeMap<u32, WriteTransaction>,
@@ -69,10 +68,8 @@ pub(crate) struct NativeStorage {
 }
 
 impl NativeStorage {
-    pub(crate) fn new(
-        directory: PathBuf,
-        keyboard_directory: io::Result<PathBuf>,
-    ) -> io::Result<Self> {
+    /// Opens bounded transactional storage in the explicit directory.
+    pub fn new(directory: PathBuf, keyboard_directory: io::Result<PathBuf>) -> io::Result<Self> {
         fs::create_dir_all(&directory)?;
         Ok(Self {
             directory: directory.canonicalize()?,
@@ -82,10 +79,8 @@ impl NativeStorage {
         })
     }
 
-    pub(crate) fn execute(
-        &mut self,
-        request: &ApplicationRequest,
-    ) -> Option<Vec<ApplicationInput>> {
+    /// Executes one storage request and returns its typed completion.
+    pub fn execute(&mut self, request: &ApplicationRequest) -> Option<Vec<ApplicationInput>> {
         match request {
             ApplicationRequest::ReadConfiguration {
                 document,
@@ -302,7 +297,7 @@ impl NativeStorage {
                     });
                     if failed {
                         if let Err(cause) = self.abort(*request_id) {
-                            bevy::log::error!("Record rollback cleanup: {cause}");
+                            log::error!("Record rollback cleanup: {cause}");
                         }
                         break;
                     }
@@ -802,7 +797,8 @@ impl NativeStorage {
 }
 
 /// User settings remain independent of the current working/export directory.
-pub(crate) fn keyboard_config_directory() -> io::Result<PathBuf> {
+/// Resolves the native user configuration directory.
+pub fn keyboard_config_directory() -> io::Result<PathBuf> {
     let environment = |name| {
         std::env::var_os(name)
             .filter(|value| !value.is_empty())

@@ -59,13 +59,16 @@ impl NativeStorageWorker {
         })
     }
 
-    pub(crate) fn submit(&self, request: ApplicationRequest) -> Result<(), ApplicationRequest> {
+    pub(crate) fn submit(
+        &self,
+        request: ApplicationRequest,
+    ) -> Result<(), Box<ApplicationRequest>> {
         let Some(sender) = &self.requests else {
-            return Err(request);
+            return Err(Box::new(request));
         };
         sender.try_send(request).map_err(|error| match error {
             mpsc::TrySendError::Full(request) | mpsc::TrySendError::Disconnected(request) => {
-                request
+                Box::new(request)
             }
         })
     }
