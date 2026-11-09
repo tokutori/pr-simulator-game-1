@@ -227,6 +227,7 @@ pub(super) struct RemoteSession {
     url: String,
     platform: super::ApplicationPlatformObservation,
     socket_id: Option<u32>,
+    connection_lifetime: u32,
     stage: ConnectionStage,
     peer: Option<super::wire::PeerScope>,
     role: super::wire::ApplicationPeerRole,
@@ -248,9 +249,15 @@ pub(super) struct RemoteSession {
     pending_download: Option<PendingDownload>,
     export_authorized: bool,
     downloads: BTreeMap<u32, u32>,
+    configuration_reads: BTreeMap<u32, ConfigurationRead>,
+    upload: Option<Upload>,
+    next_upload: u64,
     adopted_frame: Option<AcceptedFrame>,
     retired_transfer: u64,
+    acknowledged_buffers: std::collections::BTreeSet<super::ApplicationBufferKey>,
     view_changed: bool,
+    canonical_view: Option<Arc<birdman_game_presentation::game_ui::GameUiView>>,
+    retry_after_close: bool,
     grants: BTreeMap<u64, super::wire::ActivationGrant>,
     shutdown: super::shutdown::ShutdownOwner,
     diagnostic: Option<String>,
@@ -280,6 +287,7 @@ impl RemoteSession {
             url,
             platform,
             socket_id: None,
+            connection_lifetime: 0,
             stage: ConnectionStage::Opening,
             peer: None,
             role: super::wire::ApplicationPeerRole::Mirror,
@@ -301,9 +309,15 @@ impl RemoteSession {
             pending_download: None,
             export_authorized: false,
             downloads: BTreeMap::new(),
+            configuration_reads: BTreeMap::new(),
+            upload: None,
+            next_upload: 0,
             adopted_frame: None,
             retired_transfer: 0,
+            acknowledged_buffers: std::collections::BTreeSet::new(),
             view_changed: false,
+            canonical_view: None,
+            retry_after_close: false,
             grants: BTreeMap::new(),
             shutdown: super::shutdown::ShutdownOwner::default(),
             diagnostic: None,
@@ -320,6 +334,7 @@ impl RemoteSession {
         }
         let socket_id = endpoint.allocate_request()?;
         self.socket_id = Some(socket_id);
+        self.connection_lifetime = socket_id;
         requests.push(super::ApplicationRequest::NetworkOpen {
             socket_id,
             url: self.url.clone(),
@@ -340,7 +355,7 @@ impl RemoteSession {
             self.wake = Some(request_id);
             requests.push(super::ApplicationRequest::ScheduleWake {
                 request_id,
-                at_ms: self.observed_ms + 250.0,
+                at_ms: self.observed_ms + super::wire::HEARTBEAT_INTERVAL_MS,
                 realtime: false,
             });
         }
@@ -352,16 +367,32 @@ impl RemoteSession {
         message: super::wire::ClientMessage,
         requests: &mut Vec<super::ApplicationRequest>,
     ) -> Result<(), WireError> {
+        self.send_payload(
+            super::ApplicationNetworkData::Text {
+                text: super::wire::encode_client(&message)?,
+            },
+            requests,
+        )
+    }
+
+    fn send_payload(
+        &mut self,
+        payload: super::ApplicationNetworkData,
+        requests: &mut Vec<super::ApplicationRequest>,
+    ) -> Result<(), WireError> {
         if !matches!(
             self.stage,
             ConnectionStage::Welcoming | ConnectionStage::Connected
         ) {
             return Err(WireError::Invalid("remote socket is not open"));
         }
-        let text = super::wire::encode_client(&message)?;
+        let length = match &payload {
+            super::ApplicationNetworkData::Text { text } => text.len(),
+            super::ApplicationNetworkData::Binary { bytes } => bytes.len(),
+        };
         let bytes = self
             .queued_bytes
-            .checked_add(text.len())
+            .checked_add(length)
             .ok_or(WireError::Invalid("remote send byte counter overflow"))?;
         if self.sends.len() >= 64
             || bytes.saturating_add(self.socket_buffered_bytes)
@@ -373,14 +404,14 @@ impl RemoteSession {
             .next_send
             .checked_add(1)
             .ok_or(WireError::Invalid("remote send identity is exhausted"))?;
-        self.sends.insert(self.next_send, text.len());
+        self.sends.insert(self.next_send, length);
         self.queued_bytes = bytes;
         requests.push(super::ApplicationRequest::NetworkSend {
             socket_id: self
                 .socket_id
                 .ok_or(WireError::Invalid("remote socket is absent"))?,
             send_id: self.next_send,
-            payload: super::ApplicationNetworkData::Text { text },
+            payload,
         });
         Ok(())
     }
@@ -501,7 +532,8 @@ impl RemoteSession {
         self.view_changed = true;
         endpoint.surface.retire_input();
         let view_revision = view.view_revision;
-        endpoint.retained = Some(view);
+        self.canonical_view = Some(Arc::clone(&view));
+        self.view_changed |= endpoint.project_retained(view);
         self.send(
             super::wire::ClientMessage::ViewAck {
                 peer,
@@ -542,19 +574,6 @@ impl RemoteSession {
         if publication.frame_id <= previous_id {
             return Err(WireError::Invalid("remote frame identity did not advance"));
         }
-        let retained = endpoint
-            .asset_leases
-            .pinned_bytes_with(self.retained_snapshots())
-            .saturating_add(
-                self.pending_assets
-                    .as_ref()
-                    .map_or(0, |assets| assets.reserved_bytes),
-            );
-        let pending = PendingFrame::new(
-            publication,
-            APPLICATION_RENDER_PINNED_BYTES.saturating_sub(retained),
-            |manifest| self.known_snapshot(endpoint, manifest),
-        )?;
         if let Some(previous) = self.pending_frame.take() {
             self.retired_transfer = self
                 .retired_transfer
@@ -569,6 +588,19 @@ impl RemoteSession {
                 requests,
             )?;
         }
+        let retained = endpoint
+            .asset_leases
+            .pinned_bytes_with(self.retained_snapshots())
+            .saturating_add(
+                self.pending_assets
+                    .as_ref()
+                    .map_or(0, |assets| assets.reserved_bytes),
+            );
+        let pending = PendingFrame::new(
+            publication,
+            APPLICATION_RENDER_PINNED_BYTES.saturating_sub(retained),
+            |manifest| self.known_snapshot(endpoint, manifest),
+        )?;
         self.pending_frame = Some(pending);
         self.finish_frame(requests)
     }
@@ -621,6 +653,8 @@ impl RemoteSession {
             },
             requests,
         )?;
+        self.acknowledged_buffers
+            .extend(publication.buffers.iter().map(|manifest| manifest.key));
         self.adopted_frame = Some(AcceptedFrame {
             publication,
             buffers,
@@ -817,6 +851,7 @@ impl RemoteSession {
                 WireError::Invalid("remote resource offer no longer matches its request")
             })?;
         if prepared.is_empty() {
+            self.acknowledged_buffers.clear();
             self.send(
                 super::wire::ClientMessage::ReleaseAssets {
                     peer,
@@ -982,15 +1017,18 @@ impl RemoteSession {
 
     fn retire_export(&mut self) {
         self.export_authorized = false;
+        self.configuration_reads.clear();
+        self.upload = None;
         if let Some(download) = self.pending_download.take() {
             self.retired_transfer = self.retired_transfer.max(download.manifest.transfer_id);
         }
-        self.downloads.clear();
     }
 
     fn retire_incomplete(&mut self) {
         self.retire_export();
+        self.downloads.clear();
         self.requested_resources.clear();
+        self.acknowledged_buffers.clear();
         if let Some(frame) = self.pending_frame.take() {
             self.retired_transfer = self
                 .retired_transfer
@@ -1072,15 +1110,23 @@ impl RemoteSession {
                 request_id,
                 cause,
             } if self.scope_matches(peer) => {
-                self.diagnostic = Some(cause);
+                self.requested_resources.remove(&request_id);
                 if endpoint
-                    .resources
-                    .as_ref()
-                    .is_some_and(|pending| pending.request_id == request_id)
+                    .remote_resources_failed(request_id, &cause, self.observed_ms)
+                    .map_err(|_| {
+                        WireError::Invalid("resource failure did not match its graphics request")
+                    })?
                 {
-                    endpoint.boot =
-                        super::boot::BootOwner::Failed("表示資源を準備できない。".to_owned());
+                    self.acknowledged_buffers.clear();
+                    self.send(
+                        super::wire::ClientMessage::ReleaseAssets {
+                            peer,
+                            resource_epoch: request_id,
+                        },
+                        requests,
+                    )?;
                 }
+                self.diagnostic = Some(cause);
             }
             Message::Pong { peer } if self.scope_matches(peer) => {}
             Message::Closed { peer, cause } if self.scope_matches(peer) => {
@@ -1211,13 +1257,7 @@ impl RemoteSession {
         let Some(peer) = self.peer else {
             return Ok(());
         };
-        let resource_epoch = endpoint
-            .resources
-            .as_ref()
-            .filter(|resources| {
-                resources.completed && endpoint.last_ready_resources == Some(resources.key)
-            })
-            .map(|resources| resources.request_id);
+        let resource_epoch = endpoint.last_ready_request;
         let next = EndpointStatus {
             resource_epoch,
             mode: endpoint.display.state().active_mode(),
@@ -1243,6 +1283,10 @@ impl RemoteSession {
             },
             requests,
         )?;
+        if let Some(epoch) = next.resource_epoch {
+            self.acknowledged_buffers
+                .extend(endpoint.asset_leases.resource_keys(epoch));
+        }
         self.endpoint_status = Some((next, presentation));
         Ok(())
     }
@@ -1254,6 +1298,11 @@ impl RemoteSession {
         endpoint: &super::endpoint::ApplicationEndpoint,
         manifest: &BufferManifest,
     ) -> Result<BufferSnapshot, WireError> {
+        if !self.acknowledged_buffers.contains(&manifest.key) {
+            return Err(WireError::Invalid(
+                "omitted buffer has not been acknowledged in this connection",
+            ));
+        }
         let snapshot = self
             .adopted_frame
             .iter()
@@ -1286,7 +1335,10 @@ impl RemoteSession {
         super::ApplicationRuntimeError,
     > {
         use super::ApplicationInput as Input;
-        let super::ApplicationObservation { observed_ms, input } = observation;
+        let super::ApplicationObservation {
+            observed_ms,
+            mut input,
+        } = observation;
         if !observed_ms.is_finite() || observed_ms < self.observed_ms {
             self.diagnostic = Some(format!(
                 "Observation timestamp rejected: raw={observed_ms} last={}",
@@ -1304,8 +1356,15 @@ impl RemoteSession {
             birdman_game_presentation::screen_render_auto::ScreenRenderScope::Background,
             |view| view.scene.screen_render_scope(),
         );
-        let effects =
+        let mut effects =
             endpoint.observe_presentation(&input, self.observed_ms, scope, &mut requests)?;
+        let terminal = endpoint.observe_terminal(&input, terminal_admitted);
+        effects
+            .retired_resource_epochs
+            .extend(terminal.retired_resource_epochs);
+        if terminal.diagnostic.is_some() {
+            effects.diagnostic = terminal.diagnostic;
+        }
         if let Some(diagnostic) = effects.diagnostic {
             self.diagnostic = Some(diagnostic);
         }
@@ -1313,22 +1372,23 @@ impl RemoteSession {
             self.start(endpoint, &mut requests)?;
         }
         if let Err(error) = self.network_observation(endpoint, &input, &mut requests) {
-            self.close(error.to_string(), &mut requests);
+            let cause = error.to_string();
+            endpoint.boot.fail(Some(&cause));
+            self.close(cause, &mut requests);
         }
         if self.stage == ConnectionStage::Closed && !self.shutdown.closed() {
             endpoint.surface.retire_input();
+            if self.retry_after_close {
+                self.restart(endpoint, &mut requests)?;
+            } else if !matches!(endpoint.boot, super::boot::BootOwner::Failed(_)) {
+                endpoint.boot.fail(self.diagnostic.as_deref());
+            }
         }
         match &input {
             Input::Dispose | Input::PageHide { persisted: false } => {
                 let renderer = endpoint.close_presentation(&mut requests);
                 requests.extend(self.shutdown.begin(renderer));
                 self.close("Session ended".to_owned(), &mut requests);
-            }
-            Input::RendererReleased {
-                renderer_resource_id,
-                ..
-            } if terminal_admitted => {
-                endpoint.asset_leases.retire_renderer(*renderer_resource_id);
             }
             Input::Platform { observation } => {
                 self.platform = observation.clone();
@@ -1352,7 +1412,8 @@ impl RemoteSession {
                     self.stage,
                     ConnectionStage::Closing | ConnectionStage::Closed
                 ) {
-                    if self.observed_ms - self.last_received_ms > 5_000.0 {
+                    if self.observed_ms - self.last_received_ms > super::wire::CONNECTION_TIMEOUT_MS
+                    {
                         self.close("Remote host heartbeat timed out".to_owned(), &mut requests);
                     } else if let Some(peer) = self.peer {
                         if let Err(error) = self.send(
@@ -1370,8 +1431,13 @@ impl RemoteSession {
             }
             _ => {}
         }
+        self.complete_configuration(&mut input, &mut requests)?;
+        self.pump_upload(&mut requests).map_err(|_| {
+            super::ApplicationRuntimeError::SpatialInput("configuration upload could not advance")
+        })?;
         let keyboard_consumed = self.forward_input(endpoint, &input, &mut requests)?;
         for resource_epoch in effects.retired_resource_epochs {
+            self.acknowledged_buffers.clear();
             if self.stage == ConnectionStage::Connected
                 && let Some(peer) = self.peer
             {
@@ -1405,6 +1471,8 @@ impl RemoteSession {
         if !self.shutdown.closed() {
             endpoint.synchronize_phone(self.observed_ms, false, &mut requests)?;
             endpoint.synchronize_graphics(scope, self.observed_ms)?;
+            endpoint.complete_boot(false);
+            endpoint.project_platform();
             if matches!(endpoint.boot, super::boot::BootOwner::Initial) {
                 let request_id = endpoint.allocate_request()?;
                 requests.push(endpoint.boot.start(request_id));
@@ -1436,6 +1504,33 @@ impl RemoteSession {
                 }
             }
         }
+        if effects.frame_admitted
+            && let Input::Frame {
+                spatial,
+                timestamp_ms,
+                ..
+            } = &input
+        {
+            if let Some(surface) = endpoint.observe_surface_frame(spatial.clone(), *timestamp_ms)? {
+                let action = if surface.back {
+                    endpoint
+                        .retained
+                        .as_ref()
+                        .and_then(|view| view.back_action.clone())
+                } else {
+                    surface.input.map(|input| {
+                        birdman_game_presentation::game_ui::GameUiAction::ControlInput { input }
+                    })
+                };
+                if let Some(action) = action {
+                    self.forward_action(endpoint, surface.view_revision, action, &mut requests)?;
+                }
+                endpoint.project_platform();
+            }
+        }
+        if let Some(view) = &self.canonical_view {
+            self.view_changed |= endpoint.project_retained(Arc::clone(view));
+        }
         let redraw = !matches!(
             input,
             Input::BuffersConsumed { .. }
@@ -1449,6 +1544,7 @@ impl RemoteSession {
         } else {
             None
         };
+        self.prune_known(endpoint);
         let work = endpoint.presentation_work.take();
         self.shutdown.requests(&requests);
         if let Some(request) = self.shutdown.release_renderer() {
@@ -1461,7 +1557,7 @@ impl RemoteSession {
     fn output(
         &mut self,
         drawing: Option<super::ApplicationDrawingOutput>,
-        requests: Vec<super::ApplicationRequest>,
+        mut requests: Vec<super::ApplicationRequest>,
         keyboard_consumed: bool,
     ) -> super::ApplicationOutput {
         let mut lifecycle = self.shutdown.lifecycle();
@@ -1469,6 +1565,11 @@ impl RemoteSession {
             && self.stage != ConnectionStage::Closed
         {
             lifecycle = super::ApplicationLifecycle::Closing;
+        }
+        if lifecycle == super::ApplicationLifecycle::Drained
+            && let Some(request) = self.shutdown.take_reload()
+        {
+            requests.push(request);
         }
         super::ApplicationOutput {
             drawing,
@@ -1498,6 +1599,7 @@ impl RemoteSession {
         Ok(super::PresentationScope {
             structure: super::PresentationSourceScope::Remote {
                 connection_epoch: peer.connection_epoch,
+                connection_lifetime: self.connection_lifetime,
                 view_revision: view.view_revision,
                 interaction_scope: view.interaction_scope.clone(),
             },
@@ -1557,9 +1659,7 @@ impl RemoteSession {
         } else {
             None
         };
-        let drawable = renderer.is_some()
-            && endpoint.assets.aircraft_identity()
-                == Some(accepted.publication.scene.aircraft_identity);
+        let drawable = endpoint.ready_for(&accepted.publication.scene);
         let result = endpoint.compose_drawing(
             &accepted.publication.scene,
             projection,
@@ -1658,6 +1758,71 @@ impl RemoteSession {
         let GameUiAction::Platform { command } = action else {
             return Ok(false);
         };
+        if matches!(command, Command::ReloadApplication {}) {
+            self.shutdown.request_reload();
+            let renderer = endpoint.close_presentation(requests);
+            requests.extend(self.shutdown.begin(renderer));
+            self.close("Application reload requested".to_owned(), requests);
+            return Ok(true);
+        }
+        if let Command::LoadConfiguration { document } = command {
+            if self.role != super::wire::ApplicationPeerRole::Operator || self.upload.is_some() {
+                return Err(super::ApplicationRuntimeError::Ui(
+                    birdman_game_presentation::game_ui::GameUiError::ActionUnavailable,
+                ));
+            }
+            let grant_id = self.grants.iter().find_map(|(id, grant)| {
+                (grant.view_revision == view_revision && matches!(&grant.operation,
+                    super::wire::ActivationOperation::PickConfiguration { document: granted, .. } if granted == document)).then_some(*id)
+            }).ok_or(super::ApplicationRuntimeError::Ui(birdman_game_presentation::game_ui::GameUiError::ActionUnavailable))?;
+            let grant = self
+                .grants
+                .remove(&grant_id)
+                .expect("admitted picker grant");
+            let super::wire::ActivationOperation::PickConfiguration {
+                request_id: server_id,
+                maximum_bytes,
+                ..
+            } = grant.operation
+            else {
+                unreachable!("picker operation checked")
+            };
+            if maximum_bytes as usize > document.maximum_source_bytes() {
+                return Err(super::ApplicationRuntimeError::SpatialInput(
+                    "picker grant exceeds its document contract",
+                ));
+            }
+            let request_id = endpoint.allocate_request()?;
+            self.send(
+                super::wire::ClientMessage::Activate {
+                    actor: grant.actor,
+                    grant_id,
+                    view_revision,
+                    control_id: grant.control_id,
+                },
+                requests,
+            )
+            .map_err(|_| {
+                super::ApplicationRuntimeError::SpatialInput(
+                    "picker activation claim could not be queued",
+                )
+            })?;
+            self.configuration_reads.insert(
+                request_id,
+                ConfigurationRead {
+                    server_id,
+                    document: *document,
+                    actor: grant.actor,
+                    maximum_bytes,
+                },
+            );
+            requests.push(super::ApplicationRequest::PickConfiguration {
+                document: *document,
+                request_id,
+                maximum_bytes,
+            });
+            return Ok(true);
+        }
         if matches!(
             command,
             Command::DownloadFlightCsv {}
@@ -1705,13 +1870,44 @@ impl RemoteSession {
         requests: &mut Vec<super::ApplicationRequest>,
     ) -> Result<bool, super::ApplicationRuntimeError> {
         use super::ApplicationInput as Input;
-        if self.shutdown.closed() || self.stage != ConnectionStage::Connected {
+        if self.shutdown.closed() {
             return Ok(false);
         }
         let Some(view) = endpoint.retained.as_ref() else {
             return Ok(false);
         };
         let revision = view.view_revision;
+        let look_enabled = self
+            .adopted_frame
+            .as_ref()
+            .is_some_and(|frame| frame.publication.scene.look_enabled());
+        if endpoint.observe_camera_pointer(input, look_enabled)? {
+            return Ok(false);
+        }
+
+        if let Input::Control {
+            view_revision,
+            input: birdman_game_presentation::game_ui::GameUiControlInput::Activate { control_id },
+        } = input
+            && *view_revision == revision
+            && matches!(endpoint.boot, super::boot::BootOwner::Failed(_))
+        {
+            if control_id == "game-boot-retry" {
+                if matches!(
+                    self.stage,
+                    ConnectionStage::Closing | ConnectionStage::Closed
+                ) {
+                    self.retry_after_close = true;
+                    if self.stage == ConnectionStage::Closed {
+                        self.restart(endpoint, requests)?;
+                    }
+                } else {
+                    endpoint.retry_boot(requests);
+                }
+                self.view_changed = true;
+                return Ok(false);
+            }
+        }
         if let Input::Control {
             view_revision,
             input,
@@ -1728,18 +1924,35 @@ impl RemoteSession {
                 return Ok(false);
             }
         }
+        if self.stage != ConnectionStage::Connected {
+            return Ok(false);
+        }
         if let Input::DownloadCompleted {
             request_id,
             failure,
         } = input
         {
             if let Some(server_id) = self.downloads.remove(request_id) {
-                self.send_canonical(
-                    super::wire::CanonicalInput::Observation {
-                        input: Box::new(Input::DownloadCompleted {
+                if let Some(peer) = self.peer {
+                    if let Err(error) = self.send(
+                        super::wire::ClientMessage::DownloadCompleted {
+                            peer,
                             request_id: server_id,
                             failure: failure.clone(),
-                        }),
+                        },
+                        requests,
+                    ) {
+                        self.close(error.to_string(), requests);
+                    }
+                }
+            }
+            return Ok(false);
+        }
+        if let Input::Frame { gamepads, .. } = input {
+            if self.role == super::wire::ApplicationPeerRole::Operator {
+                self.send_canonical(
+                    super::wire::CanonicalInput::FlightDevices {
+                        gamepads: gamepads.clone(),
                     },
                     revision,
                     requests,
@@ -1754,10 +1967,6 @@ impl RemoteSession {
                 | Input::ChartMeasured { .. }
                 | Input::Keyboard { .. }
                 | Input::PhysicalKey { .. }
-                | Input::Frame { .. }
-                | Input::DocumentFocus { .. }
-                | Input::PageVisibility { .. }
-                | Input::PageHide { persisted: true }
         );
         if canonical
             && (self.role == super::wire::ApplicationPeerRole::Operator
@@ -1815,6 +2024,7 @@ impl RemoteSession {
         }
         if let Some(peer) = self.peer {
             for resource_epoch in epochs {
+                self.acknowledged_buffers.clear();
                 if let Err(error) = self.send(
                     super::wire::ClientMessage::ReleaseAssets {
                         peer,
@@ -1828,5 +2038,178 @@ impl RemoteSession {
             }
         }
         Ok(())
+    }
+}
+
+struct ConfigurationRead {
+    server_id: u32,
+    document: birdman_game_format::ConfigurationDocumentKind,
+    actor: super::wire::ActorScope,
+    maximum_bytes: u32,
+}
+struct Upload {
+    manifest: super::wire::TransferManifest,
+    bytes: Vec<u8>,
+    offset: usize,
+}
+
+impl RemoteSession {
+    fn complete_configuration(
+        &mut self,
+        input: &mut super::ApplicationInput,
+        requests: &mut Vec<super::ApplicationRequest>,
+    ) -> Result<(), super::ApplicationRuntimeError> {
+        let super::ApplicationInput::ConfigurationLoaded {
+            document,
+            request_id,
+            completion,
+        } = input
+        else {
+            return Ok(());
+        };
+        let Some(read) = self.configuration_reads.remove(request_id) else {
+            return Ok(());
+        };
+        let Some(peer) = self.peer else {
+            return Ok(());
+        };
+        if read.document != *document
+            || read.actor
+                != (super::wire::ActorScope {
+                    peer,
+                    role_generation: self.role_generation,
+                })
+            || self.stage != ConnectionStage::Connected
+            || self.role != super::wire::ApplicationPeerRole::Operator
+        {
+            return Ok(());
+        }
+        use super::{ApplicationConfigurationLoad as Load, wire::ConfigurationResult as Result};
+        let result = match completion {
+            Load::Missing => Result::Missing,
+            Load::Cancelled => Result::Cancelled,
+            Load::Failed { cause } => Result::Failed {
+                cause: cause.clone(),
+            },
+            Load::Found { bytes } => {
+                if bytes.len() > read.maximum_bytes as usize || self.upload.is_some() {
+                    Result::Failed {
+                        cause: "Configuration bytes exceed the admitted operation".to_owned(),
+                    }
+                } else {
+                    self.next_upload = self
+                        .next_upload
+                        .checked_add(1)
+                        .ok_or(super::ApplicationRuntimeError::RequestExhausted)?;
+                    let manifest = super::wire::TransferManifest {
+                        transfer_id: self.next_upload,
+                        kind: if *document
+                            == birdman_game_format::ConfigurationDocumentKind::ControllerExecution
+                        {
+                            BinaryKind::GuestProgram
+                        } else {
+                            BinaryKind::Configuration
+                        },
+                        local_id: read.server_id,
+                        revision: 0,
+                        byte_length: bytes.len() as u32,
+                    };
+                    self.upload = Some(Upload {
+                        manifest: manifest.clone(),
+                        bytes: std::mem::take(bytes),
+                        offset: 0,
+                    });
+                    Result::Found { transfer: manifest }
+                }
+            }
+        };
+        let revision = self
+            .adopted_frame
+            .as_ref()
+            .map_or(0, |frame| frame.publication.view_revision);
+        self.send_canonical(
+            super::wire::CanonicalInput::ConfigurationLoaded {
+                document: *document,
+                request_id: read.server_id,
+                completion: result,
+            },
+            revision,
+            requests,
+        )
+    }
+
+    fn pump_upload(
+        &mut self,
+        requests: &mut Vec<super::ApplicationRequest>,
+    ) -> Result<(), WireError> {
+        let Some(mut upload) = self.upload.take() else {
+            return Ok(());
+        };
+        while upload.offset < upload.bytes.len() {
+            let length =
+                (upload.bytes.len() - upload.offset).min(super::APPLICATION_NETWORK_CHUNK_BYTES);
+            if self.sends.len() >= 64
+                || self
+                    .queued_bytes
+                    .saturating_add(self.socket_buffered_bytes)
+                    .saturating_add(length + super::APPLICATION_NETWORK_HEADER_BYTES)
+                    > super::APPLICATION_NETWORK_TX_CREDIT_BYTES
+            {
+                break;
+            }
+            let header = BinaryHeader {
+                kind: upload.manifest.kind,
+                transfer_id: upload.manifest.transfer_id,
+                local_id: upload.manifest.local_id,
+                revision: upload.manifest.revision,
+                offset: upload.offset as u64,
+                total_len: upload.manifest.byte_length,
+                chunk_len: length as u32,
+            };
+            let bytes = header.encode(&upload.bytes[upload.offset..upload.offset + length])?;
+            self.send_payload(super::ApplicationNetworkData::Binary { bytes }, requests)?;
+            upload.offset += length;
+        }
+        if upload.offset < upload.bytes.len() {
+            self.upload = Some(upload);
+        }
+        Ok(())
+    }
+}
+
+impl RemoteSession {
+    fn prune_known(&mut self, endpoint: &super::endpoint::ApplicationEndpoint) {
+        self.acknowledged_buffers.retain(|key| {
+            self.adopted_frame
+                .iter()
+                .flat_map(|frame| &frame.buffers)
+                .any(|buffer| buffer.buffer_id == key.buffer_id && buffer.revision == key.revision)
+                || endpoint.asset_leases.snapshot(*key).is_some()
+        });
+    }
+}
+
+impl RemoteSession {
+    fn restart(
+        &mut self,
+        endpoint: &mut super::endpoint::ApplicationEndpoint,
+        requests: &mut Vec<super::ApplicationRequest>,
+    ) -> Result<(), super::ApplicationRuntimeError> {
+        if self.stage != ConnectionStage::Closed {
+            return Ok(());
+        }
+        self.retry_after_close = false;
+        self.peer = None;
+        self.role = super::wire::ApplicationPeerRole::Mirror;
+        self.role_generation = 0;
+        self.sequence = 0;
+        self.retired_transfer = 0;
+        self.adopted_frame = None;
+        self.endpoint_status = None;
+        self.keyboard_consumption = None;
+        self.last_received_ms = self.observed_ms;
+        self.stage = ConnectionStage::Opening;
+        endpoint.retry_boot(requests);
+        self.start(endpoint, requests)
     }
 }

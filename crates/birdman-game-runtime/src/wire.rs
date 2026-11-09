@@ -16,6 +16,9 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, num::NonZeroU64, sync::Arc};
 
 pub(super) const PROTOCOL_VERSION: u32 = 1;
+pub(super) const HEARTBEAT_INTERVAL_MS: f64 = 250.0;
+pub(super) const CONNECTION_TIMEOUT_MS: f64 = 5_000.0;
+pub(super) const OPERATOR_INPUT_TIMEOUT_MS: f64 = 1_000.0;
 const MAGIC: [u8; 4] = *b"BPGN";
 const _: () = assert!(APPLICATION_NETWORK_HEADER_BYTES == 40);
 
@@ -234,6 +237,7 @@ pub(super) enum ConfigurationResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum CanonicalInput {
+    FlightDevices { gamepads: Vec<super::ApplicationGamepadObservation> },
     Action { action: GameUiAction },
     Observation {
         input: Box<ApplicationInput>,
@@ -321,6 +325,11 @@ pub(super) enum ClientMessage {
     ReleaseAssets {
         peer: PeerScope,
         resource_epoch: u32,
+    },
+    DownloadCompleted {
+        peer: PeerScope,
+        request_id: u32,
+        failure: Option<String>,
     },
     Activate {
         actor: ActorScope,

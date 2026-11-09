@@ -72,6 +72,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); capture.driver = 
 
 async function browserFixture(phoneSensors: "probe" | "permission" | null = null, xr?: XRSystem) {
   const browser = new Window({ url: "http://localhost/" });
+  Object.defineProperty(browser, "isSecureContext", { value: true });
   browser.innerWidth = 1280;
   browser.innerHeight = 720;
   browser.document.documentElement.lang = "ja";
