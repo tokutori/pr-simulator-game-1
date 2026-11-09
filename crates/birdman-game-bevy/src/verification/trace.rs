@@ -158,6 +158,7 @@ mod tests {
             observed.clone(),
             fonts.clone(),
             &ApplicationOutput {
+                ui_input_enabled: true,
                 drawing: None,
                 lifecycle: birdman_game_runtime::ApplicationLifecycle::Running,
                 diagnostic: None,

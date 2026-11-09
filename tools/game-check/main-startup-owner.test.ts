@@ -153,7 +153,7 @@ describe("Single browser runtime ownership", () => {
     const fixture = await browserFixture(null, undefined, hostUrl);
     const available = (id: string): HappyButtonElement => {
       const button = fixture.browser.document.querySelector<HappyButtonElement>(`[data-control-id="${id}"]`);
-      if (button === null || button.disabled) throw new Error(`Unavailable actual Host control: ${id}`);
+      if (button === null || button.disabled || button.closest('[inert], [aria-disabled="true"]') !== null) throw new Error(`Unavailable actual Host control: ${id}`);
       return button;
     };
     try {

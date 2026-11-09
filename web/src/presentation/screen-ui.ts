@@ -34,6 +34,7 @@ export class ScreenUiAdapter {
   private currentVNode: VNode;
   private controls = new Map<string, GameUiControl>();
   private visible = true;
+  private inputEnabled = true;
   private retainedDom: RetainedScreenDom | null = null;
   private currentViewModel: GameUiView | null = null;
   private frame: GameUiFrame | null = null;
@@ -81,6 +82,14 @@ export class ScreenUiAdapter {
     this.currentViewModel = null;
     this.frame = null;
     this.mount.remove();
+    for (const input of released) this.dispatch(input);
+  }
+
+  setInputEnabled(enabled: boolean): void {
+    const released = this.inputEnabled && !enabled ? this.releasePointers() : [];
+    this.inputEnabled = enabled;
+    this.mount.toggleAttribute("inert", !this.visible || !enabled);
+    this.mount.setAttribute("aria-disabled", String(!enabled));
     for (const input of released) this.dispatch(input);
   }
 
@@ -132,7 +141,7 @@ export class ScreenUiAdapter {
       h("small.build-version", APP_BUILD_LABEL)
     ]);
     const nextVNode = h("div.screen-ui-mount", {
-      attrs: { hidden: !visible, inert: !visible, "aria-hidden": String(!visible) }
+      attrs: { hidden: !visible, inert: !visible || !this.inputEnabled, "aria-hidden": String(!visible), "aria-disabled": String(!this.inputEnabled) }
     }, [shell, ...viewModel.panels.flatMap(panel => panel.controls.filter(control => control.content.kind === "flight_touch").map(control => this.createControl(control)))]);
     this.currentVNode = patch(this.currentVNode, nextVNode);
     if (scopeChanged) {
@@ -214,7 +223,7 @@ export class ScreenUiAdapter {
   };
 
   private readonly onPointerDown = (event: PointerEvent): void => {
-    if (!this.visible || this.currentViewModel === null) return;
+    if (!this.visible || !this.inputEnabled || this.currentViewModel === null) return;
     const element = eventElement(event, this.root)?.closest("[data-pointer-control-id], .screen-ui-chart-viewport");
     const controlId = element?.getAttribute("data-pointer-control-id") ?? element?.getAttribute("data-chart-control-id");
     if (element == null || controlId == null) return;
@@ -317,7 +326,7 @@ export class ScreenUiAdapter {
   };
 
   private readonly onClick = (event: Event): void => {
-    if (!this.visible) return;
+    if (!this.visible || !this.inputEnabled) return;
     const target = eventElement(event, this.root);
     const button = target?.closest("button[data-control-id]");
     const controlId = button?.getAttribute("data-control-id");
@@ -328,7 +337,7 @@ export class ScreenUiAdapter {
   };
 
   private readonly onChange = (event: Event): void => {
-    if (!this.visible) return;
+    if (!this.visible || !this.inputEnabled) return;
     const input = eventElement(event, this.root);
     if (input?.tagName !== "INPUT" || input.getAttribute("type") !== "checkbox") return;
     const controlId = input.getAttribute("data-control-id");
@@ -340,7 +349,7 @@ export class ScreenUiAdapter {
   };
 
   private readonly onInput = (event: Event): void => {
-    if (!this.visible) return;
+    if (!this.visible || !this.inputEnabled) return;
     const input = eventElement(event, this.root);
     if (input?.tagName !== "INPUT" || input.getAttribute("type") !== "range") return;
     const controlId = input.getAttribute("data-control-id");

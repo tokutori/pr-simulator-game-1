@@ -35,6 +35,9 @@ struct Client {
     gamepads: Vec<ApplicationGamepadObservation>,
     aircraft_position: Option<[f64; 3]>,
     consumed_frame_revision: Option<u32>,
+    ui_input_enabled: bool,
+    hold_frame_after_revision: Option<u32>,
+    held_frame: Option<ApplicationInput>,
     lifecycle: ApplicationLifecycle,
     diagnostic: Option<String>,
     host: HostServiceHandle,
@@ -88,6 +91,9 @@ impl Client {
             gamepads: Vec::new(),
             aircraft_position: None,
             consumed_frame_revision: None,
+            ui_input_enabled: true,
+            hold_frame_after_revision: None,
+            held_frame: None,
             lifecycle: ApplicationLifecycle::Running,
             diagnostic: None,
             host: handle,
@@ -127,6 +133,7 @@ impl Client {
     }
     fn accept(&mut self, output: ApplicationOutput) {
         self.lifecycle = output.lifecycle;
+        self.ui_input_enabled = output.ui_input_enabled;
         if output.diagnostic.is_some() {
             self.diagnostic = output.diagnostic;
         }
@@ -370,7 +377,36 @@ impl Client {
         let runtime = &mut self.runtime;
         let epoch = self.epoch;
         let wire_trace = &mut self.wire_trace;
+        let hold_after = &mut self.hold_frame_after_revision;
+        let held_frame = &mut self.held_frame;
         self.network.poll(|input| {
+            if let ApplicationInput::NetworkMessage {
+                payload: ApplicationNetworkData::Text { text },
+                ..
+            } = &input
+                && hold_after.is_some()
+                && text.starts_with("{\"kind\":\"frame\"")
+            {
+                let packet: serde_json::Value = serde_json::from_str(text).unwrap();
+                if packet["publication"]["view_revision"].as_u64().unwrap()
+                    > u64::from(hold_after.unwrap())
+                {
+                    assert!(
+                        packet["publication"]["buffers"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .all(|buffer| buffer["transfer_id"].is_null()),
+                        "same-scene role-change Frame must reuse adopted buffer revisions"
+                    );
+                    assert!(
+                        held_frame.replace(input).is_none(),
+                        "only one Frame may be held"
+                    );
+                    *hold_after = None;
+                    return;
+                }
+            }
             match &input {
                 ApplicationInput::NetworkMessage {
                     payload: ApplicationNetworkData::Text { text },
@@ -428,14 +464,16 @@ impl Client {
         let action = birdman_game_presentation::game_ui::GameUiAction::Session {
             command: command.clone(),
         };
-        self.view.as_ref().is_some_and(|view| {
-            view.panels
-                .iter()
-                .flat_map(|panel| &panel.controls)
-                .any(|control| {
-                    control.enabled && control.content.activation_action().as_ref() == Some(&action)
-                })
-        })
+        self.ui_input_enabled
+            && self.view.as_ref().is_some_and(|view| {
+                view.panels
+                    .iter()
+                    .flat_map(|panel| &panel.controls)
+                    .any(|control| {
+                        control.enabled
+                            && control.content.activation_action().as_ref() == Some(&action)
+                    })
+            })
     }
     fn activate(&mut self, command: SessionCommand) -> String {
         self.control(command.clone()).unwrap_or_else(|| {
@@ -641,7 +679,12 @@ fn browser_io_journey(handle: &HostServiceHandle, url: &str) {
     };
     assert!(
         result.is_ok() && cleanup.is_ok(),
-        "Browser I/O result={result:?}; terminal={cleanup:?}"
+        "Browser I/O result={result:?}; terminal={cleanup:?}; host={:?}; diagnostic={:?}",
+        handle.snapshot().application,
+        handle
+            .snapshot()
+            .diagnostic
+            .map(|message| message.chars().take(512).collect::<String>())
     );
     while !handle.snapshot().application.peers.is_empty() {
         assert!(
@@ -790,6 +833,34 @@ fn shared_host_scopes_two_actual_native_connections_and_software_buffers() {
             .view
             .as_ref()
             .is_some_and(|view| view.view_revision > retired_view_revision)
+            && clients[operator].can_activate(&SessionCommand::ReturnToTitle {})
+    });
+    let synchronized_revision = clients[operator].view.as_ref().unwrap().view_revision;
+    clients[operator].hold_frame_after_revision = Some(synchronized_revision);
+    clients[operator].platform.viewport.width += 1.0;
+    let observation = clients[operator].platform.clone();
+    clients[operator].observe(ApplicationInput::Platform { observation });
+    until(&mut clients, |clients| {
+        clients[operator].held_frame.is_some()
+    });
+    assert!(
+        !clients[operator].ui_input_enabled,
+        "a new View alone does not enable stale controls"
+    );
+    assert!(
+        clients[operator]
+            .control(SessionCommand::ReturnToTitle {})
+            .is_none(),
+        "the real Runtime must emit no canonical packet for the old rendered Control"
+    );
+    let held = clients[operator].held_frame.take().unwrap();
+    clients[operator].observe(held);
+    until(&mut clients, |clients| {
+        clients[operator].ui_input_enabled
+            && clients[operator]
+                .view
+                .as_ref()
+                .is_some_and(|view| view.view_revision > synchronized_revision)
             && clients[operator].can_activate(&SessionCommand::ReturnToTitle {})
     });
     let return_packet = clients[operator].activate(SessionCommand::ReturnToTitle {});

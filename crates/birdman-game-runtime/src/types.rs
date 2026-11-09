@@ -985,6 +985,8 @@ pub struct ApplicationDrawingOutput {
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationOutput {
+    /// The displayed UI revision is ready for activation in its current input scope.
+    pub ui_input_enabled: bool,
     /// Absent for synchronous I/O continuations that leave the visible state unchanged.
     pub drawing: Option<ApplicationDrawingOutput>,
     /// The executable owner can be released only after this becomes Drained.

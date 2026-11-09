@@ -904,6 +904,7 @@ fn apply_output(
             },
         }
     }
+    super::ui::set_input_enabled(world, output.ui_input_enabled);
     if let Some(drawing) = output.drawing {
         let submitted = super::ui::submit(world, &drawing)
             .and_then(|()| super::world::submit(world, runtime, &drawing));

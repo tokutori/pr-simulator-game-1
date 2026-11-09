@@ -1317,6 +1317,7 @@ impl LocalRuntime {
             requests.push(request);
         }
         ApplicationOutput {
+            ui_input_enabled: !self.authority.shutdown.closed(),
             drawing,
             lifecycle: self.authority.shutdown.lifecycle(),
             diagnostic: self

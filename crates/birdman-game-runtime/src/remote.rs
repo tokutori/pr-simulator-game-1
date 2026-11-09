@@ -256,6 +256,7 @@ pub(super) struct RemoteSession {
     retired_transfer: u64,
     view_changed: bool,
     canonical_view: Option<Arc<birdman_game_presentation::game_ui::GameUiView>>,
+    view_role_generation: u64,
     retry_after_close: bool,
     grants: BTreeMap<u64, super::wire::ActivationGrant>,
     shutdown: super::shutdown::ShutdownOwner,
@@ -315,6 +316,7 @@ impl RemoteSession {
             retired_transfer: 0,
             view_changed: false,
             canonical_view: None,
+            view_role_generation: 0,
             retry_after_close: false,
             grants: BTreeMap::new(),
             shutdown: super::shutdown::ShutdownOwner::default(),
@@ -528,6 +530,7 @@ impl RemoteSession {
         endpoint.surface.retire_input();
         let view_revision = view.view_revision;
         self.canonical_view = Some(Arc::clone(&view));
+        self.view_role_generation = self.role_generation;
         self.view_changed |= endpoint.project_retained(view);
         self.send(
             super::wire::ClientMessage::ViewAck {
@@ -1323,7 +1326,7 @@ impl RemoteSession {
                 self.observed_ms
             ));
             if matches!(input, Input::Frame { .. }) {
-                return Ok((self.output(None, Vec::new(), false), None));
+                return Ok((self.output(endpoint, None, Vec::new(), false), None));
             }
         } else {
             self.observed_ms = observed_ms;
@@ -1361,6 +1364,10 @@ impl RemoteSession {
             } else if !matches!(endpoint.boot, super::boot::BootOwner::Failed(_)) {
                 endpoint.boot.fail(self.diagnostic.as_deref());
             }
+        }
+        if !self.ui_input_enabled(endpoint) {
+            endpoint.surface.retire_input();
+            endpoint.retire_camera_pointer(false);
         }
         match &input {
             Input::Dispose | Input::PageHide { persisted: false } => {
@@ -1484,7 +1491,8 @@ impl RemoteSession {
                 }
             }
         }
-        if effects.frame_admitted
+        if self.ui_input_enabled(endpoint)
+            && effects.frame_admitted
             && let Input::Frame {
                 spatial,
                 timestamp_ms,
@@ -1536,11 +1544,15 @@ impl RemoteSession {
             self.shutdown.requests(std::slice::from_ref(&request));
             requests.push(request);
         }
-        Ok((self.output(drawing, requests, keyboard_consumed), work))
+        Ok((
+            self.output(endpoint, drawing, requests, keyboard_consumed),
+            work,
+        ))
     }
 
     fn output(
         &mut self,
+        endpoint: &super::endpoint::ApplicationEndpoint,
         drawing: Option<super::ApplicationDrawingOutput>,
         mut requests: Vec<super::ApplicationRequest>,
         keyboard_consumed: bool,
@@ -1557,12 +1569,24 @@ impl RemoteSession {
             requests.push(request);
         }
         super::ApplicationOutput {
+            ui_input_enabled: self.ui_input_enabled(endpoint),
             drawing,
             requests,
             keyboard_consumed,
             lifecycle,
             diagnostic: self.diagnostic.take(),
         }
+    }
+
+    fn ui_input_enabled(&self, endpoint: &super::endpoint::ApplicationEndpoint) -> bool {
+        !self.shutdown.closed()
+            && (endpoint.boot.active()
+                || (self.view_role_generation == self.role_generation
+                    && self.canonical_view.as_ref().is_some_and(|view| {
+                        self.adopted_frame.as_ref().is_some_and(|frame| {
+                            frame.publication.view_revision == view.view_revision
+                        })
+                    })))
     }
 
     fn scope(
@@ -1708,6 +1732,9 @@ impl RemoteSession {
         requests: &mut Vec<super::ApplicationRequest>,
     ) -> Result<(), super::ApplicationRuntimeError> {
         use birdman_game_presentation::game_ui::GameUiAction;
+        if !self.ui_input_enabled(endpoint) && !Self::cleanup_action(&action) {
+            return Ok(());
+        }
         if let GameUiAction::ControlInput { input } = action {
             self.forward_input(
                 endpoint,
@@ -1730,6 +1757,19 @@ impl RemoteSession {
             )?;
         }
         Ok(())
+    }
+
+    fn cleanup_action(action: &birdman_game_presentation::game_ui::GameUiAction) -> bool {
+        use birdman_game_presentation::game_ui::{GameUiAction, GameUiPlatformCommand};
+        matches!(
+            action,
+            GameUiAction::Platform {
+                command: GameUiPlatformCommand::ReloadApplication {}
+                    | GameUiPlatformCommand::SetPresentation {
+                        mode: birdman_game_presentation::game_ui::GameUiPresentationMode::Screen
+                    }
+            }
+        )
     }
 
     fn local_action(
@@ -1862,6 +1902,35 @@ impl RemoteSession {
             return Ok(false);
         };
         let revision = view.view_revision;
+        let cleanup = if let Input::Control {
+            view_revision,
+            input,
+        } = input
+            && *view_revision == revision
+        {
+            view.control_input_action(input)
+                .map_err(super::ApplicationRuntimeError::Ui)?
+                .as_ref()
+                .is_some_and(Self::cleanup_action)
+        } else {
+            false
+        };
+        if !self.ui_input_enabled(endpoint)
+            && !cleanup
+            && matches!(
+                input,
+                Input::Control { .. }
+                    | Input::ControlPointer {
+                        phase: super::ApplicationPointerPhase::Down
+                            | super::ApplicationPointerPhase::Move,
+                        ..
+                    }
+                    | Input::Keyboard { pressed: true, .. }
+                    | Input::PhysicalKey { pressed: true, .. }
+            )
+        {
+            return Ok(false);
+        }
         let look_enabled = self
             .adopted_frame
             .as_ref()

@@ -106,6 +106,7 @@ export class BrowserApplication {
     try {
       const output = JSON.parse(owner.update(JSON.stringify({ observed_ms: performance.now(), input }), this.measure)) as ApplicationOutput;
       this.output = output;
+      this.screen.setInputEnabled(output.ui_input_enabled);
       const drawing = output.drawing;
       const renderingFailures = new Map<number, unknown[]>();
       const failed = (id: number | null | undefined, cause: unknown): void => {

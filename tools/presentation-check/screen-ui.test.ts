@@ -212,12 +212,25 @@ describe("Screen DOM adapter", () => {
       }) as unknown as PointerEvent);
       pointer("pointerdown", 73, 1);
       pointer("pointermove", 940, 1);
+      adapter.setInputEnabled(false);
+      expect(required(root, ".screen-ui-mount").hasAttribute("inert")).toBe(true);
+      expect(required(root, ".screen-ui-mount").getAttribute("aria-disabled")).toBe("true");
+      adapter.setInputEnabled(false);
       pointer("pointerup", 940, 0);
       expect(actions.map(input => input.kind === "control_pointer" ? [input.phase, input.position[0], input.buttons] : input.kind))
-        .toEqual([["down", 73, 1], ["move", 940, 1], ["up", 940, 0]]);
+        .toEqual([["down", 73, 1], ["move", 940, 1], ["lost_capture", 940, 1]]);
       expect(actions[0]).toMatchObject({ kind: "control_pointer", view_revision: view.view_revision, control_id: control.id,
         pointer_id: { low: 7, high: 0 }, is_primary: true, rect: [17, 29, 813, 417] });
       expect(release).toHaveBeenCalledWith(7);
+      actions.length = 0;
+      pointer("pointerdown", 73, 1);
+      expect(actions).toEqual([]);
+      adapter.setInputEnabled(true);
+      pointer("pointerdown", 73, 1);
+      adapter.setInputEnabled(false);
+      pointer("pointercancel", 73, 0);
+      expect(actions.map(input => input.kind === "control_pointer" ? input.phase : input.kind)).toEqual(["down", "lost_capture"]);
+      adapter.setInputEnabled(true);
       actions.length = 0;
       pointer("pointerdown", 73, 1);
       adapter.render(view, false);

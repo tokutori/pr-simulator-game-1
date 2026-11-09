@@ -3315,6 +3315,10 @@ export interface ApplicationOutput {
      * Ordered I/O requests to execute at the platform boundary.
      */
     readonly requests: readonly ApplicationRequest[];
+    /**
+     * The displayed UI revision is ready for activation in its current input scope.
+     */
+    readonly ui_input_enabled: boolean;
     readonly [k: string]: unknown | undefined;
 }
 /**

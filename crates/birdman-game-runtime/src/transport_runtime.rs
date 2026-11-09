@@ -544,6 +544,7 @@ impl Discovery {
             requests.push(request);
         }
         Ok(ApplicationOutput {
+            ui_input_enabled: !self.shutdown.closed(),
             drawing: Some(drawing),
             requests,
             keyboard_consumed: false,
