@@ -1692,6 +1692,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "birdman-game-host"
+version = "0.1.0"
+dependencies = [
+ "birdman-game-runtime",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "birdman-game-presentation"
 version = "0.1.0"
 dependencies = [
@@ -1722,6 +1732,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sha2",
  "time",
  "vstd",
 ]

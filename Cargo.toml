@@ -20,6 +20,7 @@ birdman-game-app = { path = "crates/birdman-game-app" }
 birdman-game-core = { path = "crates/birdman-game-core" }
 birdman-game-content = { path = "crates/birdman-game-content" }
 birdman-game-format = { path = "crates/birdman-game-format" }
+birdman-game-host = { path = "crates/birdman-game-host" }
 birdman-game-presentation = { path = "crates/birdman-game-presentation" }
 birdman-game-runtime = { path = "crates/birdman-game-runtime" }
 birdman-game-scene = { path = "crates/birdman-game-scene" }

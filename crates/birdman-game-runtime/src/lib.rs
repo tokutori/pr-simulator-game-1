@@ -13,6 +13,8 @@ mod frame_rate;
 #[cfg(not(verus_only))]
 mod gamepad;
 #[cfg(not(verus_only))]
+mod generated_contract;
+#[cfg(not(verus_only))]
 mod geometry;
 #[cfg(not(verus_only))]
 mod graphics;
@@ -39,6 +41,8 @@ pub use assets::{
 pub use boot::{ApplicationRendererCreation, application_startup_html};
 #[cfg(not(verus_only))]
 pub use gamepad::ApplicationGamepadObservation;
+#[cfg(not(verus_only))]
+pub use generated_contract::APPLICATION_CONTRACT_SHA256;
 #[cfg(not(verus_only))]
 pub use geometry::{
     ApplicationBufferDescriptor, ApplicationBufferSlice, ApplicationBufferType,

@@ -9,6 +9,10 @@ export async function generateApplicationFiles(document: unknown): Promise<reado
   }
   const schema = document["schema"];
   const startup = document["startup"];
+  const contractSha256 = document["contract_sha256"];
+  if (typeof contractSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(contractSha256)) {
+    throw new Error("Missing shared application contract fingerprint");
+  }
   if (typeof startup["loading_html"] !== "string" || typeof startup["failure_html"] !== "string") {
     throw new Error("Missing shared startup markup");
   }
@@ -18,7 +22,8 @@ export async function generateApplicationFiles(document: unknown): Promise<reado
   });
   return [
     { path: "web/src/generated/application-contracts.ts", content: `/* Generated from birdman-game-runtime. */\n${readonlyDeclarations(declarations)}` },
-    { path: "web/src/generated/application-startup.ts", content: `/* Generated from birdman-game-runtime. */\nexport const APPLICATION_LOADING_HTML = ${JSON.stringify(startup["loading_html"])};\nexport const APPLICATION_FAILURE_HTML = ${JSON.stringify(startup["failure_html"])};\n` }
+    { path: "web/src/generated/application-startup.ts", content: `/* Generated from birdman-game-runtime. */\nexport const APPLICATION_LOADING_HTML = ${JSON.stringify(startup["loading_html"])};\nexport const APPLICATION_FAILURE_HTML = ${JSON.stringify(startup["failure_html"])};\n` },
+    { path: "crates/birdman-game-runtime/src/generated_contract.rs", content: `// Generated from birdman-game-runtime's canonical application schema.\n/// SHA-256 of the canonical aggregate ApplicationContract schema.\npub const APPLICATION_CONTRACT_SHA256: &str =\n    "${contractSha256}";\n` }
   ];
 }
 
