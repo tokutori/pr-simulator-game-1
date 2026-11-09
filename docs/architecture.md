@@ -83,7 +83,7 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 - ホスト: `ApplicationServer`が一つのcanonical authorityと接続ごとの認可を所有する。変更Viewの受理ACK後に対応Frameを送り、操作担当を一接続に限定する。head tracking・camera・描画資源は各Endpointで処理する。
 - CPU資源準備: runtimeが検証済みの不変sourceからScene・中立frame・画像の所有workを発行し、Hostは未採用結果を含め一件の有界workerで実行する。source・世代・peer/requestの再認可後に同じCatalogでIDを採番して現在のposeを投影し、取消・obsolete結果の回収と有界なworker終端確認を行う。
 - 管理: Bevyと管理アプリはHostServiceの同じsnapshotとtyped commandを使う。Bevy自機も同じRemote ownerとwireを通るlocal peerとして接続し、listener停止中も自機とauthorityを保持する。
-- 転送: Hostは受理時刻、socket、原文bytes、送信受付・完了を通知する。role世代・入力認可・heartbeat・資源の採用・再接続はruntimeが決定し、buffer転送はrevisionごとの完全なmanifestとchunkを照合する。
+- 転送: Hostは受理時刻、socket、原文bytes、送信受付・完了を通知する。role世代・入力認可・heartbeat・資源の採用・再接続はruntimeが決定し、buffer転送はrevisionごとの完全なmanifestとchunkを照合する。外部実装の接続・message・binary framingは[WebSocketサーバー契約](websocket-server.md)に定める。
 - 同版Web配布: 一回生成したWeb bundleを6種類のNativeアーカイブへ同梱する。全manifest列挙fileの長さ・hash・MIMEとsource/contractを配信開始前に検証し、検証済み不変bytesを同じHTTP/TLS listenerから配る。Pagesは同source/contractから独立buildする。
 - TLS: 証明書と秘密鍵はホストの明示設定とし、クライアントは通常の証明書・hostname検証を行う。ブラウザーのsecure context条件も適用する。
 
