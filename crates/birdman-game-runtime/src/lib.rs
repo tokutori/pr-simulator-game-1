@@ -811,7 +811,11 @@ impl ApplicationRuntime {
             ApplicationInput::DocumentFocus { focused } => {
                 self.document_focused = focused;
                 if !focused {
-                    self.application.invalidate_flight_input();
+                    if self.presentation_input_focused() {
+                        self.application.retire_surface_flight_input();
+                    } else {
+                        self.application.invalidate_flight_input();
+                    }
                     if self.display.state().active_mode() != Some(GameUiPresentationMode::Hmd) {
                         self.surface.retire_input();
                     }
@@ -1092,7 +1096,7 @@ impl ApplicationRuntime {
                     if !self.display.state().pending() {
                         let flight_gamepads: Vec<_> = gamepads
                             .iter()
-                            .filter(|_| self.document_focused)
+                            .filter(|_| self.presentation_input_focused())
                             .filter_map(ApplicationGamepadObservation::flight)
                             .collect();
                         self.controller_gamepads.clone_from(&flight_gamepads);

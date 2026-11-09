@@ -459,15 +459,23 @@ impl FlightInputState {
         }
     }
 
-    /// Retires observations after focus loss, reset or a changed input owner.
-    pub(crate) fn invalidate(&mut self) {
-        self.pilot_stop_observed = false;
-        self.pilot_rearm_pending = None;
-        self.touch = None;
+    /// Retires surface controls while preserving physical gamepad acquisition and protective stops.
+    pub(crate) fn retire_surface(&mut self) {
+        self.retire_touch();
         self.held_keys = 0;
         self.accepted_keys = 0;
         self.accepted_action_keys = 0;
         self.keyboard_ramp = [0.0; 2];
+        if self.pilot_rearm_pending == Some(PilotRearmSource::Keyboard) {
+            self.pilot_rearm_pending = None;
+        }
+    }
+
+    /// Retires observations after focus loss, reset or a changed input owner.
+    pub(crate) fn invalidate(&mut self) {
+        self.retire_surface();
+        self.pilot_stop_observed = false;
+        self.pilot_rearm_pending = None;
         self.rearm_gamepad();
     }
 

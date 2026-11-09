@@ -75,6 +75,11 @@ impl ApplicationSession {
         self.flight_input.touch_generation()
     }
 
+    /// Retires held keyboard and touch controls while retaining the physical gamepad owner.
+    pub fn retire_surface_flight_input(&mut self) {
+        self.flight_input.retire_surface();
+    }
+
     /// Retires held controls and rearms gamepad takeover after an input-owner reset.
     pub fn invalidate_flight_input(&mut self) {
         self.flight_input.invalidate();

@@ -4348,6 +4348,112 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
         ));
         assert!(output.drawing.unwrap().graphics.resource.is_some());
     }
+    // Physical gamepads follow XR focus; window blur retires only surface controls.
+    let frame = |runtime: &mut ApplicationRuntime, pitch: f64, focused: bool| {
+        let mut xr = hmd_observation(Pose::IDENTITY);
+        xr.input_focused = focused;
+        let timestamp_ms = runtime.observed_ms + 10.0;
+        runtime
+            .observe_test(ApplicationInput::Frame {
+                display_resource_id: Some(50),
+                timestamp_ms,
+                gamepads: vec![ApplicationGamepadObservation {
+                    identity: birdman_game_app::flight_input::FlightDeviceIdentity {
+                        slot_low: 7,
+                        slot_high: 0,
+                        generation: 1,
+                    },
+                    connected: true,
+                    mapping: "standard-y-up".into(),
+                    axes: vec![Some(0.0), Some(pitch), Some(0.0), Some(0.0)],
+                    buttons: vec![false; 2],
+                }],
+                xr: Some(xr),
+                spatial: Default::default(),
+            })
+            .unwrap()
+    };
+    frame(&mut runtime, 0.0, true);
+    for command in [
+        SessionCommand::OpenSetup {},
+        SessionCommand::Prepare {},
+        SessionCommand::StartCountdown {},
+    ] {
+        runtime
+            .application
+            .execute(command, BackendReadiness::Ready)
+            .unwrap();
+    }
+    let token = runtime
+        .application
+        .core_session()
+        .countdown_token()
+        .unwrap();
+    runtime
+        .application
+        .observe_countdown(token, 3.0, true)
+        .unwrap();
+    runtime
+        .observe_test(ApplicationInput::PhysicalKey {
+            key: KeyboardKey::Up,
+            pressed: true,
+            repeat: false,
+        })
+        .unwrap();
+    assert!(runtime.application.accepted_flight_keys()[0]);
+    runtime
+        .observe_test(ApplicationInput::DocumentFocus { focused: false })
+        .unwrap();
+    assert_eq!(runtime.application.accepted_flight_keys(), [false; 13]);
+    frame(&mut runtime, 0.0, true);
+    frame(&mut runtime, 0.0, true);
+    let demand = |runtime: &ApplicationRuntime| {
+        runtime
+            .application
+            .core_session()
+            .flight_record()
+            .unwrap()
+            .samples()
+            .last()
+            .unwrap()
+            .controls
+            .input_from_previous
+            .unwrap()
+            .manual_intent()
+            .nose_up()
+    };
+    frame(&mut runtime, 0.54, true);
+    assert!(demand(&runtime) > 0.0);
+    runtime
+        .observe_test(ApplicationInput::DocumentFocus { focused: true })
+        .unwrap();
+    runtime
+        .observe_test(ApplicationInput::DocumentFocus { focused: false })
+        .unwrap();
+    frame(&mut runtime, 0.54, true);
+    assert!(demand(&runtime) > 0.0);
+    runtime
+        .observe_test(ApplicationInput::XrSessionState {
+            resource_id: 50,
+            visibility: XrVisibility::Visible,
+            input_focused: false,
+        })
+        .unwrap();
+    assert!(matches!(
+        runtime.application.core_session().snapshot().phase(),
+        SessionPhase::FlightPaused { .. }
+    ));
+    frame(&mut runtime, 0.54, true);
+    runtime
+        .application
+        .execute(SessionCommand::Resume {}, BackendReadiness::Ready)
+        .unwrap();
+    frame(&mut runtime, 0.54, true);
+    frame(&mut runtime, 0.54, true);
+    assert_eq!(demand(&runtime), 0.0);
+    frame(&mut runtime, 0.0, true);
+    frame(&mut runtime, 0.54, true);
+    assert!(demand(&runtime) > 0.0);
 }
 
 #[test]
