@@ -1586,6 +1586,8 @@ impl RemoteSession {
                     && self.canonical_view.as_ref().is_some_and(|view| {
                         self.adopted_frame.as_ref().is_some_and(|frame| {
                             frame.publication.view_revision == view.view_revision
+                                && frame.publication.resource_epoch
+                                    == endpoint.last_ready_request.unwrap_or(0)
                         })
                     })))
     }
