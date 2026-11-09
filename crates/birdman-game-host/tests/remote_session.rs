@@ -438,7 +438,7 @@ impl Client {
         })
     }
     fn activate(&mut self, command: SessionCommand) -> String {
-        self.control(command.clone(), true).unwrap_or_else(|| {
+        self.control(command.clone()).unwrap_or_else(|| {
             let view = self.view.as_ref().map(|view| (view.scene, view.view_revision, &view.interaction_scope));
             let sent: Vec<_> = self.sent.iter().rev().take(4)
                 .map(|text| text.chars().take(256).collect::<String>()).collect();
@@ -456,7 +456,7 @@ impl Client {
             .as_ref()
             .is_some_and(|view| view.scene == GameUiScene::Flight && view.active_overlay.is_none())
     }
-    fn control(&mut self, command: SessionCommand, require_enabled: bool) -> Option<String> {
+    fn control(&mut self, command: SessionCommand) -> Option<String> {
         let view = self.view.as_ref().expect("published view");
         let action = birdman_game_presentation::game_ui::GameUiAction::Session { command };
         let control_id = view
@@ -464,8 +464,7 @@ impl Client {
             .iter()
             .flat_map(|panel| &panel.controls)
             .find(|control| {
-                (!require_enabled || control.enabled)
-                    && control.content.activation_action().as_ref() == Some(&action)
+                control.enabled && control.content.activation_action().as_ref() == Some(&action)
             })
             .unwrap()
             .id
@@ -914,7 +913,41 @@ fn shared_host_scopes_two_actual_native_connections_and_software_buffers() {
     let neutral_guard = Instant::now() + Duration::from_millis(100);
     until(&mut clients, |_| Instant::now() >= neutral_guard);
     assert!(!clients[operator].can_activate(&SessionCommand::Resume {}));
-    clients[operator].control(SessionCommand::Resume {}, false);
+    let view = clients[operator].view.as_ref().unwrap();
+    let resume_control = view
+        .panels
+        .iter()
+        .flat_map(|panel| &panel.controls)
+        .find(|control| {
+            control.content.activation_action()
+                == Some(birdman_game_presentation::game_ui::GameUiAction::Session {
+                    command: SessionCommand::Resume {},
+                })
+        })
+        .unwrap();
+    let resume_input = ApplicationInput::Control {
+        view_revision: view.view_revision,
+        input: GameUiControlInput::Activate {
+            control_id: resume_control.id.clone(),
+        },
+    };
+    let observed_ms = epoch.elapsed().as_secs_f64() * 1000.0;
+    let rejected = clients[operator].runtime.update(
+        ApplicationObservation {
+            observed_ms,
+            input: resume_input,
+        },
+        &mut |_| panic!("Screen software consumer has no spatial font request"),
+    );
+    assert!(
+        matches!(
+            rejected,
+            Err(ApplicationRuntimeError::Ui(
+                birdman_game_presentation::game_ui::GameUiError::ActionUnavailable
+            ))
+        ),
+        "non-neutral Resume must return the shared action admission error"
+    );
     let blocked_guard = Instant::now() + Duration::from_millis(100);
     until(&mut clients, |_| Instant::now() >= blocked_guard);
     assert!(
