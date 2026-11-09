@@ -794,177 +794,271 @@ mod tests {
         .unwrap()
         .to_finalized_core_record()
         .unwrap();
-        let binary_sha256 = Sha256::digest(std::fs::read(&program).unwrap())
+        let binary_sha256: String = Sha256::digest(std::fs::read(&program).unwrap())
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
-        let document = NativeControllerDocument {
-            schema_version: 1,
-            connection: NativeControllerConnection::Sitl {
-                program: program.to_string_lossy().into_owned(),
-                arguments: Vec::new(),
-                program_id: "controller-sample-stdio".into(),
-                version: "1".into(),
-                binary_sha256,
-            },
-        };
-        let epoch = Instant::now();
-        let signal = Arc::new(NativeIoSignal::default());
-        let mut io = NativeControllerIo::new(epoch, signal.clone());
-        let mut application = ApplicationSession::default();
-        application
-            .select_controller_execution(
-                SelectedControllerExecution::decode(serde_json::to_vec(&document).unwrap())
-                    .unwrap(),
-            )
-            .unwrap();
-        application
-            .observe_presentation(PresentationObservation::Backend { ready: true })
-            .unwrap();
-        for command in [
-            SessionCommand::OpenSetup {},
-            SessionCommand::SelectWeather {
-                weather: WeatherClass::Calm,
-            },
-            SessionCommand::Prepare {},
-        ] {
+        for stall in [false, true] {
+            let document = NativeControllerDocument {
+                schema_version: 1,
+                connection: NativeControllerConnection::Sitl {
+                    program: program.to_string_lossy().into_owned(),
+                    arguments: if stall {
+                        vec!["--stall-flight-evaluate".into()]
+                    } else {
+                        Vec::new()
+                    },
+                    program_id: "controller-sample-stdio".into(),
+                    version: "1".into(),
+                    binary_sha256: binary_sha256.clone(),
+                },
+            };
+            let epoch = Instant::now();
+            let signal = Arc::new(NativeIoSignal::default());
+            let mut io = NativeControllerIo::new(epoch, signal.clone());
+            let mut application = ApplicationSession::default();
             application
-                .execute(command, BackendReadiness::Ready)
+                .select_controller_execution(
+                    SelectedControllerExecution::decode(serde_json::to_vec(&document).unwrap())
+                        .unwrap(),
+                )
                 .unwrap();
-        }
+            application
+                .observe_presentation(PresentationObservation::Backend { ready: true })
+                .unwrap();
+            for command in [
+                SessionCommand::OpenSetup {},
+                SessionCommand::SelectWeather {
+                    weather: WeatherClass::Calm,
+                },
+                SessionCommand::Prepare {},
+            ] {
+                application
+                    .execute(command, BackendReadiness::Ready)
+                    .unwrap();
+            }
 
-        let deadline = epoch + Duration::from_secs(180);
-        let mut closed = false;
-        let mut finish_written = false;
-        let mut held_boundaries = 0;
-        let mut started = false;
-        loop {
-            // These are actual OS timestamps from the same epoch as frame observations.
-            // Stream responses and write completions retain their independent ordering.
-            for completion in io.poll() {
-                assert!(completion.observed_ms <= epoch.elapsed().as_secs_f64() * 1000.0);
-                closed |= matches!(
-                    completion.observation,
-                    ControllerIoObservation::Closed { failure: None, .. }
-                );
+            let deadline = epoch + Duration::from_secs(if stall { 15 } else { 180 });
+            let mut closed = false;
+            let mut finish_written = false;
+            let mut finish_write_id = None;
+            let mut finish_sent = false;
+            let mut close_submitted = false;
+            let mut closed_tick = None;
+            let mut stalled_deadline = None;
+            let mut held_boundaries = 0;
+            let mut started = false;
+            loop {
+                // These are actual OS timestamps from the same epoch as frame observations.
+                // Stream responses and write completions retain their independent ordering.
+                for completion in io.poll() {
+                    assert!(completion.observed_ms <= epoch.elapsed().as_secs_f64() * 1000.0);
+                    if let ControllerIoObservation::Closed { failure, .. } = &completion.observation
+                    {
+                        assert!(failure.is_none(), "{failure:?}");
+                        closed = true;
+                        if stall {
+                            closed_tick = Some(
+                                application
+                                    .core_session()
+                                    .snapshot()
+                                    .tail_flight_state()
+                                    .unwrap()
+                                    .tick_index(),
+                            );
+                        }
+                    }
+                    if let ControllerIoObservation::Written { write_id, .. } =
+                        &completion.observation
+                    {
+                        finish_sent |= finish_write_id == Some(*write_id);
+                    }
+                    application
+                        .observe_controller_time(epoch.elapsed().as_secs_f64() * 1000.0)
+                        .unwrap();
+                    application
+                        .observe_controller_io(completion.observation, true)
+                        .unwrap();
+                }
                 application
                     .observe_controller_time(epoch.elapsed().as_secs_f64() * 1000.0)
                     .unwrap();
-                application
-                    .observe_controller_io(completion.observation, true)
-                    .unwrap();
+                application.observe_controller_deadline().unwrap();
+                if let Some(fault) = application.controller_fault() {
+                    assert!(stall, "{fault:?}");
+                    assert_eq!(fault.fault, ControllerFault::DeadlineMissed);
+                    assert!(epoch.elapsed().as_secs_f64() * 1000.0 >= stalled_deadline.unwrap());
+                }
+                if !started && application.controller_execution_ready() {
+                    application
+                        .observe_readiness(BackendReadiness::Ready)
+                        .unwrap();
+                    application
+                        .execute(SessionCommand::StartCountdown {}, BackendReadiness::Ready)
+                        .unwrap();
+                    let token = application.core_session().countdown_token().unwrap();
+                    application.observe_countdown(token, 3.0, true).unwrap();
+                    started = true;
+                }
+                if started && application.core_session().snapshot().phase() != SessionPhase::Result
+                {
+                    let waiting =
+                        application.controller_waiting() && !application.controller_has_candidate();
+                    let before = application
+                        .core_session()
+                        .flight_record()
+                        .unwrap()
+                        .samples()
+                        .len();
+                    application
+                        .advance_flight_frame(epoch.elapsed().as_secs_f64() * 1000.0, &[], true)
+                        .unwrap();
+                    if waiting {
+                        assert_eq!(
+                            application
+                                .core_session()
+                                .flight_record()
+                                .unwrap()
+                                .samples()
+                                .len(),
+                            before,
+                            "pending controller response must hold the physical boundary"
+                        );
+                        held_boundaries += 1;
+                    }
+                }
+                for request in application.take_controller_io() {
+                    if let ControllerIoRequest::Write {
+                        bytes, write_id, ..
+                    } = &request
+                    {
+                        let frame = ControllerFrame::decode(bytes).unwrap();
+                        if frame.header().kind == ExchangeKind::Finish {
+                            finish_written = true;
+                            finish_write_id = Some(*write_id);
+                        }
+                        if stall
+                            && frame
+                                .evaluate_payload()
+                                .is_ok_and(|observation| observation.tick > 0)
+                        {
+                            stalled_deadline = application.controller_next_deadline();
+                        }
+                    }
+                    if matches!(&request, ControllerIoRequest::Close { .. }) {
+                        assert!(finish_written);
+                        close_submitted = true;
+                    }
+                    io.submit(request).unwrap();
+                }
+                if closed
+                    && (!stall
+                        || application
+                            .core_session()
+                            .snapshot()
+                            .tail_flight_state()
+                            .unwrap()
+                            .tick_index()
+                            > closed_tick.unwrap())
+                {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "SITL natural flight/teardown exceeded acceptance bound"
+                );
+                let version = signal.snapshot();
+                signal.wait(version, Some(Duration::from_millis(1)));
             }
-            application
-                .observe_controller_time(epoch.elapsed().as_secs_f64() * 1000.0)
-                .unwrap();
-            application.observe_controller_deadline().unwrap();
-            assert!(
-                application.controller_fault().is_none(),
-                "{:?}",
-                application.controller_fault()
-            );
-            if !started && application.controller_execution_ready() {
-                application
-                    .observe_readiness(BackendReadiness::Ready)
-                    .unwrap();
-                application
-                    .execute(SessionCommand::StartCountdown {}, BackendReadiness::Ready)
-                    .unwrap();
-                let token = application.core_session().countdown_token().unwrap();
-                application.observe_countdown(token, 3.0, true).unwrap();
-                started = true;
-            }
-            if started && application.core_session().snapshot().phase() != SessionPhase::Result {
-                let waiting =
-                    application.controller_waiting() && !application.controller_has_candidate();
-                let before = application
+            assert!(started && finish_written && held_boundaries > 0 && close_submitted);
+            io.close_all();
+            assert!(io.workers.is_empty());
+            if stall {
+                assert!(finish_sent);
+                assert_eq!(
+                    application.controller_fault().unwrap().fault,
+                    ControllerFault::DeadlineMissed
+                );
+                let request = application
                     .core_session()
                     .flight_record()
                     .unwrap()
                     .samples()
-                    .len();
+                    .last()
+                    .unwrap()
+                    .controls
+                    .input_from_previous
+                    .unwrap()
+                    .commands()
+                    .external()
+                    .unwrap()
+                    .requested();
+                assert_eq!(
+                    request,
+                    birdman_game_core::TailIncidenceRequest::try_new(0.0, 0.0).unwrap()
+                );
                 application
-                    .advance_flight_frame(epoch.elapsed().as_secs_f64() * 1000.0, &[], true)
+                    .execute(SessionCommand::Abort {}, BackendReadiness::Ready)
                     .unwrap();
-                if waiting {
-                    assert_eq!(
-                        application
-                            .core_session()
-                            .flight_record()
-                            .unwrap()
-                            .samples()
-                            .len(),
-                        before,
-                        "pending controller response must hold the physical boundary"
-                    );
-                    held_boundaries += 1;
-                }
+                assert_eq!(
+                    application.core_session().snapshot().phase(),
+                    SessionPhase::Result
+                );
+                eprintln!(
+                    "SITL unresponsive guest: deadline={:?} ms, closed and neutral tick advanced in {:.3} s",
+                    stalled_deadline,
+                    epoch.elapsed().as_secs_f64()
+                );
+                continue;
             }
-            for request in application.take_controller_io() {
-                if let ControllerIoRequest::Write { bytes, .. } = &request {
-                    finish_written |= ControllerFrame::decode(bytes).unwrap().header().kind
-                        == ExchangeKind::Finish;
-                }
-                io.submit(request).unwrap();
-            }
-            if closed {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "SITL natural flight/teardown exceeded acceptance bound"
-            );
-            let version = signal.snapshot();
-            signal.wait(version, Some(Duration::from_millis(1)));
-        }
-        assert!(started && finish_written && held_boundaries > 0);
-        assert_eq!(
-            application.core_session().snapshot().phase(),
-            SessionPhase::Result
-        );
-        let actual = application.core_session().flight_record().unwrap();
-        assert_eq!(actual.samples().len(), reference.samples().len());
-        for (actual, reference) in actual.samples().iter().zip(reference.samples()) {
-            assert_eq!(actual.tick_index, reference.tick_index);
-            assert_eq!(actual.flight_state, reference.flight_state);
-            assert_eq!(actual.controls.incidence, reference.controls.incidence);
+            assert!(application.controller_fault().is_none());
             assert_eq!(
-                actual.controls.pilot_position_target_m(),
-                reference.controls.pilot_position_target_m()
+                application.core_session().snapshot().phase(),
+                SessionPhase::Result
             );
-            assert_eq!(actual.tail_wrenches, reference.tail_wrenches);
+            let actual = application.core_session().flight_record().unwrap();
+            assert_eq!(actual.samples().len(), reference.samples().len());
+            for (actual, reference) in actual.samples().iter().zip(reference.samples()) {
+                assert_eq!(actual.tick_index, reference.tick_index);
+                assert_eq!(actual.flight_state, reference.flight_state);
+                assert_eq!(actual.controls.incidence, reference.controls.incidence);
+                assert_eq!(
+                    actual.controls.pilot_position_target_m(),
+                    reference.controls.pilot_position_target_m()
+                );
+                assert_eq!(actual.tail_wrenches, reference.tail_wrenches);
+            }
+            let actual_end = actual.finalization().unwrap();
+            let reference_end = reference.finalization().unwrap();
+            assert_eq!(
+                actual_end.reason,
+                birdman_game_core::SessionEndReason::WaterContact
+            );
+            assert_eq!(actual_end.reason, reference_end.reason);
+            assert_eq!(actual_end.terminal_tick, reference_end.terminal_tick);
+            assert_eq!(
+                actual_end.terminal_fraction,
+                reference_end.terminal_fraction
+            );
+            assert_eq!(
+                actual_end.boundary_event.is_some(),
+                reference_end.boundary_event.is_some()
+            );
+            let actual_terminal = actual.terminal_sample().unwrap();
+            let reference_terminal = reference.terminal_sample().unwrap();
+            assert_eq!(
+                actual_terminal.flight_state,
+                reference_terminal.flight_state
+            );
+            assert_eq!(
+                actual_terminal.controls.incidence,
+                reference_terminal.controls.incidence
+            );
+            assert_eq!(
+                actual_terminal.tail_wrenches,
+                reference_terminal.tail_wrenches
+            );
         }
-        let actual_end = actual.finalization().unwrap();
-        let reference_end = reference.finalization().unwrap();
-        assert_eq!(
-            actual_end.reason,
-            birdman_game_core::SessionEndReason::WaterContact
-        );
-        assert_eq!(actual_end.reason, reference_end.reason);
-        assert_eq!(actual_end.terminal_tick, reference_end.terminal_tick);
-        assert_eq!(
-            actual_end.terminal_fraction,
-            reference_end.terminal_fraction
-        );
-        assert_eq!(
-            actual_end.boundary_event.is_some(),
-            reference_end.boundary_event.is_some()
-        );
-        let actual_terminal = actual.terminal_sample().unwrap();
-        let reference_terminal = reference.terminal_sample().unwrap();
-        assert_eq!(
-            actual_terminal.flight_state,
-            reference_terminal.flight_state
-        );
-        assert_eq!(
-            actual_terminal.controls.incidence,
-            reference_terminal.controls.incidence
-        );
-        assert_eq!(
-            actual_terminal.tail_wrenches,
-            reference_terminal.tail_wrenches
-        );
-        io.close_all();
     }
     #[test]
     fn split_frames_crc_and_eof_remain_transport_boundaries() {

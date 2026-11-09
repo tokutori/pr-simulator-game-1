@@ -18,6 +18,8 @@ cargo build --release --locked --lib --target wasm32-unknown-unknown
 
 stdin/stdoutは共通ABIのbinary frameだけを運び、各frameの応答後にflushする。診断はstderrへ出力する。EOFで終了し、serial用CRCはstdioへ付加しない。制御則と候補採用はWasmと同じ唯一のGuestを使う。
 
+無応答時の終了検査には `--stall-flight-evaluate` を指定する。Initとtick 0には通常応答し、tick 1以降のEvaluateで待機してホストによる期限切れ・プロセス回収を確認する。
+
 ## ABIと状態
 
 - エクスポート: `memory`、`controller_abi_version() -> i32`、`controller_buffer() -> i32`、`controller_exchange(i32) -> i32`。
