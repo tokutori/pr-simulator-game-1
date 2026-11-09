@@ -425,8 +425,13 @@ impl Client {
         })
     }
     fn activate(&mut self, command: SessionCommand) -> String {
-        self.control(command, true)
-            .expect("actual generated control packet")
+        self.control(command.clone(), true).unwrap_or_else(|| {
+            let view = self.view.as_ref().map(|view| (view.scene, view.view_revision, &view.interaction_scope));
+            let sent: Vec<_> = self.sent.iter().rev().take(4)
+                .map(|text| text.chars().take(256).collect::<String>()).collect();
+            panic!("no actual control packet for {command:?}; view={view:?}; diagnostic={:?}; wire={:?}; sent_tail={sent:?}",
+                self.diagnostic, self.wire_trace)
+        })
     }
     fn paused(&self) -> bool {
         self.view.as_ref().is_some_and(|view| {

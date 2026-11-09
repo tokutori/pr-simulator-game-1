@@ -413,8 +413,8 @@ npm run dev -- --host 127.0.0.1 --port 4202 --strictPort
 別の端末から実行する。
 
 ~~~sh
-npm run test:web-ui -- http://127.0.0.1:4202/pr-simulator-game-1/ target/web-ui
-npm run measure:web-auto -- http://127.0.0.1:4202/pr-simulator-game-1/ target/web-auto
+npm run test:web-ui -- http://127.0.0.1:4202/ target/web-ui
+npm run measure:web-auto -- http://127.0.0.1:4202/ target/web-auto
 ~~~
 
 ### 画面遷移と実download
