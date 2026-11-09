@@ -332,6 +332,14 @@ impl GeometryOwner {
                     birdman_game_scene::prepared_scene::ScenePreparationError::Structure(cause),
                 )
             })?;
+        Self::from_prepared(next_id, source, frame)
+    }
+
+    pub(super) fn from_prepared(
+        next_id: &mut u32,
+        source: Arc<PreparedScene>,
+        frame: PreparedAirframeFrame,
+    ) -> GeometryResult<Self> {
         let mut owner = Self {
             source: Arc::clone(&source),
             tail_pivots: std::array::from_fn(|index| {

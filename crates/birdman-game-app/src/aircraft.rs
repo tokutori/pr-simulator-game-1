@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 /// Selected original document and its prepared physical and structural definition.
 pub struct SelectedAircraft {
     original: Vec<u8>,
-    definition: AircraftDefinition,
+    definition: std::sync::Arc<AircraftDefinition>,
     raw_sha256: String,
     identity: [u8; 32],
     launch_position: std::sync::OnceLock<
@@ -26,7 +26,7 @@ impl SelectedAircraft {
         );
         Ok(Self {
             original,
-            definition,
+            definition: std::sync::Arc::new(definition),
             raw_sha256,
             identity,
             launch_position: std::sync::OnceLock::new(),
@@ -41,6 +41,10 @@ impl SelectedAircraft {
     /// Borrows the single validated physical and structural definition.
     pub fn definition(&self) -> &AircraftDefinition {
         &self.definition
+    }
+    /// Shares the same immutable validated definition with owned CPU presentation work.
+    pub fn shared_definition(&self) -> std::sync::Arc<AircraftDefinition> {
+        std::sync::Arc::clone(&self.definition)
     }
     /// Borrows the original source bytes for atomic persistence.
     pub fn original(&self) -> &[u8] {

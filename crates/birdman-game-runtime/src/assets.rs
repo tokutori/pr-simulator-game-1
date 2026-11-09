@@ -628,10 +628,11 @@ pub(super) struct BufferSnapshot {
 }
 
 impl AssetCatalog {
-    pub(super) fn prepare_image_work(
+    pub(super) fn prepare_work(
         &self,
         id: u64,
         selection: EnvironmentSelection,
+        aircraft: &birdman_game_app::SelectedAircraft,
     ) -> Result<Option<crate::ApplicationAssetPreparationWork>, ApplicationAssetError> {
         let EnvironmentProjection::Available { metadata, .. } = selection
             .resolve()
@@ -663,14 +664,26 @@ impl AssetCatalog {
                 .any(|detail| detail.configuration == configs))
             .then_some(configs)
         };
-        Ok((sky.is_some() || detail.is_some())
-            .then(|| crate::ApplicationAssetPreparationWork::new(id, sky, detail)))
+        let geometry = (!self.geometry.contains_key(&aircraft.identity()))
+            .then(|| (aircraft.identity(), aircraft.shared_definition()));
+        Ok((sky.is_some() || detail.is_some() || geometry.is_some())
+            .then(|| crate::ApplicationAssetPreparationWork::new(id, sky, detail, geometry)))
     }
 
-    pub(super) fn admit_images(
+    pub(super) fn admit_prepared(
         &mut self,
-        images: crate::asset_preparation::GeneratedImages,
+        images: crate::asset_preparation::GeneratedAssets,
     ) -> Result<(), ApplicationAssetError> {
+        if let Some(geometry) = images.geometry
+            && !self.geometry.contains_key(&geometry.identity)
+        {
+            let owner = crate::geometry::GeometryOwner::from_prepared(
+                &mut self.next_buffer_id,
+                geometry.source,
+                geometry.frame,
+            )?;
+            self.geometry.insert(geometry.identity, Box::new(owner));
+        }
         if let Some((condition, image)) = images.sky
             && !self.skies.iter().any(|sky| sky.condition == condition)
         {
@@ -708,10 +721,32 @@ impl AssetCatalog {
         aircraft: &birdman_game_app::SelectedAircraft,
         target: ApplicationGraphicsTarget,
     ) -> Result<ApplicationEnvironmentAssets, ApplicationAssetError> {
+        self.prepare_inner(revision, selection, aircraft, target, true)
+    }
+    pub(super) fn prepare_ready(
+        &mut self,
+        revision: u32,
+        selection: EnvironmentSelection,
+        aircraft: &birdman_game_app::SelectedAircraft,
+        target: ApplicationGraphicsTarget,
+    ) -> Result<ApplicationEnvironmentAssets, ApplicationAssetError> {
+        self.prepare_inner(revision, selection, aircraft, target, false)
+    }
+    fn prepare_inner(
+        &mut self,
+        revision: u32,
+        selection: EnvironmentSelection,
+        aircraft: &birdman_game_app::SelectedAircraft,
+        target: ApplicationGraphicsTarget,
+        inline: bool,
+    ) -> Result<ApplicationEnvironmentAssets, ApplicationAssetError> {
         let aircraft_identity = aircraft.identity();
         if let std::collections::btree_map::Entry::Vacant(entry) =
             self.geometry.entry(aircraft_identity)
         {
+            if !inline {
+                return Err(ApplicationAssetError::BufferUnavailable);
+            }
             let geometry = crate::geometry::GeometryOwner::prepare(
                 &mut self.next_buffer_id,
                 aircraft.definition(),
@@ -738,6 +773,9 @@ impl AssetCatalog {
         let sky = match existing_sky {
             Some(sky) => sky,
             None => {
+                if !inline {
+                    return Err(ApplicationAssetError::BufferUnavailable);
+                }
                 let image = generate_lake_sky(sky_condition);
                 let size = [image.width(), image.height()];
                 let sky = Arc::new(SkyAsset {
@@ -782,6 +820,9 @@ impl AssetCatalog {
             match existing_detail {
                 Some(detail) => Some(detail),
                 None => {
+                    if !inline {
+                        return Err(ApplicationAssetError::BufferUnavailable);
+                    }
                     let mut images = Vec::with_capacity(2);
                     for config in configuration {
                         let image =

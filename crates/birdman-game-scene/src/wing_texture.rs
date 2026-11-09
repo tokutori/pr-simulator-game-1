@@ -39,6 +39,14 @@ impl core::error::Error for WingTextureError {}
 
 /// Returns left then right opaque sRGB RGBA pixels, before the optional decal.
 pub fn indigo_wing_textures() -> Vec<u8> {
+    indigo_wing_textures_while(&mut || true).expect("unconditional wing image generation")
+}
+
+/// Produces both complete wing images, dropping all pixels when a row boundary cancels work.
+pub fn indigo_wing_textures_while(keep_running: &mut impl FnMut() -> bool) -> Option<Vec<u8>> {
+    if !keep_running() {
+        return None;
+    }
     let mut pixels = vec![0; SIDE_BYTES * 2];
     for (side_index, side) in [-1.0, 1.0].into_iter().enumerate() {
         let centers = if side < 0.0 {
@@ -47,6 +55,9 @@ pub fn indigo_wing_textures() -> Vec<u8> {
             [0.09, 0.26, 0.54, 0.69, 0.92]
         };
         for row in 0..HEIGHT {
+            if !keep_running() {
+                return None;
+            }
             let chord = (f64::from(row) + 0.5) / f64::from(HEIGHT);
             for column in 0..WIDTH {
                 let span = (f64::from(column) + 0.5) / f64::from(WIDTH);
@@ -99,7 +110,7 @@ pub fn indigo_wing_textures() -> Vec<u8> {
             }
         }
     }
-    pixels
+    keep_running().then_some(pixels)
 }
 
 fn smooth(from: f64, to: f64, value: f64) -> f64 {
@@ -114,21 +125,41 @@ pub fn apply_indigo_wing_decal(
     height: u32,
     alpha: &[u8],
 ) -> Result<(), WingTextureError> {
+    apply_indigo_wing_decal_while(pixels, width, height, alpha, &mut || true).map(|_| ())
+}
+
+/// Composes one owned candidate in place; a cancelled candidate is discarded by its caller.
+pub fn apply_indigo_wing_decal_while(
+    pixels: &mut [u8],
+    width: u32,
+    height: u32,
+    alpha: &[u8],
+    keep_running: &mut impl FnMut() -> bool,
+) -> Result<bool, WingTextureError> {
     if pixels.len() != SIDE_BYTES * 2 {
         return Err(WingTextureError::InvalidPixels);
     }
     if width != DECAL_WIDTH || height != DECAL_HEIGHT || alpha.len() != (width * height) as usize {
         return Err(WingTextureError::InvalidDecal);
     }
+    if !keep_running() {
+        return Ok(false);
+    }
     let source =
         GrayImage::from_raw(width, height, alpha.to_vec()).ok_or(WingTextureError::InvalidDecal)?;
     for (side_index, crop_left) in [32, 1085].into_iter().enumerate() {
+        if !keep_running() {
+            return Ok(false);
+        }
         let crop = imageops::crop_imm(&source, crop_left, 280, 1051, 148).to_image();
         let mut strip = imageops::resize(&crop, WIDTH, 66, imageops::FilterType::Triangle);
         if side_index == 0 {
             imageops::flip_horizontal_in_place(&mut strip);
         }
         for row in 0..HEIGHT / 2 {
+            if !keep_running() {
+                return Ok(false);
+            }
             for column in 0..WIDTH {
                 let opacity = if (31..97).contains(&row) {
                     f64::from(strip.get_pixel(column, row - 31)[0]) / 255.0
@@ -148,22 +179,39 @@ pub fn apply_indigo_wing_decal(
             }
         }
     }
-    Ok(())
+    Ok(keep_running())
 }
 
 /// Builds a complete sRGB upload chain with linear-light filtering, base level first.
 pub fn indigo_wing_mipmaps(pixels: &[u8]) -> Result<Vec<u8>, WingTextureError> {
-    let base = RgbaImage::from_raw(WIDTH, HEIGHT, pixels.to_vec())
-        .ok_or(WingTextureError::InvalidPixels)?;
+    Ok(
+        indigo_wing_mipmaps_while(pixels, &mut || true)?
+            .expect("unconditional wing mip generation"),
+    )
+}
+
+/// Builds the existing linear-light mip chain while admitting complete levels only.
+pub fn indigo_wing_mipmaps_while(
+    pixels: &[u8],
+    keep_running: &mut impl FnMut() -> bool,
+) -> Result<Option<Vec<u8>>, WingTextureError> {
     if pixels.len() != SIDE_BYTES {
         return Err(WingTextureError::InvalidPixels);
     }
+    if !keep_running() {
+        return Ok(None);
+    }
+    let base = RgbaImage::from_raw(WIDTH, HEIGHT, pixels.to_vec())
+        .ok_or(WingTextureError::InvalidPixels)?;
     let mut linear = DynamicImage::ImageRgba8(base).into_rgba32f();
     linear
         .apply_color_space(Cicp::SRGB_LINEAR, Default::default())
         .map_err(|_| WingTextureError::ColorConversion)?;
     let mut output = pixels.to_vec();
     for level in 1..=WIDTH.ilog2() {
+        if !keep_running() {
+            return Ok(None);
+        }
         linear = imageops::resize(
             &linear,
             (WIDTH >> level).max(1),
@@ -176,7 +224,7 @@ pub fn indigo_wing_mipmaps(pixels: &[u8]) -> Result<Vec<u8>, WingTextureError> {
             .map_err(|_| WingTextureError::ColorConversion)?;
         output.extend(DynamicImage::ImageRgba32F(encoded).into_rgba8().into_raw());
     }
-    Ok(output)
+    Ok(keep_running().then_some(output))
 }
 
 #[cfg(test)]

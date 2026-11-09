@@ -1477,10 +1477,10 @@ impl ApplicationServer {
         if requests.is_empty() {
             return Ok(());
         }
-        let admitted = result.images.and_then(|images| {
+        let admitted = result.prepared.and_then(|images| {
             self.authority
                 .assets
-                .admit_images(images)
+                .admit_prepared(images)
                 .map_err(|cause| cause.to_string())
         });
         for ((peer, request_id), target) in requests {
@@ -1696,7 +1696,15 @@ impl ApplicationServer {
         let work = self
             .authority
             .assets
-            .prepare_image_work(self.next_asset_preparation, selection)
+            .prepare_work(
+                self.next_asset_preparation,
+                selection,
+                self.authority.application.aircraft().map_err(|cause| {
+                    ApplicationRuntimeError::Assets(ApplicationAssetError::Geometry(
+                        cause.to_string(),
+                    ))
+                })?,
+            )
             .map_err(ApplicationRuntimeError::Assets)?;
         if let Some(work) = work {
             let job_id = self.next_asset_preparation;
@@ -1723,7 +1731,7 @@ impl ApplicationServer {
         let prepared = self
             .authority
             .assets
-            .prepare(request_id, selection, aircraft, target);
+            .prepare_ready(request_id, selection, aircraft, target);
         let preparation_ms = preparation_started.elapsed().as_secs_f64() * 1000.0;
         let snapshot_started = std::time::Instant::now();
         let produced = prepared.and_then(|assets| {
