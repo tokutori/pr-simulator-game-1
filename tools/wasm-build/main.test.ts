@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
+const sourceSha = "0123456789abcdef0123456789abcdef01234567";
 
 const scripts = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
   readonly scripts: Readonly<Record<string, string>>;
@@ -11,12 +12,15 @@ const scripts = (JSON.parse(readFileSync(new URL("../../package.json", import.me
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   vi.doUnmock("node:child_process");
   vi.doUnmock("node:fs/promises");
 });
 
 function fixture(exitStatus: number | null = 0, buildError?: Error, metadataOverrides: Record<string, unknown> = {}) {
   vi.resetModules();
+  vi.stubEnv("BPG_APPLICATION_SOURCE_SHA", sourceSha);
+  vi.stubEnv("BPG_NATIVE_SOURCE_SHA", sourceSha);
   const legacyArtifact = resolve(root, "target/wasm32-unknown-unknown/release/birdman_game_wasm.wasm");
   const currentArtifact = resolve(root, "custom target/wasm32-unknown-unknown/release/birdman_game_wasm.wasm");
   const files = new Map([[legacyArtifact, "stale WASM"], [currentArtifact, "current WASM"]]);
@@ -41,6 +45,8 @@ function fixture(exitStatus: number | null = 0, buildError?: Error, metadataOver
       calls.push({ command, args, options });
       if (command === "cargo" && args[0] === "metadata") return { status: 0, stdout: metadata };
       if (command === "cargo") return { status: exitStatus, stdout: output, error: buildError };
+      if (command === "git" && args[0] === "rev-parse") return { status: 0, stdout: `${sourceSha}\n` };
+      if (command === "git" && args[0] === "status") return { status: 0, stdout: "" };
       if (args[0] === "--version") return { status: 0, stdout: "wasm-bindgen 0.2.129\n" };
       const input = args.at(-1);
       if (input === undefined) throw new Error("wasm-bindgen requires an input artifact");
@@ -85,15 +91,19 @@ describe("WASM build command artifact ownership", () => {
     expect(cargo?.args).toContain("--message-format=json");
     expect(cargo?.args).not.toContain("--target-dir");
     expect(cargo?.options.maxBuffer).toBeGreaterThan(1_024 * 1_024);
+    expect(cargo?.options.env).toMatchObject({ BPG_APPLICATION_SOURCE_SHA: sourceSha });
     expect(bindgen?.args.at(-1)).toBe(trial.currentArtifact);
     expect(bindgen?.args.at(-1)).not.toBe(trial.legacyArtifact);
     expect(trial.consumed).toEqual(["current WASM"]);
     expect(trial.rm).toHaveBeenCalledTimes(1);
     expect(trial.mkdir).toHaveBeenCalledTimes(1);
     expect(trial.calls.map(({ command, args }) => [command, args[0]])).toEqual([
-      ["cargo", "metadata"], ["wasm-bindgen", "--version"], ["cargo", "build"], ["wasm-bindgen", "--target"]
+      ["cargo", "metadata"], ["wasm-bindgen", "--version"], ["git", "rev-parse"], ["git", "status"],
+      ["cargo", "build"], ["wasm-bindgen", "--target"]
     ]);
     expect(trial.calls[0]?.args).toEqual(["metadata", "--no-deps", "--locked", "--format-version", "1"]);
+    expect(trial.calls[2]?.args).toEqual(["rev-parse", "--verify", "HEAD"]);
+    expect(trial.calls[3]?.args).toEqual(["status", "--porcelain", "--untracked-files=normal"]);
   });
 
   it.each(["target_directory", "build_directory"])("rejects unsafe %s before building or replacing bindings", async (field) => {

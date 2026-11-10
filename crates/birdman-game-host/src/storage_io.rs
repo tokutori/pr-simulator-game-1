@@ -52,9 +52,28 @@ struct FileRow {
     saved_at: String,
 }
 
+// A transaction releases the OS lock even while a child or clone retains a descriptor.
+struct StorageLock(File);
+
+impl StorageLock {
+    fn acquire(file: File) -> io::Result<Self> {
+        file.try_lock().map_err(io::Error::other)?;
+        Ok(Self(file))
+    }
+}
+
+impl Drop for StorageLock {
+    fn drop(&mut self) {
+        if let Err(cause) = self.0.unlock() {
+            // Releasing a lock does not undo an already committed catalog or settings file.
+            let _ = writeln!(io::stderr(), "Native storage lock release failed: {cause}");
+        }
+    }
+}
+
 struct WriteTransaction {
     catalog: Catalog,
-    _lock: File,
+    _lock: StorageLock,
     cursor: Option<u32>,
     created: Vec<PathBuf>,
 }
@@ -235,7 +254,7 @@ impl NativeStorage {
                         .read(true)
                         .write(true)
                         .open(self.directory.join("catalog.lock"))?;
-                    lock.try_lock().map_err(io::Error::other)?;
+                    let lock = StorageLock::acquire(lock)?;
                     let catalog = self.catalog()?;
                     for entry in fs::read_dir(&self.directory)? {
                         let entry = entry?;
@@ -525,7 +544,7 @@ impl NativeStorage {
             .read(true)
             .write(true)
             .open(directory.join(format!("{}.lock", configuration_stem(document))))?;
-        lock.try_lock().map_err(io::Error::other)?;
+        let _lock = StorageLock::acquire(lock)?;
         match fs::remove_file(directory.join(format!(
             "{}.{}",
             configuration_stem(document),
@@ -596,7 +615,7 @@ impl NativeStorage {
             .read(true)
             .write(true)
             .open(directory.join(format!("{stem}.lock")))?;
-        lock.try_lock().map_err(io::Error::other)?;
+        let _lock = StorageLock::acquire(lock)?;
         let temporary = directory.join(format!("{stem}-{}-{request_id}.tmp", std::process::id()));
         let mut file = OpenOptions::new()
             .create_new(true)
@@ -1138,7 +1157,14 @@ pub(crate) mod tests {
         let catalog = storage.catalog().unwrap();
         assert_eq!(catalog.records.len(), 1);
         assert_eq!(catalog.records[&1].file, "flight-log-123-4.json");
-        storage.execute(&ApplicationRequest::BeginRecordSave { request_id: 1 });
+        let opened = storage.execute(&ApplicationRequest::BeginRecordSave { request_id: 1 });
+        assert!(
+            matches!(
+                opened.as_deref(),
+                Some([ApplicationInput::RecordSaveOpened { request_id: 1, .. }])
+            ),
+            "record transaction did not open: {opened:?}"
+        );
         assert!(!directory.0.join("record-1-old.record").exists());
         storage
             .write(
@@ -1150,8 +1176,17 @@ pub(crate) mod tests {
             )
             .unwrap();
         let first = storage.writes[&1].created[0].clone();
+        // Keep the same OS description alive, as an in-flight child may do after fork.
+        let inherited = storage.writes[&1]._lock.0.try_clone().unwrap();
         storage.abort(1).unwrap();
-        storage.execute(&ApplicationRequest::BeginRecordSave { request_id: 1 });
+        let opened = storage.execute(&ApplicationRequest::BeginRecordSave { request_id: 1 });
+        assert!(
+            matches!(
+                opened.as_deref(),
+                Some([ApplicationInput::RecordSaveOpened { request_id: 1, .. }])
+            ),
+            "record transaction did not open: {opened:?}"
+        );
         storage
             .write(
                 1,
@@ -1163,5 +1198,6 @@ pub(crate) mod tests {
             .unwrap();
         assert_ne!(storage.writes[&1].created[0], first);
         storage.abort(1).unwrap();
+        drop(inherited);
     }
 }

@@ -257,13 +257,18 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); capture.driver = 
 
 async function fixture() {
   const browser = new Window({ url: "http://localhost/" });
+  Object.defineProperty(browser, "isSecureContext", { value: true });
+  vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(null, { status: 404 }))));
   Object.defineProperty(browser, "devicePixelRatio", { value: 2 });
   browser.document.documentElement.style.font = "400 16px Arial";
   browser.document.documentElement.lang = "ja";
   Object.defineProperty(browser.document, "fonts", { value: Object.assign(new browser.EventTarget(), { ready: Promise.resolve() }) });
   Object.defineProperty(browser, "indexedDB", { value: new IDBFactory() });
   const session = new XrSession();
-  Object.defineProperty(browser.navigator, "xr", { value: { requestSession: (_mode: string, init: XRSessionInit) => { session.sessionInit = init; return Promise.resolve(session); } } });
+  Object.defineProperty(browser.navigator, "xr", { value: {
+    isSessionSupported: () => Promise.resolve(true),
+    requestSession: (_mode: string, init: XRSessionInit) => { session.sessionInit = init; return Promise.resolve(session); }
+  } });
   for (const [key, value] of Object.entries({ window: browser, document: browser.document, navigator: browser.navigator,
     HTMLElement: browser.HTMLElement, HTMLInputElement: browser.HTMLInputElement, HTMLSelectElement: browser.HTMLSelectElement,
     MutationObserver: browser.MutationObserver, getComputedStyle: browser.getComputedStyle.bind(browser), XRWebGLLayer: XrLayer,
@@ -283,6 +288,7 @@ async function fixture() {
   browser.document.body.append(mount as unknown as import("happy-dom").HTMLElement);
   const { BrowserApplication } = await import("../../web/src/browser-application.js");
   new BrowserApplication(mount, applicationPlatformFixture().capabilities);
+  await vi.waitFor(() => { expect(capture.driver).not.toBeNull(); });
   const driver = capture.driver;
   if (driver === null) throw new Error("GPU context was not created");
   const drawing = (): ApplicationDrawingOutput => {
