@@ -130,12 +130,6 @@ pub fn game_ui_view(
             }
             if context.platform.presentation_mode != GameUiPresentationMode::Screen {
                 menu.platform(
-                    "boot-recenter-menu",
-                    "メニューを正面に配置",
-                    GameUiPlatformCommand::RecenterMenu {},
-                    context.platform.menu_recenter_available,
-                );
-                menu.platform(
                     "boot-exit-vr",
                     "VRを終了",
                     GameUiPlatformCommand::SetPresentation {

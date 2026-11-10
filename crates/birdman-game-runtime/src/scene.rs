@@ -14,7 +14,7 @@ use birdman_game_presentation::render_pose::{live_render_pose, prepared_render_p
 use birdman_game_presentation::replay_camera::replay_camera_view;
 use birdman_game_presentation::xr::{
     XrCameraMount, XrCameraRig, XrDepthRange, XrEye, XrReferenceFrame, XrTrackingOrigin,
-    XrViewerFrame, xr_reference_change, xr_reference_frame,
+    XrViewerFrame, xr_reference_frame,
 };
 
 /// One eye's final render-world pose and unchanged projection convention.
@@ -423,19 +423,6 @@ impl SceneOwner {
             self.origin.reset_reference(previous_from_new)?;
         }
         Ok(())
-    }
-
-    pub(super) fn reference_head(&self) -> Option<Pose> {
-        self.reference.map(|reference| reference.head)
-    }
-
-    pub(super) fn tracking_change(
-        &self,
-        new_tracking_from_previous: Pose,
-    ) -> Result<Option<Pose>, CameraError> {
-        self.rig
-            .map(|rig| xr_reference_change(rig.reference_from_tracking, new_tracking_from_previous))
-            .transpose()
     }
 
     pub(super) fn project(

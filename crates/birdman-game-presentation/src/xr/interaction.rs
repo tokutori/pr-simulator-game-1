@@ -234,7 +234,8 @@ pub struct XrInputSourceObservation {
 }
 
 impl XrInputSourceObservation {
-    fn ray(&self) -> Option<XrPointerRay> {
+    /// Returns a finite tracked ray usable independently of the viewer's head.
+    pub fn tracked_ray(&self) -> Option<XrPointerRay> {
         if self.target_ray_mode != "tracked-pointer" {
             return None;
         }
@@ -370,6 +371,14 @@ impl XrPointerSession {
         }
     }
 
+    /// Restarts selection with the next physical sample as the held-button baseline.
+    /// The timestamp guard and measured surface remain in the same owner.
+    pub fn rebaseline_inputs(&mut self) {
+        self.invalidate_selection();
+        self.controllers.clear();
+        self.gamepad = None;
+    }
+
     /// Replaces measured geometry atomically and resets input on scope/layout changes.
     pub fn set_surface(&mut self, surface: Option<XrPointerSurface>) -> Result<(), &'static str> {
         if surface.as_ref().is_some_and(|value| !value.valid()) {
@@ -423,7 +432,7 @@ impl XrPointerSession {
         let mut pointers: Vec<_> = observation
             .sources
             .iter()
-            .filter_map(XrInputSourceObservation::ray)
+            .filter_map(XrInputSourceObservation::tracked_ray)
             .collect();
         if let Some(head) = observation.head_pose {
             let head = head.normalized().ok_or("Invalid XR head pose")?;
@@ -603,10 +612,10 @@ impl XrPointerSession {
             let back = if let Some(previous) = previous {
                 let back = squeeze == Some(true) && previous.squeeze == Some(false);
                 previous.squeeze = squeeze;
-                if source.select_pressed.is_none() || source.ray().is_none() {
+                if source.select_pressed.is_none() || source.tracked_ray().is_none() {
                     previous.primary_started = false;
                 }
-                if source.ray().is_some()
+                if source.tracked_ray().is_some()
                     && source.select_pressed == Some(true)
                     && previous.select_pressed == Some(false)
                 {
@@ -742,7 +751,7 @@ impl XrPointerSession {
                             && observation
                                 .sources
                                 .iter()
-                                .any(|value| value.source_id == id && value.ray().is_some())
+                                .any(|value| value.source_id == id && value.tracked_ray().is_some())
                     }),
                     "gaze" | "screen" | "transient-pointer" => {
                         self.observation.as_ref().is_none_or(|observation| {

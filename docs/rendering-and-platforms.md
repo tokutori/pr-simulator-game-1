@@ -394,11 +394,10 @@ T_{eye,object}=T_{R,eye}^{-1}T_{R,object}
 
 ### MenuとHeadのlayout
 
-- 共有Rustの`fit_xr_menu_view`が、Menuを開いたframeの両眼projectionとhead-to-eyeからpanel全体を収容する距離を導出する。adapterは返されたhead-local poseを固定anchorへ写す。
-- head motion、telemetry、Attract cut、Replay seekでは移動しない。
-- 「正面へ配置」、再opening、viewport・光学profileの実変更で再fitできる。
+- 共有Rustの`fit_xr_menu_view`が、Menuを開いたframeの両眼projectionとhead-to-eyeからpanel全体を収容する距離を導出する。Menuは、追跡中のcontroller・hand rayまたは選択可能な標準gamepad cursorがある間は、導出したhead相対poseを現在のhead poseと合成する。視線だけで選択する場合は開口時の参照空間へ固定し、頭部回転で注視先を移せる。
+- scene・overlay・実測寸法・両眼光学の変更時に再fitする。
 
-- 同じMenu表示中のviewer欠測では配置を保持し、描画・選択を停止する。
+- 同じMenu表示中のviewer欠測では描画・選択を停止する。
 - 収容不能projectionは型付き失敗とし、同frameの描画を止め、世代付きScreen回復へ接続する。
 - font読込み等のpendingでは旧入力contextを失効させ、回復を要求せず新geometryを待つ。
 
@@ -452,7 +451,6 @@ H=B D R_z(-s)
 - 上向き・下向きで水平方位が退化した場合は既存基底を維持する。
 - 初回退化は較正を保留する。
 - 画面回転は同じ基底へ右側補正を適用する。
-- recenter基底差分は上向き軸周りの回転として、Eye mountで共役変換してretained anchorへ適用する。
 
 - sampleはeventのtimeStampと同Window/time originのperformance.nowで、有限・非負・未来でない・非減少を確認する。
 - 同時刻は許容する。
@@ -472,7 +470,7 @@ H=B D R_z(-s)
 
 - 共有Rustが機体・pilot・camera mountと累積tracking補正$C$を合成する。head・左右眼・controller rayは同じmount$M C$を一度適用する。
 - 論理referenceのWorld poseを$R$、機体poseを$A$とし、World anchorは$R^{-1}$、Cockpit anchorは$R^{-1}A$、Head anchorは$R^{-1}M C H$で解決する。全panelは$R P$として描画し、選択も同じreferenceで行う。
-- Menuは開いた時のreference内poseを保持し、scene・overlay・実測寸法・両眼光学・camera基底の変更時に再配置する。機体の通常移動は同じ基底として扱う。
+- Menuの入力方式が切り替わると現在の頭部位置で再配置し、focus・dwellと提示済み選択を退役する。新しい配置の描画完了を受理してから選択を再開し、最初の物理入力を保持状態の基準として新たな押下から受理する。camera基底が変わる場合も新しい参照空間で再配置する。
 - Menu開口の光学比較は、眼位置0.1 mm・眼回転0.1 mrad、projection成分の差が`1e-4 × max(1, |前値|, |現在値|)`以内を同値とする。float32相当の観測揺れを吸収し、これらを超えるIPD・視錐台変化で再fitする。
 - [reference-space reset](https://www.w3.org/TR/webxr/#dom-xrreferencespaceevent-transform)の$S$は新originの旧tracking内poseである。共有ownerが$C'=C S$を保持し、更新後の$H'=S^{-1}H$と合成してWorldと眼の位置を保つ。
 
@@ -481,7 +479,7 @@ M C' H'=M C S S^{-1}H=M C H
 ```
 
 - reset変換が得られない場合は選択を停止してScreenへ戻し、再開始を案内する。
-- reset直後は次の描画が完了するまでselectを停止する。Phone VRの明示tracking recenterは視線のyawを更新し、保持Menuを専用操作で輸送する。Menuの正面再配置と受動resetは別操作である。
+- reset直後は次の描画が完了するまでselectを停止する。XR参照空間の補正はSceneの共有座標変換へ適用し、空間固定Menuの参照位置を保持する。Phone VRの明示tracking recenterは視線のyawを更新し、Menuを現在の頭部位置へ再配置する。
 - 床高・IPD・projectionはXR runtimeの出力を使用する。
 
 ### Native OpenXR

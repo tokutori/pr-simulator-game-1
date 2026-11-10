@@ -254,17 +254,31 @@ impl SurfaceOwner {
         focused: bool,
         timestamp_ms: f64,
     ) -> Result<Option<SurfaceAction>, ApplicationRuntimeError> {
+        let gamepads: Vec<_> = observation
+            .gamepads
+            .iter()
+            .filter_map(super::ApplicationGamepadObservation::menu)
+            .collect();
+        let independent = observation
+            .sources
+            .iter()
+            .any(|source| source.tracked_ray().is_some())
+            || !gamepads.is_empty();
+        let tracking = if independent {
+            birdman_game_presentation::xr::XrMenuTracking::HeadLocked
+        } else {
+            birdman_game_presentation::xr::XrMenuTracking::Spatial
+        };
+        if self.placement.set_menu_tracking(tracking) {
+            self.suspend_menu_input();
+            return Ok(None);
+        }
         if !self.acknowledge(observation.presented_id)? {
             self.pointer.invalidate_selection();
             self.cursors.clear();
             return Ok(None);
         }
         let menu = self.published.as_ref().unwrap();
-        let gamepads: Vec<_> = observation
-            .gamepads
-            .iter()
-            .filter_map(super::ApplicationGamepadObservation::menu)
-            .collect();
         let gamepad = gamepads
             .iter()
             .find(|pad| self.gamepad == Some((pad.index, pad.generation)))
@@ -385,26 +399,17 @@ impl SurfaceOwner {
         }
     }
 
-    pub(super) fn recenter_menu(
-        &mut self,
-        head: Option<Pose>,
-    ) -> Result<(), birdman_game_presentation::camera::CameraError> {
-        if let Some(head) = head {
-            self.placement.recenter_menu(head)?;
-        }
-        self.invalidate();
-        Ok(())
+    fn suspend_menu_input(&mut self) {
+        self.pointer.rebaseline_inputs();
+        self.published = None;
+        self.offered = None;
+        self.cursors.clear();
     }
 
-    pub(super) fn recenter_tracking(
-        &mut self,
-        change: Option<Pose>,
-    ) -> Result<(), birdman_game_presentation::camera::CameraError> {
-        if let Some(change) = change {
-            self.placement.recenter_tracking(change)?;
-        }
-        self.invalidate();
-        Ok(())
+    /// Replaces the retained menu after explicit tracking recentering.
+    pub(super) fn tracking_recentered(&mut self) {
+        self.placement.close_menu();
+        self.suspend_menu_input();
     }
 
     fn invalidate(&mut self) {

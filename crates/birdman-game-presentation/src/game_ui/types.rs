@@ -261,8 +261,6 @@ pub enum GameUiPlatformCommand {
     },
     /// Recalibrates phone heading.
     RecenterPhoneTracking {},
-    /// Places the retained menu in front of the viewer.
-    RecenterMenu {},
     /// Downloads the generated common Rust dependency notice.
     DownloadSoftwareLicenses {},
     /// Downloads the original JSON record.
@@ -486,8 +484,6 @@ pub struct GameUiPlatformInput {
     pub phone_vr_available: bool,
     /// Platform has observed touch input support.
     pub touch_available: bool,
-    /// Active spatial backend can reposition the menu in front of the viewer.
-    pub menu_recenter_available: bool,
     /// Platform supports full record plots.
     pub analysis_available: bool,
     /// Platform supports recorded scenic playback.
