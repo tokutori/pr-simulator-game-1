@@ -408,6 +408,7 @@ class NativePackagingTests(unittest.TestCase):
                                  (licenses / "THIRD-PARTY-LICENSES.html").read_bytes())
                 guide = output / "docs/native-guide.md"
                 self.assertTrue(guide.is_file())
+                self.assertTrue((output / "docs/websocket-server.md").is_file())
                 self.assertIn("(docs/native-guide.md)", (output / "README.md").read_text(encoding="utf-8"))
                 self.assertNotEqual((output / "README.md").read_bytes(), guide.read_bytes())
                 self.assertFalse((output / "assets/test-fonts").exists())
