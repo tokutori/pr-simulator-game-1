@@ -1,3 +1,4 @@
+use super::XrReferenceBasis;
 use super::geometry::PreparedViews;
 use super::{
     CameraError, Pose, XrEyeGeometry, XrFitReason, XrMenuViewFit, XrReferenceFrame, XrViewerFrame,
@@ -184,22 +185,46 @@ pub enum XrPanelPlacement {
     },
 }
 
+/// Menu placement selected from the currently usable independent input paths.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum XrMenuTracking {
+    /// Retains the opening pose so head motion can aim the gaze cursor.
+    #[default]
+    Spatial,
+    /// Follows the head while another tracked ray or cursor can select controls.
+    HeadLocked,
+}
+
 struct MenuOpening {
+    basis: XrReferenceBasis,
+    reference_from_menu: Pose,
     geometry: XrPanelGeometry,
     eyes: [XrEyeGeometry; 2],
     head_from_menu: Pose,
 }
 
-/// Owns a menu opening whose fitted placement is locked to the viewer's head.
+/// Owns one fitted menu opening and its shared input-dependent placement.
 #[derive(Default)]
 pub struct XrSpatialSession {
     menu: Option<MenuOpening>,
+    menu_tracking: XrMenuTracking,
 }
 
 impl XrSpatialSession {
     /// Creates a fresh session with no retained menu.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Changes placement and invalidates the retained opening when the input path changes.
+    /// Returns whether a newly placed menu must be submitted before selection resumes.
+    pub fn set_menu_tracking(&mut self, tracking: XrMenuTracking) -> bool {
+        if self.menu_tracking == tracking {
+            return false;
+        }
+        self.menu_tracking = tracking;
+        self.menu = None;
+        true
     }
 
     /// Places the current panel, retaining a menu only within its unchanged opening.
@@ -257,14 +282,17 @@ impl XrSpatialSession {
                 }
             };
             if let Some(opening) = &self.menu
+                && opening.basis == reference.basis
                 && same_opening(opening, &geometry, eyes)
             {
-                // The menu is locked to the view: the fitted head-relative
-                // placement is recomposed from the current head pose every
-                // frame, so the panel follows the viewer like the head HUD.
-                match compose_pose(head, opening.head_from_menu) {
-                    Ok(pose) => pose,
-                    Err(_) => return unavailable(XrFitReason::InvalidViewGeometry),
+                match self.menu_tracking {
+                    XrMenuTracking::Spatial => opening.reference_from_menu,
+                    XrMenuTracking::HeadLocked => {
+                        match compose_pose(head, opening.head_from_menu) {
+                            Ok(pose) => pose,
+                            Err(_) => return unavailable(XrFitReason::InvalidViewGeometry),
+                        }
+                    }
                 }
             } else {
                 let fit = match fit_xr_menu_view(
@@ -289,6 +317,8 @@ impl XrSpatialSession {
                     return unavailable(XrFitReason::InvalidViewGeometry);
                 }
                 self.menu = Some(MenuOpening {
+                    basis: reference.basis,
+                    reference_from_menu,
                     geometry: geometry.clone(),
                     eyes: eyes.clone(),
                     head_from_menu,

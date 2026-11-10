@@ -4895,13 +4895,48 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
             &mut measure,
         )
         .unwrap();
+    let headlocked = hovered.drawing.unwrap().spatial.unwrap();
     assert!(
-        matches!(&hovered.drawing.unwrap().spatial.unwrap().menu, ApplicationMenuProjection::Ready { cursors, .. } if cursors.len() == 1)
+        matches!(&headlocked.menu, ApplicationMenuProjection::Ready { cursors, .. } if cursors.is_empty())
+    );
+    assert_eq!(
+        runtime.application().core_session().snapshot().phase(),
+        SessionPhase::Title
+    );
+    let acknowledged = runtime
+        .update(
+            ApplicationObservation {
+                observed_ms: 10_020.5,
+                input: ApplicationInput::Frame {
+                    display_resource_id: Some(50),
+                    timestamp_ms: 10_020.5,
+                    gamepads: Vec::new(),
+                    xr: Some(viewer.clone()),
+                    spatial: ApplicationSpatialObservation {
+                        presented_id: Some(headlocked.presentation_id),
+                        sources: vec![birdman_game_presentation::xr::XrInputSourceObservation {
+                            select_pressed: None,
+                            source_id: pointer.source_id,
+                            target_ray_mode: "tracked-pointer".into(),
+                            handedness: "right".into(),
+                            tracking_from_ray: Some(pointer.tracking_from_ray),
+                            gamepad: None,
+                        }],
+                        gamepads: Vec::new(),
+                    },
+                },
+            },
+            &mut measure,
+        )
+        .unwrap();
+    let opening = acknowledged.drawing.unwrap().spatial.unwrap();
+    assert!(
+        matches!(&opening.menu, ApplicationMenuProjection::Ready { cursors, .. } if cursors.len() == 1)
     );
     let notification = runtime
         .update(
             ApplicationObservation {
-                observed_ms: 10_020.0,
+                observed_ms: 10_020.5,
                 input: ApplicationInput::XrSessionState {
                     resource_id: 50,
                     visibility: XrVisibility::Visible,
@@ -5065,10 +5100,34 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
     );
     controller.gamepad.as_mut().unwrap().axes[3] = Some(0.0);
     controller.gamepad.as_mut().unwrap().buttons[1].pressed = true;
-    frame(&mut runtime, 10_060.0, scrolled, &controller);
+    let (title, _, _) = frame(&mut runtime, 10_060.0, scrolled, &controller);
     assert_eq!(
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::Title
+    );
+    controller.gamepad.as_mut().unwrap().buttons[1].pressed = false;
+    controller.select_pressed = Some(false);
+    let (tracked, _, _) = frame(&mut runtime, 10_070.0, title, &controller);
+    controller.tracking_from_ray = None;
+    controller.select_pressed = Some(true);
+    let (lost, _, _) = frame(&mut runtime, 10_080.0, tracked, &controller);
+    let (gaze_only, _, _) = frame(&mut runtime, 10_090.0, lost, &controller);
+    controller.tracking_from_ray = Some(pointer.tracking_from_ray);
+    let (restored, _, _) = frame(&mut runtime, 10_100.0, gaze_only, &controller);
+    let (baseline, _, _) = frame(&mut runtime, 10_110.0, restored, &controller);
+    controller.select_pressed = Some(false);
+    let (released, _, _) = frame(&mut runtime, 10_120.0, baseline, &controller);
+    assert_eq!(
+        runtime.application().core_session().snapshot().phase(),
+        SessionPhase::Title
+    );
+    controller.select_pressed = Some(true);
+    let (pressed, _, _) = frame(&mut runtime, 10_130.0, released, &controller);
+    controller.select_pressed = Some(false);
+    frame(&mut runtime, 10_140.0, pressed, &controller);
+    assert_eq!(
+        runtime.application().core_session().snapshot().phase(),
+        SessionPhase::FlightSetup
     );
 }
 

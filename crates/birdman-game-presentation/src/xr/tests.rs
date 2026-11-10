@@ -712,13 +712,14 @@ fn world_cockpit_and_head_keep_their_distinct_physical_owners() {
 }
 
 #[test]
-fn menu_opening_follows_head_motion_and_ignores_camera_basis_changes() {
+fn menu_opening_follows_independent_selection_and_preserves_gaze_space() {
     let views = viewer(XrDepthRange::NegativeOneToOne);
     let geometry = menu_geometry();
     let observation = XrPanelObservation::Ready {
         geometry: geometry.clone(),
     };
     let mut session = XrSpatialSession::new();
+    assert!(session.set_menu_tracking(XrMenuTracking::HeadLocked));
     let reference = XrReferenceFrame {
         basis: XrReferenceBasis::Aircraft,
         world: Pose::IDENTITY,
@@ -735,6 +736,7 @@ fn menu_opening_follows_head_motion_and_ignores_camera_basis_changes() {
     // A fresh opening at the moved head lands on the same pose: the retained
     // placement is the fitted head-relative placement, recomposed per frame.
     let mut fresh = XrSpatialSession::new();
+    fresh.set_menu_tracking(XrMenuTracking::HeadLocked);
     assert_eq!(
         fresh.place_panel(observation.clone(), &views, Some(moved)),
         following
@@ -773,8 +775,31 @@ fn menu_opening_follows_head_motion_and_ignores_camera_basis_changes() {
         ..moved
     };
     assert_eq!(
-        session.place_panel(observation, &views, Some(changed_basis)),
+        session.place_panel(observation.clone(), &views, Some(changed_basis)),
         following
+    );
+    assert!(session.set_menu_tracking(XrMenuTracking::Spatial));
+    let fixed = session.place_panel(observation.clone(), &views, Some(changed_basis));
+    let looking_elsewhere = XrReferenceFrame {
+        head: plane(-20.0),
+        ..changed_basis
+    };
+    assert_eq!(
+        session.place_panel(observation.clone(), &views, Some(looking_elsewhere)),
+        fixed
+    );
+    assert!(!session.set_menu_tracking(XrMenuTracking::Spatial));
+    session.close_menu();
+    let recentered = session.place_panel(observation.clone(), &views, Some(looking_elsewhere));
+    assert_ne!(recentered, fixed);
+    assert!(session.set_menu_tracking(XrMenuTracking::HeadLocked));
+    assert_eq!(
+        session.place_panel(observation.clone(), &views, Some(looking_elsewhere)),
+        recentered
+    );
+    assert_ne!(
+        session.place_panel(observation, &views, Some(changed_basis)),
+        recentered
     );
 }
 
