@@ -202,9 +202,9 @@ processing = "Rate-P feedback; physical actuator stops and slew remain in the in
 
 [[assets]]
 path = "assets/wasm-runtime.LICENSE.html"
-sha256 = "860728a4fb19215e6cbb08556bc7e32dc45dac6dcd11ab673fb4905bf1593102"
+sha256 = "38b093740cd100b70f87ca624ba50b0666a8d46e8ba696451fae04c6a3eca461"
 source = "cargo-about 0.9.2; birdman-game-wasm; wasm32-unknown-unknown; registered inherited notices"
-source_version = "Cargo.lock SHA-256 f24db1cbb70f2e0bed826ffb44a03806fcfef0697365d63a65aeb5f08673545b"
+source_version = "Cargo.lock SHA-256 3f7ca760db96fd468f725921496b5fbb56058ecf8f11d864ece2a09700f6df98"
 license = "See the generated complete license notice"
 license_url = "wasm-runtime.LICENSE.html"
 attribution = "Copyright holders of the Rust packages listed in the generated notice"
