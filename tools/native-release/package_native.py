@@ -26,6 +26,7 @@ TARGETS = {
 
 DOCUMENTATION_FILES = (
     "docs/architecture.md",
+    "docs/websocket-server.md",
     "docs/aircraft-json-guide.md",
     "docs/data-and-formats.md",
     "docs/flight-dynamics.md",
