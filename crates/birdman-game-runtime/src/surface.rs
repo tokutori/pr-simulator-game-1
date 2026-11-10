@@ -102,6 +102,8 @@ pub struct ApplicationMenuPaint {
     pub content: MenuPaintLayer,
     /// Fixed footer painting.
     pub footer: Vec<SurfacePaintItem>,
+    /// Full-surface panel frame painting.
+    pub frame: Vec<SurfacePaintItem>,
 }
 
 #[derive(Clone, Debug)]
@@ -594,6 +596,7 @@ impl SurfaceOwner {
                                     opacity: projection.opacity,
                                     content: projection.content,
                                     footer: projection.footer,
+                                    frame: projection.frame,
                                 };
                                 ApplicationMenuProjection::Ready {
                                     world_from_panel: poses.world_from_panel,

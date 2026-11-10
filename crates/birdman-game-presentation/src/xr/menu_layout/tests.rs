@@ -88,6 +88,7 @@ fn source() -> MenuLayoutSource {
                 id: id.into(),
                 section: Some("actions".into()),
                 label: id.into(),
+                min_height_px: None,
                 widget: MenuWidget::Button {
                     text_style: crate::game_ui::GameUiTextStyle {
                         font_size_px: 16.0,
@@ -120,6 +121,7 @@ fn source() -> MenuLayoutSource {
         },
         control_padding_px: [8.0; 2],
         control_gap_px: 5.6,
+        shell_padding_px: 8.0,
         font_meters: 0.04,
         font: MenuFont {
             family: "fixture".into(),
@@ -183,6 +185,28 @@ fn responsive_rows_and_measured_positions_share_one_metric_contract() {
     assert_eq!(value.font_meters, primary.source.font_meters * 2.0);
     assert_eq!(value.font.weight, 700);
     arrange(&primary, &measurements(&primary)).unwrap();
+}
+
+#[test]
+fn button_min_height_and_shell_padding_come_from_the_shared_layout() {
+    let mut min_source = source();
+    min_source.controls[0].min_height_px = Some(44.0);
+    let planned = plan(min_source).unwrap();
+    assert!((planned.shell_padding_meters - 0.02).abs() < 1.0e-12);
+    let geometry = arrange(&planned, &measurements(&planned)).unwrap();
+    // 44px at 0.04m per 16px is 0.11m, above the measured 0.094m; the
+    // label centres in the enlarged button and the sibling is unchanged.
+    assert!((geometry.controls[0].bounds.height - 0.11).abs() < 1.0e-12);
+    assert!((geometry.controls[0].texts[0].bounds.y - 0.042).abs() < 1.0e-12);
+    assert!((geometry.controls[1].bounds.height - 0.094).abs() < 1.0e-12);
+
+    let mut padded = source();
+    padded.shell_padding_px = 20.0;
+    let planned = plan(padded).unwrap();
+    assert!((planned.shell_padding_meters - 0.05).abs() < 1.0e-12);
+    let geometry = arrange(&planned, &measurements(&planned)).unwrap();
+    // The content width shrinks by the shell inset on both sides.
+    assert!((geometry.controls[1].bounds.x - 1.15).abs() < 1.0e-12);
 }
 
 #[test]

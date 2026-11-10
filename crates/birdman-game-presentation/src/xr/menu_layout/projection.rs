@@ -23,6 +23,8 @@ pub struct MenuProjection {
     pub content: MenuPaintLayer,
     /// Fixed page-control painting.
     pub footer: Vec<SurfacePaintItem>,
+    /// Full-surface panel frame painting.
+    pub frame: Vec<SurfacePaintItem>,
     /// Enabled targets in the same surface coordinates as the painting.
     pub surface: XrPointerSurface,
     /// Normalized increment for one visible page.
@@ -179,7 +181,7 @@ pub(super) fn project(
     let viewport = viewport::project(
         MenuViewportSource {
             surface_size: plan.source.surface_size,
-            padding_meters: plan.padding_meters,
+            padding_meters: plan.shell_padding_meters,
             gap_meters: plan.gap_meters,
             content_height_meters: geometry.content_height_meters,
             footer_height_meters: geometry.footer_height_meters,
@@ -235,7 +237,7 @@ pub(super) fn project(
         if let Some(visible) = projected.visible {
             if !matches!(control.content, GameUiControlContent::Status { .. }) {
                 content.push(SurfacePaintItem::Rectangle {
-                    opacity: 1.0,
+                    opacity: if control.enabled { 1.0 } else { 0.55 },
                     bounds: visible,
                     color: control_background(&control.content, theme).into(),
                     gradient: None,
@@ -365,7 +367,7 @@ pub(super) fn project(
             ),
         ] {
             footer.push(SurfacePaintItem::Rectangle {
-                opacity: 1.0,
+                opacity: if enabled { 1.0 } else { 0.55 },
                 bounds,
                 color: theme.normal_background.clone(),
                 gradient: None,
@@ -444,6 +446,24 @@ pub(super) fn project(
             })
             .collect(),
     };
+    let frame = if view.layout.passthrough {
+        Vec::new()
+    } else {
+        let scale = plan.source.font_meters / plan.source.font_size_px;
+        let half_width = theme.panel_border_width_px * scale / 2.0;
+        vec![SurfacePaintItem::RoundedOutline {
+            bounds: MenuRect {
+                x: half_width,
+                y: half_width,
+                width: plan.source.surface_size.width - 2.0 * half_width,
+                height: plan.source.surface_size.height - 2.0 * half_width,
+            },
+            radius: view.layout.frame_radius_px * scale,
+            color: theme.panel_border.clone(),
+            width_px: theme.panel_border_width_px,
+            opacity: theme.panel_border_opacity,
+        }]
+    };
     Ok(MenuProjection {
         size: plan.source.surface_size,
         title: plan.source.title.clone(),
@@ -458,6 +478,7 @@ pub(super) fn project(
             items: content,
         },
         footer,
+        frame,
         surface: XrPointerSurface {
             scope: serde_json::to_string(&(&view.interaction_scope, &panel.id))
                 .map_err(|_| MenuLayoutFailure::InvalidLayout)?,

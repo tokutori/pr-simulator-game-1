@@ -4084,6 +4084,10 @@ export interface ApplicationMenuPaint {
      */
     readonly footer: readonly SurfacePaintItem[];
     /**
+     * Full-surface panel frame painting.
+     */
+    readonly frame: readonly SurfacePaintItem[];
+    /**
      * Background opacity.
      */
     readonly opacity: number;
@@ -4562,6 +4566,10 @@ export interface GameUiLayout {
      * Small-screen branch selected below the Web 600px breakpoint.
      */
     readonly compact: boolean;
+    /**
+     * Shared shell frame corner radius in logical pixels.
+     */
+    readonly frame_radius_px: number;
     /**
      * Shared control gap.
      */
@@ -5213,6 +5221,18 @@ export interface GameUiTheme {
      * Panel background color.
      */
     readonly panel_background: string;
+    /**
+     * Panel frame color.
+     */
+    readonly panel_border: string;
+    /**
+     * Panel frame opacity.
+     */
+    readonly panel_border_opacity: number;
+    /**
+     * Panel frame width in logical pixels.
+     */
+    readonly panel_border_width_px: number;
     /**
      * Centered menu opacity.
      */

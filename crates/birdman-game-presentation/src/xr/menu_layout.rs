@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod types;
 pub use types::*;
 mod preparation;
-pub use preparation::{SurfaceFontCache, prepare_game_ui_menu};
+pub use preparation::{MENU_FONT_METERS, SurfaceFontCache, prepare_game_ui_menu};
 mod text;
 pub use text::*;
 mod projection;
@@ -23,6 +23,7 @@ fn plan(source: MenuLayoutSource) -> Result<MenuLayoutPlan, MenuLayoutFailure> {
         source.control_padding_px[0],
         source.control_padding_px[1],
         source.control_gap_px,
+        source.shell_padding_px,
     ]
     .into_iter()
     .all(|value| value.is_finite() && value > 0.0)
@@ -44,8 +45,9 @@ fn plan(source: MenuLayoutSource) -> Result<MenuLayoutPlan, MenuLayoutFailure> {
         return Err(InvalidLayout);
     }
     let padding = font * source.control_padding_px[0] / source.font_size_px;
+    let shell_padding = font * source.shell_padding_px / source.font_size_px;
     let gap = font * source.control_gap_px / source.font_size_px;
-    let width = size.width - padding * 2.0;
+    let width = size.width - shell_padding * 2.0;
     let page_width = (width - gap) / 2.0 - padding * 2.0;
     if width <= padding * 2.0 || page_width <= 0.0 {
         return Err(InvalidLayout);
@@ -116,6 +118,7 @@ fn plan(source: MenuLayoutSource) -> Result<MenuLayoutPlan, MenuLayoutFailure> {
         source,
         line_height_meters,
         padding_meters: padding,
+        shell_padding_meters: shell_padding,
         gap_meters: gap,
         rows,
         texts: Vec::new(),
@@ -684,12 +687,24 @@ fn arrange(
                     texts.push(text);
                 }
             }
-            let bounds = MenuRect {
+            let mut bounds = MenuRect {
                 x: item.left,
                 y: top,
                 width: item.width,
                 height: text_top - top + plan.padding_meters,
             };
+            if let Some(min_height_px) = control.min_height_px {
+                let min_height = plan.source.font_meters * min_height_px / plan.source.font_size_px;
+                if bounds.height < min_height {
+                    let shift = (min_height - bounds.height) / 2.0;
+                    bounds.height = min_height;
+                    if matches!(control.widget, MenuWidget::Button { .. }) {
+                        for text in &mut texts {
+                            text.bounds.y += shift;
+                        }
+                    }
+                }
+            }
             if !finite_rect(bounds)
                 || plot.is_some_and(|plot| !finite_rect(plot))
                 || texts.iter().any(|text| {

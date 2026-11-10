@@ -1319,6 +1319,7 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
             panic!("countdown menu paint must fit: {reply:?}")
         };
         assert_eq!(projection.opacity, 0.0);
+        assert!(projection.frame.is_empty());
         // The only reserved control is the cancel button; no status control
         // exists for the seconds.
         let reserved_ids: Vec<&str> = projection
@@ -5497,6 +5498,99 @@ fn flight_camera_choices_share_selection_and_admission_in_all_modes() {
         assert_eq!(selected.state.flight_camera, GameUiFlightCamera::Pilot);
         assert!(selected.effects.is_empty());
     }
+}
+
+#[test]
+fn spatial_menu_frame_and_disabled_fill_follow_the_shared_theme() {
+    use crate::xr::*;
+    let font = MenuFont {
+        family: "sans-serif".into(),
+        weight: 400,
+        style: MenuFontStyle::Normal,
+        generation: 0,
+    };
+    let session = GameSession::new();
+    let platform = platform();
+    let state = GameUiState::default();
+    let menu_context = context(&session, difficulty(), &platform);
+    let mut view = game_ui_view(&state, &menu_context).unwrap();
+    let frame = game_ui_frame(&state, &menu_context, &view, view.view_revision).unwrap();
+    let viewer = crate::xr::tests::viewer(XrDepthRange::NegativeOneToOne);
+    let prepare = |view: &GameUiView| {
+        let reply = prepare_game_ui_menu(
+            view,
+            &frame,
+            MenuPreparationInput {
+                progress: 0.0,
+                generation: 1,
+                view_revision: view.view_revision,
+                panel_id: &view.panels[0].id,
+                viewer: &viewer,
+                font: &font,
+                locale: "ja",
+                font_scale: 1.0,
+            },
+            &mut SurfaceFontCache::default(),
+            |request, _, value| {
+                let advance = value.chars().count() as f64 * request.font_meters * 0.5;
+                Ok(MenuGlyphMetrics {
+                    advance,
+                    left: 0.0,
+                    right: advance,
+                    ascent: request.font_meters * 0.8,
+                    descent: request.font_meters * 0.2,
+                })
+            },
+        );
+        let MenuLayoutReply::Ready { projection } = reply else {
+            panic!("spatial menu did not fit: {reply:?}")
+        };
+        projection
+    };
+    let dimmed = |projection: &MenuProjection| {
+        projection
+            .content
+            .items
+            .iter()
+            .filter(|item| {
+                matches!(item, SurfacePaintItem::Rectangle { opacity, .. } if (*opacity - 0.55).abs() < 1.0e-12)
+            })
+            .count()
+    };
+    let baseline = prepare(&view);
+    // Disable the first button so its painted fill must dim like Screen.
+    let disabled_id = view.panels[0]
+        .controls
+        .iter()
+        .find(|control| matches!(control.content, GameUiControlContent::Button { .. }))
+        .map(|control| control.id.clone())
+        .expect("the menu view has a button");
+    for control in &mut view.panels[0].controls {
+        if control.id == disabled_id {
+            control.enabled = false;
+        }
+    }
+    let projection = prepare(&view);
+    assert_eq!(dimmed(&projection), dimmed(&baseline) + 1);
+    assert_eq!(projection.frame.len(), 1);
+    let SurfacePaintItem::RoundedOutline {
+        radius,
+        color,
+        width_px,
+        opacity,
+        ..
+    } = &projection.frame[0]
+    else {
+        panic!(
+            "the panel frame is a rounded outline: {:?}",
+            projection.frame
+        );
+    };
+    assert_eq!(color, &view.theme.panel_border);
+    assert_eq!(*opacity, view.theme.panel_border_opacity);
+    assert_eq!(*width_px, view.theme.panel_border_width_px);
+    let scale = MENU_FONT_METERS / view.theme.body_text.font_size_px;
+    assert!((radius - view.layout.frame_radius_px * scale).abs() < 1.0e-12);
 }
 
 #[test]

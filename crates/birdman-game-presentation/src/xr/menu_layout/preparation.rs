@@ -1,7 +1,10 @@
 use super::*;
 use crate::camera::{Pose, Vector3, compose_pose};
 use crate::game_ui::GameUiReadoutSource;
-use crate::game_ui::{GameUiAnchor, GameUiControlContent, GameUiFrame, GameUiPanel, GameUiView};
+use crate::game_ui::{
+    GameUiAnchor, GameUiButtonPresentation, GameUiControlContent, GameUiEmphasis, GameUiFrame,
+    GameUiPanel, GameUiView,
+};
 use crate::xr::{
     XrFitReason, XrInkFit, XrInkSegment, XrMenuViewFit, XrViewerFrame, fit_xr_menu_view,
     fit_xr_text_ink,
@@ -67,7 +70,14 @@ pub fn prepare_game_ui_menu(
             .iter()
             .find(|panel| panel.id == input.panel_id && panel.anchor == GameUiAnchor::Menu)
             .ok_or(MenuLayoutFailure::StaleView)?;
-        let source = source_from_view(panel, &view.description, frame, &input, &view.theme)?;
+        let source = source_from_view(
+            panel,
+            &view.description,
+            frame,
+            &input,
+            &view.theme,
+            view.layout.padding_px,
+        )?;
         let menu_from_panel = Pose {
             position: Vector3 {
                 x: panel.local_position[0],
@@ -99,6 +109,7 @@ fn source_from_view(
     frame: &GameUiFrame,
     input: &MenuPreparationInput<'_>,
     theme: &crate::game_ui::GameUiTheme,
+    shell_padding_px: f64,
 ) -> Result<MenuLayoutSource, MenuLayoutFailure> {
     let controls = panel
         .controls
@@ -220,6 +231,15 @@ fn source_from_view(
             Ok(MenuLayoutControl {
                 id: control.id.clone(),
                 section: Some(control.section.clone()),
+                min_height_px: match &control.content {
+                    GameUiControlContent::Button { presentation, .. } => Some(match presentation {
+                        GameUiButtonPresentation::Action {
+                            emphasis: GameUiEmphasis::Primary,
+                        } => theme.primary_min_height_px,
+                        _ => theme.button_min_height_px,
+                    }),
+                    _ => None,
+                },
                 label: if matches!(
                     control.content,
                     GameUiControlContent::Range { .. } | GameUiControlContent::Status { .. }
@@ -254,6 +274,7 @@ fn source_from_view(
         secondary_text: theme.secondary_text,
         control_padding_px: theme.control_padding_px,
         control_gap_px: theme.control_gap_px,
+        shell_padding_px,
         font: MenuFont {
             weight: theme.body_text.font_weight,
             ..input.font.clone()
