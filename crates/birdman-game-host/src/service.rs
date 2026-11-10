@@ -36,6 +36,8 @@ pub struct HostTlsConfig {
 /// A single HTTP/WebSocket listener and its verified distribution.
 #[derive(Clone)]
 pub struct HostListenConfig {
+    /// Maximum simultaneous connections, including local display peers.
+    pub peer_limit: usize,
     /// Native address to bind; port zero requests an ephemeral port.
     pub bind: SocketAddr,
     /// Explicit HTTPS configuration; `None` selects HTTP.
@@ -308,6 +310,8 @@ impl HostService {
         source_sha: &str,
         epoch: Instant,
     ) -> Result<(Self, HostListenConfig), String> {
+        ApplicationServer::validate_peer_limit(options.peer_limit)
+            .map_err(|error| error.to_string())?;
         let web = Arc::new(
             WebDistribution::open(
                 &options.web_root,
@@ -316,7 +320,7 @@ impl HostService {
             )
             .map_err(|error| error.to_string())?,
         );
-        let server = ApplicationServer::new(
+        let mut server = ApplicationServer::new(
             birdman_game_app::application::ApplicationSession::default(),
             birdman_game_runtime::ApplicationHostIdentity {
                 source_sha: source_sha.to_owned(),
@@ -325,7 +329,11 @@ impl HostService {
             },
         )
         .map_err(|error| error.to_string())?;
+        server
+            .configure_peer_limit(options.peer_limit)
+            .map_err(|error| error.to_string())?;
         let config = HostListenConfig {
+            peer_limit: options.peer_limit,
             bind: options.bind,
             tls: options.certificate.zip(options.private_key).map(
                 |(certificate_chain_pem, private_key_pem)| HostTlsConfig {
@@ -610,6 +618,8 @@ async fn run(
                     result = Err("配信するWeb bundleと実行中のゲームの版を揃える。".into());
                 } else if listener.is_some() || starting.is_some() {
                     result = Err("配信を停止してから待受設定を変更する。".into());
+                } else if let Err(error) = server.configure_peer_limit(config.peer_limit) {
+                    result = Err(error.to_string());
                 } else {
                     let handle = handle.clone();
                     snapshot.send_modify(|state| state.starting = true);

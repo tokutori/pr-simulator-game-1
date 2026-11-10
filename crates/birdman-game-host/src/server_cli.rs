@@ -4,6 +4,8 @@ use std::{net::SocketAddr, path::PathBuf};
 
 /// Startup paths and listener selected by the native operator.
 pub struct ServerOptions {
+    /// Maximum simultaneous connections, including a host display peer.
+    pub peer_limit: usize,
     /// Native HTTP/HTTPS socket address.
     pub bind: SocketAddr,
     /// Directory containing the fixed-source manifest and Web assets.
@@ -46,6 +48,7 @@ pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<ServerInvoca
         .parent()
         .ok_or("実行ファイルの配置場所を取得できない。")?;
     let mut options = ServerOptions {
+        peer_limit: birdman_game_runtime::APPLICATION_DEFAULT_PEER_LIMIT,
         bind: "127.0.0.1:8080".parse().expect("fixed socket address"),
         web_root: root.join("web"),
         records: root.join("records"),
@@ -62,6 +65,13 @@ pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<ServerInvoca
                 options.bind = value
                     .parse()
                     .map_err(|error| format!("待受アドレスを確認する: {error}"))?
+            }
+            "--max-peers" => {
+                options.peer_limit = value
+                    .parse()
+                    .map_err(|error| format!("接続上限を確認する: {error}"))?;
+                birdman_game_runtime::ApplicationServer::validate_peer_limit(options.peer_limit)
+                    .map_err(|error| error.to_string())?;
             }
             "--web-root" => options.web_root = value.into(),
             "--records" => options.records = value.into(),
@@ -80,6 +90,7 @@ pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<ServerInvoca
 pub const HELP: &str = "鳥人間滑空ゲーム 配信サーバー\n\
 使用方法: birdman-game-server [options]\n\
   --bind IP:PORT     待受アドレス（既定: 127.0.0.1:8080）\n\
+  --max-peers COUNT  接続上限（既定8、1〜16、ホスト自身を含む）\n\
   --web-root PATH    同版Web bundleの配置先\n\
   --records PATH     飛行記録の保存先\n\
   --tls-cert PATH    HTTPS証明書チェーン（PEM）\n\
@@ -112,6 +123,18 @@ mod tests {
             panic!()
         };
         assert_eq!(options.bind.to_string(), "[::1]:0");
+        assert_eq!(options.peer_limit, 8);
+        for limit in [1, 16] {
+            let ServerInvocation::Run(options) =
+                parse(["--max-peers".into(), limit.to_string()]).unwrap()
+            else {
+                panic!()
+            };
+            assert_eq!(options.peer_limit, limit);
+        }
+        for limit in [0, 17] {
+            assert!(parse(["--max-peers".into(), limit.to_string()]).is_err());
+        }
         assert!(parse(["--tls-cert".into(), "chain.pem".into()]).is_err());
     }
 }

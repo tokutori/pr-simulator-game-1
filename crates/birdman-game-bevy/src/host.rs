@@ -457,6 +457,8 @@ enum ManagementButton {
     Pause,
     Operator(Option<ApplicationPeerId>),
     Disconnect(ApplicationPeerId),
+    FewerPeers,
+    MorePeers,
 }
 
 fn update_panel(world: &mut World) {
@@ -469,7 +471,7 @@ fn update_panel(world: &mut World) {
         .filter(|(interaction, _)| **interaction == Interaction::Pressed)
         .map(|(_, button)| button.clone())
         .collect();
-    let (expanded, snapshot, diagnostic) = {
+    let (expanded, snapshot, diagnostic, configured_peer_limit) = {
         let mut state = world
             .resource::<NativeHost>()
             .0
@@ -479,6 +481,22 @@ fn update_panel(world: &mut World) {
             let command = match button {
                 ManagementButton::Toggle => {
                     state.expanded = !state.expanded;
+                    None
+                }
+                ManagementButton::FewerPeers | ManagementButton::MorePeers => {
+                    let snapshot = state.handle.snapshot();
+                    if snapshot.listening.is_none() && !snapshot.starting {
+                        state.config.peer_limit = match button {
+                            ManagementButton::FewerPeers => {
+                                state.config.peer_limit.saturating_sub(1).max(1)
+                            }
+                            _ => state
+                                .config
+                                .peer_limit
+                                .saturating_add(1)
+                                .min(birdman_game_runtime::APPLICATION_HARD_PEER_LIMIT),
+                        };
+                    }
                     None
                 }
                 ManagementButton::Start => Some(HostManagementCommand::Start(state.config.clone())),
@@ -499,7 +517,7 @@ fn update_panel(world: &mut World) {
         }
         let snapshot = state.handle.snapshot();
         let signature = format!(
-            "{}:{:?}:{}:{}:{:?}:{:?}:{:?}",
+            "{}:{:?}:{}:{}:{:?}:{:?}:{:?}:{}:{}",
             state.expanded,
             snapshot.listening,
             snapshot.starting,
@@ -510,13 +528,20 @@ fn update_panel(world: &mut World) {
                 &state.diagnostic,
                 &snapshot.diagnostic,
                 &snapshot.application.diagnostic
-            )
+            ),
+            state.config.peer_limit,
+            snapshot.application.peer_limit
         );
         if signature == state.panel_signature {
             return;
         }
         state.panel_signature = signature.clone();
-        (state.expanded, snapshot, state.diagnostic.clone())
+        (
+            state.expanded,
+            snapshot,
+            state.diagnostic.clone(),
+            state.config.peer_limit,
+        )
     };
     let old: Vec<_> = world
         .query_filtered::<Entity, With<HostPanel>>()
@@ -577,6 +602,42 @@ fn update_panel(world: &mut World) {
         },
     );
     panel_text(world, root, &font, address);
+    panel_text(
+        world,
+        root,
+        &font,
+        format!(
+            "接続数: {} / {}",
+            snapshot.application.peers.len(),
+            snapshot.application.peer_limit
+        ),
+    );
+    if snapshot.listening.is_none() && !snapshot.starting {
+        panel_text(
+            world,
+            root,
+            &font,
+            format!("次回の接続上限: {configured_peer_limit}（ホスト自身を含む）"),
+        );
+        if configured_peer_limit > 1 {
+            panel_button(
+                world,
+                root,
+                &font,
+                "上限を減らす",
+                ManagementButton::FewerPeers,
+            );
+        }
+        if configured_peer_limit < birdman_game_runtime::APPLICATION_HARD_PEER_LIMIT {
+            panel_button(
+                world,
+                root,
+                &font,
+                "上限を増やす",
+                ManagementButton::MorePeers,
+            );
+        }
+    }
     if snapshot.listening.is_some() {
         panel_button(world, root, &font, "配信を停止", ManagementButton::Stop);
     } else if !snapshot.starting {

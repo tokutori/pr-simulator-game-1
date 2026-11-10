@@ -723,10 +723,12 @@ fn shared_host_scopes_two_actual_native_connections_and_software_buffers() {
         web_bundle_sha256: web.manifest_sha256().to_owned(),
     };
     let server = ApplicationServer::new(ApplicationSession::default(), identity).unwrap();
+    assert_eq!(server.snapshot().peer_limit, 8);
     let epoch = Instant::now();
     let host = HostService::new(server, epoch, temporary.join("records")).unwrap();
     let handle = host.handle();
     let mut config = HostListenConfig {
+        peer_limit: 16,
         bind: "127.0.0.1:0".parse().unwrap(),
         tls: None,
         web,
@@ -746,6 +748,42 @@ fn shared_host_scopes_two_actual_native_connections_and_software_buffers() {
         std::thread::sleep(Duration::from_millis(2));
     };
     let url = format!("http://{address}/");
+    assert_eq!(handle.snapshot().application.peer_limit, config.peer_limit);
+    let admission_deadline = Instant::now() + Duration::from_secs(4);
+    let receive_peer = |mut reply: tokio::sync::oneshot::Receiver<
+        Result<birdman_game_host::service::HostPeer, String>,
+    >| {
+        loop {
+            match reply.try_recv() {
+                Ok(result) => break result,
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+                    if Instant::now() < admission_deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(failure) => panic!("real peer admission did not finish: {failure}"),
+            }
+        }
+    };
+    let mut admitted = Vec::new();
+    for _ in 0..16 {
+        admitted.push(receive_peer(handle.request_local_peer().unwrap()).unwrap());
+    }
+    assert!(
+        receive_peer(handle.request_local_peer().unwrap()).is_err(),
+        "connection seventeen must exceed the hard limit"
+    );
+    assert_eq!(handle.snapshot().application.peers.len(), 16);
+    for peer in admitted {
+        handle.try_disconnect(peer.id).unwrap();
+    }
+    while !handle.snapshot().application.peers.is_empty() {
+        assert!(
+            Instant::now() < admission_deadline,
+            "admission boundary peers did not retire"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
     browser_io_journey(&handle, &url);
     let mut clients = [
         Client::new(epoch, &url, 100, handle.clone()),

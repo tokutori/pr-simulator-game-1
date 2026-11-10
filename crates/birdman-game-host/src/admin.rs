@@ -97,6 +97,19 @@ impl eframe::App for Administration {
                     self.command(HostManagementCommand::Stop);
                 }
             });
+            ui.horizontal(|ui| {
+                ui.label("接続上限（ホスト自身を含む）");
+                ui.add_enabled(
+                    snapshot.listening.is_none() && !snapshot.starting,
+                    egui::DragValue::new(&mut self.config.peer_limit)
+                        .range(1..=birdman_game_runtime::APPLICATION_HARD_PEER_LIMIT),
+                );
+                ui.label(format!(
+                    "接続数: {} / {}",
+                    snapshot.application.peers.len(),
+                    snapshot.application.peer_limit
+                ));
+            });
             if let Some(address) = snapshot.listening {
                 if address.ip().is_unspecified() {
                     ui.label(format!("待受中: {address}"));

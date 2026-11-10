@@ -28,6 +28,7 @@ OSとCPUに一致する配布アーカイブを展開し、実行ファイルを
 - 別PCのNative表示: 同じ配布版を用い、`./birdman-game-bevy --connect http://<配信PCのLANアドレス>:8080/`で接続する。
 - スマートフォン・ブラウザー: `http://<配信PCのLANアドレス>:8080/`を開く。操作担当は配信PCの管理画面で指定し、他の接続は閲覧として利用する。
 - Windows: 実行コマンドの`./`を`.\`、実行ファイル名を`.exe`付きに置き換える。OSのファイアウォールでは、利用するネットワークから待受ポートへの接続を許可する。
+- 接続上限: `--max-peers COUNT`でホスト自身を含む同時接続数を1〜16に設定する（既定8）。管理画面では配信停止中に変更し、次の配信開始時に反映する。
 - HTTPS: `--tls-cert chain.pem --tls-key key.pem`を両方指定する。利用端末で信頼され、接続先の名前に一致する証明書を使用する。HMD・センサー等にsecure contextが必要なブラウザー機能は、別端末のLAN URLではHTTPSで利用する。同PCの`http://127.0.0.1/`・`http://[::1]/`と、名前解決条件に対応するブラウザーの`http://localhost/`は[信頼できるローカルorigin](https://www.w3.org/TR/secure-contexts/#is-origin-trustworthy)として扱われる。各機能の対応状況と権限はブラウザー・端末に従う。
 - バージョン: 接続するNative、配信するWeb、ホストは同じsource版を使用する。`--version`と配布物の`BUILD-INFO.json`で確認できる。
 

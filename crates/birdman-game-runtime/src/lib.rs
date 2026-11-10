@@ -30,9 +30,9 @@ pub use transport_runtime::ApplicationRuntime;
 mod server;
 #[cfg(not(verus_only))]
 pub use server::{
-    ApplicationNetworkMessage, ApplicationNetworkPayload, ApplicationServer,
-    ApplicationServerCommand, ApplicationServerError, ApplicationServerPeer,
-    ApplicationServerSnapshot, ApplicationTransmission,
+    APPLICATION_DEFAULT_PEER_LIMIT, APPLICATION_HARD_PEER_LIMIT, ApplicationNetworkMessage,
+    ApplicationNetworkPayload, ApplicationServer, ApplicationServerCommand, ApplicationServerError,
+    ApplicationServerPeer, ApplicationServerSnapshot, ApplicationTransmission,
 };
 #[cfg(not(verus_only))]
 mod flight_pointer;

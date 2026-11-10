@@ -8,7 +8,10 @@ use birdman_game_presentation::game_ui::GameUiScene;
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroU64;
 
-const MAX_PEERS: usize = 8;
+/// Default connection admission limit, including a host display peer.
+pub const APPLICATION_DEFAULT_PEER_LIMIT: usize = 8;
+/// Fixed upper bound used by admission and reserved close-control credit.
+pub const APPLICATION_HARD_PEER_LIMIT: usize = 16;
 const MAX_RELIABLE_MESSAGES: usize = 64;
 const MAX_PEER_RELIABLE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_RELIABLE_BYTES: usize = 64 * 1024 * 1024;
@@ -71,6 +74,8 @@ pub struct ApplicationServerPeer {
 /// Shared management data for Bevy and the standalone host UI.
 #[derive(Clone, Debug)]
 pub struct ApplicationServerSnapshot {
+    /// Current connection admission limit, including local host peers.
+    pub peer_limit: usize,
     /// Current connections, including orderly transport retirement.
     pub peers: Vec<ApplicationServerPeer>,
     /// Single managed operator.
@@ -256,6 +261,7 @@ pub struct ApplicationServer {
     authority: authority::ApplicationAuthority,
     identity: ApplicationHostIdentity,
     peers: BTreeMap<ApplicationPeerId, Peer>,
+    peer_limit: usize,
     operator: Option<ApplicationPeerId>,
     next_peer: u64,
     next_role_generation: u64,
@@ -293,6 +299,7 @@ impl ApplicationServer {
             ),
             identity,
             peers: BTreeMap::new(),
+            peer_limit: APPLICATION_DEFAULT_PEER_LIMIT,
             operator: None,
             next_peer: 1,
             next_role_generation: 1,
@@ -305,6 +312,31 @@ impl ApplicationServer {
             pickers: BTreeMap::new(),
             uploads: BTreeMap::new(),
         })
+    }
+
+    /// Validates the bounded startup/listener configuration without constructing a session.
+    pub fn validate_peer_limit(peer_limit: usize) -> Result<(), ApplicationServerError> {
+        if !(1..=APPLICATION_HARD_PEER_LIMIT).contains(&peer_limit) {
+            return Err(ApplicationServerError::Admission(
+                "peer limit is outside the supported range",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Applies a local admission setting without retiring any existing peer or input lease.
+    pub fn configure_peer_limit(
+        &mut self,
+        peer_limit: usize,
+    ) -> Result<(), ApplicationServerError> {
+        Self::validate_peer_limit(peer_limit)?;
+        if peer_limit < self.peers.len() {
+            return Err(ApplicationServerError::Admission(
+                "peer limit is smaller than the active connection count",
+            ));
+        }
+        self.peer_limit = peer_limit;
+        Ok(())
     }
 
     fn admit_time(&mut self, now_ms: f64) -> Result<(), ApplicationServerError> {
@@ -320,7 +352,7 @@ impl ApplicationServer {
     /// Allocates a pending mirror connection from the actual accepted socket.
     pub fn connect(&mut self, now_ms: f64) -> Result<ApplicationPeerId, ApplicationServerError> {
         self.admit_time(now_ms)?;
-        if self.authority.shutdown.closed() || self.peers.len() >= MAX_PEERS {
+        if self.authority.shutdown.closed() || self.peers.len() >= self.peer_limit {
             return Err(ApplicationServerError::Capacity);
         }
         let id = ApplicationPeerId::from_nonzero(
@@ -371,6 +403,7 @@ impl ApplicationServer {
     /// Exposes the same management state to native frontends.
     pub fn snapshot(&self) -> ApplicationServerSnapshot {
         ApplicationServerSnapshot {
+            peer_limit: self.peer_limit,
             peers: self
                 .peers
                 .iter()
@@ -403,8 +436,8 @@ impl ApplicationServer {
         let length = payload.byte_length();
         let peer_full = peer.queued() >= MAX_RELIABLE_MESSAGES - 1
             || peer.bytes().saturating_add(length) > MAX_PEER_RELIABLE_BYTES - CLOSE_CREDIT;
-        let global_full =
-            total.saturating_add(length) > MAX_RELIABLE_BYTES - MAX_PEERS * CLOSE_CREDIT;
+        let global_full = total.saturating_add(length)
+            > MAX_RELIABLE_BYTES - APPLICATION_HARD_PEER_LIMIT * CLOSE_CREDIT;
         if peer_full || global_full {
             let slow = if peer_full {
                 id
@@ -601,7 +634,7 @@ impl ApplicationServer {
                 .min(transfer.bytes.len());
             let packet_length = end - transfer.offset + APPLICATION_NETWORK_HEADER_BYTES;
             if total_bytes.saturating_add(packet_length)
-                > MAX_RELIABLE_BYTES - MAX_PEERS * CLOSE_CREDIT
+                > MAX_RELIABLE_BYTES - APPLICATION_HARD_PEER_LIMIT * CLOSE_CREDIT
                 || peer.bytes().saturating_add(packet_length)
                     > MAX_PEER_RELIABLE_BYTES - CLOSE_CREDIT
             {

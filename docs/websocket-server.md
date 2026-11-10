@@ -130,7 +130,7 @@ CPU受信ACKとGPU寿命を区別する。クライアント内のDrawing lease�
 
 `TransferManifest` は `transfer_id`, `kind`, `local_id`, `revision`, `byte_length` を持つ。JSON側の `kind` は `render_buffer`, `configuration`, `flight_record`, `guest_program`, `download` を使う。manifestを先に認可し、同一identity・総長・現在の連続offsetに一致するchunkだけを追加する。各chunkは非零長、最大262,144 byteで、offset加算のoverflowと総長超過を拒否する。
 
-render用の `BufferManifest` は `key { buffer_id, revision }`, `data_type`, `byte_length`, `transfer_id` を持つ。`data_type` は `f32`, `u8`, `u16`, `u32` で、実descriptorの型・stride・count・長さと照合し、F32値の有限性を確認する。render bytes自身もlittle endianである。
+render用の `BufferManifest` は `key { buffer_id, revision }`, `data_type`, `byte_length`, `transfer_id` を持つ。`data_type` は `f32`, `u8`, `u32` で、実descriptorの型・stride・count・長さと照合し、F32値の有限性を確認する。render bytes自身もlittle endianである。
 
 - 不変性: 同じbuffer keyは同じ型・長さ・bytesを表す。async Prepareの途中で同IDの新revisionへすり替えない。
 - 省略: `transfer_id: null` は、peerがacceptedとACKした現在のadopted Frameにある完全一致keyだけで使用する。クライアントは対応する同型・同長の不変snapshotを再用する。資源offerは全bufferを転送する。
@@ -144,7 +144,7 @@ render用の `BufferManifest` は `key { buffer_id, revision }`, `data_type`, `b
 | client → server JSON | UTF-8原文で1 MiB |
 | server → client JSON | UTF-8原文で16 MiB |
 | binary message | 40 + 262,144 = 262,184 byte |
-| 同時peer | 8 |
+| 同時peer | 既定8、1〜16で設定。ホスト自身のin-process peerを含む |
 | reliable列 | peerあたり64枠・16 MiB、全peer合計64 MiB。終端通知用creditを確保する |
 | Frame配信 | operator最大60 Hz、mirror最大30 Hz。ACK待ちの採用候補1件と最新候補1件でcoalesceする |
 | peerの資源準備 | 未完了・保持中を合わせて8件 |
@@ -152,6 +152,8 @@ render用の `BufferManifest` は `key { buffer_id, revision }`, `data_type`, `b
 | Nativeクライアント生I/O | 合計予約64 MiB、うち送信credit 2 MiB。active/closing socket最大2、1受理batch最大8 messageか16 MiB+1 byte |
 
 上限の正本は[共有定数](https://github.com/tokutori/pr-simulator-game-1/blob/cbda1c3af92d41547b3aba7c55310831197c8291/crates/birdman-game-runtime/src/lib.rs)と[サーバーのqueue/pin管理](https://github.com/tokutori/pr-simulator-game-1/blob/cbda1c3af92d41547b3aba7c55310831197c8291/crates/birdman-game-runtime/src/server.rs)である。設定文書の総長はdocumentごとの既存format上限を使い、binary chunk上限とは区別する。
+
+接続上限は`--max-peers`と配信停止中の管理画面で設定し、次の配信開始時に反映する。現在の接続数を下回る設定を拒否し、変更による既存peerの自動退役は行わない。
 
 送信enqueue・実socket送信完了・application ACKを別の事象として扱う。送信中とqueue内のbytesを計上し、受信は保持中・受理callback中も予約を保つ。低速peerは有限queueと期限で退役する。bulk転送やScene生成でcanonical executorを占有せず、入力・heartbeat・他peerの配信を継続する。
 

@@ -71,6 +71,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     let mut export_directory = None;
     let mut connect = None;
     let mut host = None;
+    let mut host_peer_limit = None;
     let mut web_root = None;
     let mut tls_certificate = None;
     let mut tls_private_key = None;
@@ -84,6 +85,14 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                         .ok_or("--host requires a bind address")?
                         .parse::<std::net::SocketAddr>()?,
                 );
+            }
+            "--max-peers" => {
+                let limit = arguments
+                    .next()
+                    .ok_or("--max-peers requires a connection count")?
+                    .parse::<usize>()?;
+                birdman_game_runtime::ApplicationServer::validate_peer_limit(limit)?;
+                host_peer_limit = Some(limit);
             }
             "--web-root" => {
                 web_root = Some(PathBuf::from(
@@ -145,6 +154,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                     "--export-dir DIR: 飛行ログJSON/CSVの保存先。既定は起動時の作業directory/flight-logs。既存fileは上書きしない。"
                 );
                 println!("--connect URL: HTTP(S)のゲームホストへ接続する。");
+                println!("--max-peers COUNT: --hostの接続上限。既定8、1〜16でホスト自身を含む。");
                 println!(
                     "--host ADDRESS: 共有セッションを配信し、自機も表示・操作端末として接続する。 --web-root DIR: 同梱Web資産。 --tls-cert PEM / --tls-key PEM: HTTPS証明書と秘密鍵。"
                 );
@@ -180,9 +190,12 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         return Err("--host and --connect select exclusive transports".into());
     }
     if host.is_none()
-        && (web_root.is_some() || tls_certificate.is_some() || tls_private_key.is_some())
+        && (web_root.is_some()
+            || tls_certificate.is_some()
+            || tls_private_key.is_some()
+            || host_peer_limit.is_some())
     {
-        return Err("Web distribution and TLS options require --host".into());
+        return Err("Host listener options require --host".into());
     }
     if tls_certificate.is_some() != tls_private_key.is_some() {
         return Err("HTTPS requires both --tls-cert and --tls-key".into());
@@ -244,6 +257,8 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             .parent()
             .ok_or("Native executable has no parent directory")?;
         let options = birdman_game_host::server_cli::ServerOptions {
+            peer_limit: host_peer_limit
+                .unwrap_or(birdman_game_runtime::APPLICATION_DEFAULT_PEER_LIMIT),
             bind,
             web_root: web_root.unwrap_or_else(|| package.join("web")),
             records: package.join("records"),
