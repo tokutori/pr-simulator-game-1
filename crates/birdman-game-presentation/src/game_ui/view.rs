@@ -2118,6 +2118,11 @@ pub(super) fn layout(
             (viewport.height - 2.0 * font).max(1.0)
         },
         padding_px: padding,
+        frame_radius_px: match shell {
+            GameUiShell::FlightBar => 0.0,
+            GameUiShell::PauseSettings | GameUiShell::Cinematic => 0.75 * font,
+            _ => font,
+        },
         gap_px: 0.75 * font,
         choice_columns: ((content + 0.5 * font) / (8.0 * font + 0.5 * font))
             .floor()
@@ -2174,6 +2179,9 @@ pub(super) fn theme(font: f64) -> GameUiTheme {
         warning_text: "#ff9b73".to_owned(),
         flight_path_marker: "#7df4c5".to_owned(),
         panel_background: "#10242b".to_owned(),
+        panel_border: "#b9d6cf".to_owned(),
+        panel_border_opacity: 0.45,
+        panel_border_width_px: 1.0,
         panel_opacity: 0.92,
         hud_opacity: super::hud::HUD_OPACITY,
         normal_background: "#31555a".to_owned(),

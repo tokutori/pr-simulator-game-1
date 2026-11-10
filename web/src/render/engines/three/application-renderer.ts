@@ -1107,6 +1107,7 @@ export class ThreeApplicationRenderer {
       paintSurface(context, paint.content.items, scaleX, scaleY);
     } finally { context.restore(); }
     paintSurface(context, paint.footer, scaleX, scaleY);
+    paintSurface(context, paint.frame, scaleX, scaleY);
     if (this.menu_mesh.material.map !== null) this.menu_mesh.material.map.needsUpdate = true;
     this.menu_paint = { revision: menu.paint_revision, texture: this.menu_mesh.material.map };
   }

@@ -620,6 +620,8 @@ function sharedPresentationData(presentation: GameUiView): VNodeData {
       overflowX: layout.clip_x ? "hidden" : "auto",
       overflowY: layout.scroll_y ? "auto" : "hidden",
       background: layout.passthrough ? "transparent" : `color-mix(in srgb, ${theme.panel_background} ${String(theme.panel_opacity * 100)}%, transparent)`,
+      border: layout.passthrough || layout.shell === "flight_bar" ? "0" : `${String(theme.panel_border_width_px)}px solid color-mix(in srgb, ${theme.panel_border} ${String(theme.panel_border_opacity * 100)}%, transparent)`,
+      borderRadius: `${String(layout.frame_radius_px)}px`,
       ...(layout.shell === "analysis" ? { height: `${String(layout.maximum_height_px)}px` } : {}),
       "--game-ui-title-font-size": `${String(theme.title_text.font_size_px)}px`,
       "--game-ui-title-line-height": `${String(theme.title_text.line_height_px)}px`,

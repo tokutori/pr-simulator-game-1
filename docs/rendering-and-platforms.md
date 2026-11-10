@@ -403,6 +403,8 @@ T_{eye,object}=T_{R,eye}^{-1}T_{R,object}
 - font読込み等のpendingでは旧入力contextを失効させ、回復を要求せず新geometryを待つ。
 
 - 共通の順序付きsectionと型付きnodeを実font・localeで計測し、共有Rustが同じView/FrameからMenuの描画命令・clip・ページ操作・入力面を一括導出する。adapterは文字計測と、返された矩形・線分・文字の描画を担当する。
+- panelの枠線（色・不透明度・幅）は共有themeが定義し、角丸半径とshell余白は共有layoutがshell種別ごとに定義する。Screen（Web・Native）とVRのMenu paintは同じ値を適用し、passthroughとFlightBarでは枠線を表示しない。
+- Menu内のbutton高さは共有themeの最小高さ（通常・Primary）を下限とし、無効化した操作要素の塗りはScreenと同じ不透明度0.55で描く。
 - 文字幅は折返し・再配置で収め、指定したフォント寸法を保持する。
 - advanceとactualBoundingBox、描画のfont・locale・baseline・alignを一致させ、符号付きink metricsから実矩形を復元する。
 
