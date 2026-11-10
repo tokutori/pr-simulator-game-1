@@ -2,7 +2,7 @@
 
 本書は、Web・Nativeクライアントへ同じゲーム状態を配信するサーバーの実装契約を定義する。サーバーはゲーム進行と操縦入力の認可を所有し、クライアントは自身のcamera・XR・描画資源を所有する。外部飛行コントローラーのWasm・SITL・HITLは[飛行制御](flight-control.md#外部controller)の別契約であり、このWebSocketへ尾翼角やcontrollerバイナリフレームを直接送る方式ではない。
 
-正本は[wire型とcodec](https://github.com/tokutori/pr-simulator-game-1/blob/cbda1c3af92d41547b3aba7c55310831197c8291/crates/birdman-game-runtime/src/wire.rs)、[共有サーバー](https://github.com/tokutori/pr-simulator-game-1/blob/cbda1c3af92d41547b3aba7c55310831197c8291/crates/birdman-game-runtime/src/server.rs)、[共有Remoteクライアント](https://github.com/tokutori/pr-simulator-game-1/blob/cbda1c3af92d41547b3aba7c55310831197c8291/crates/birdman-game-runtime/src/remote.rs)である。入れ子のfield・enum・検証条件もこれらのRust定義に合わせる。コード参照は本通信契約を定義した固定版を指し、配布版のビルド来歴は `BUILD-INFO.json` の `source_sha` で照合する。
+正本は[wire型とcodec](https://github.com/tokutori/pr-simulator-game-1/blob/24950fa161475bed1646e264768296ea1b889d1d/crates/birdman-game-runtime/src/wire.rs)、[共有サーバー](https://github.com/tokutori/pr-simulator-game-1/blob/24950fa161475bed1646e264768296ea1b889d1d/crates/birdman-game-runtime/src/server.rs)、[共有Remoteクライアント](https://github.com/tokutori/pr-simulator-game-1/blob/24950fa161475bed1646e264768296ea1b889d1d/crates/birdman-game-runtime/src/remote.rs)である。入れ子のfield・enum・検証条件もこれらのRust定義に合わせる。コード参照は本通信契約を定義した固定版を指し、配布版のビルド来歴は `BUILD-INFO.json` の `source_sha` で照合する。
 
 ## 接続と同版照合
 
@@ -25,7 +25,7 @@
 
 HTTP 404は共有起動ownerにおけるLocal実行の判定である。200の不正JSON・不一致identity・接続失敗はエラーとして扱う。サーバーはbootstrapへ `Content-Type: application/json` と `Cache-Control: no-store` を付ける。
 
-HTTP配信・TLS・Origin認可の正本は[Host HTTPアダプタ](https://github.com/tokutori/pr-simulator-game-1/blob/cbda1c3af92d41547b3aba7c55310831197c8291/crates/birdman-game-host/src/http.rs)、同梱Webのfile/hash/MIME検証は[Web配布実装](https://github.com/tokutori/pr-simulator-game-1/blob/cbda1c3af92d41547b3aba7c55310831197c8291/crates/birdman-game-host/src/web_distribution.rs)を参照する。ブラウザーのupgradeはscheme・host・実効portが同originのときに受理する。Originを持たないNative接続も初期mirrorで接続する。TLS証明書・hostnameの検証とブラウザーのsecure context条件を適用する。
+HTTP配信・TLS・Origin認可の正本は[Host HTTPアダプタ](https://github.com/tokutori/pr-simulator-game-1/blob/24950fa161475bed1646e264768296ea1b889d1d/crates/birdman-game-host/src/http.rs)、同梱Webのfile/hash/MIME検証は[Web配布実装](https://github.com/tokutori/pr-simulator-game-1/blob/24950fa161475bed1646e264768296ea1b889d1d/crates/birdman-game-host/src/web_distribution.rs)を参照する。ブラウザーのupgradeはscheme・host・実効portが同originのときに受理する。Originを持たないNative接続も初期mirrorで接続する。TLS証明書・hostnameの検証とブラウザーのsecure context条件を適用する。
 
 ## JSONの共通規則と認可
 
@@ -68,9 +68,9 @@ role喪失・入力期限切れ・切断では操縦入力を退役し、飛行�
 | `observation` | `input` | `ApplicationInput` のうち `control`, `keyboard`, `physical_key`, `chart_measured`, `control_pointer` を受理する。XR tracking・描画完了・保存完了はcanonical入力へ転送しない |
 | `configuration_loaded` | `document`, `request_id`, `completion` | 発行済みpickerの結果。元request・actor・documentで認可し、現在Viewへの遷移だけでは完了を失効させない |
 
-型の詳細は[集約入力と描画契約](https://github.com/tokutori/pr-simulator-game-1/blob/cbda1c3af92d41547b3aba7c55310831197c8291/crates/birdman-game-runtime/src/types.rs)、[UI actionとplatform](https://github.com/tokutori/pr-simulator-game-1/blob/cbda1c3af92d41547b3aba7c55310831197c8291/crates/birdman-game-presentation/src/game_ui/types.rs)を参照する。`control_pointer` のcamera/look処理はクライアントEndpoint、touch操縦とchart操作のcanonical処理は共有サーバーへ接続する。
+型の詳細は[集約入力と描画契約](https://github.com/tokutori/pr-simulator-game-1/blob/24950fa161475bed1646e264768296ea1b889d1d/crates/birdman-game-runtime/src/types.rs)、[UI actionとplatform](https://github.com/tokutori/pr-simulator-game-1/blob/24950fa161475bed1646e264768296ea1b889d1d/crates/birdman-game-presentation/src/game_ui/types.rs)を参照する。`control_pointer` のcamera/look処理はクライアントEndpoint、touch操縦とchart操作のcanonical処理は共有サーバーへ接続する。
 
-`ConfigurationResult` は `found { transfer }`、`missing`、`cancelled`、`failed { cause }` の直和である。選択開始は `ActivationGrant.operation` の `pick_configuration { document, request_id, maximum_bytes }` に束縛する。もう一方のoperationは `presentation { action }` である。アップロードは元のbytesを転送し、[既存設定検証](https://github.com/tokutori/pr-simulator-game-1/blob/cbda1c3af92d41547b3aba7c55310831197c8291/crates/birdman-game-runtime/src/server/transfers.rs)へ渡す。remoteからのControllerExecution選択はWasm guestを受理し、Native実行pathの認可はHostのローカル設定が所有する。
+`ConfigurationResult` は `found { transfer }`、`missing`、`cancelled`、`failed { cause }` の直和である。選択開始は `ActivationGrant.operation` の `pick_configuration { document, request_id, maximum_bytes }` に束縛する。もう一方のoperationは `presentation { action }` である。アップロードは元のbytesを転送し、[既存設定検証](https://github.com/tokutori/pr-simulator-game-1/blob/24950fa161475bed1646e264768296ea1b889d1d/crates/birdman-game-runtime/src/server/transfers.rs)へ渡す。remoteからのControllerExecution選択はWasm guestを受理し、Native実行pathの認可はHostのローカル設定が所有する。
 
 設定uploadのmanifestは `local_id = request_id`、`revision = 0` とし、総長を発行済み `maximum_bytes` 内へ制限する。ControllerExecutionは `guest_program`、その他の設定は `configuration` を指定する。発行済みpickerに対応しないmanifestから領域を確保しない。
 
@@ -88,7 +88,7 @@ role喪失・入力期限切れ・切断では操縦入力を退役し、飛行�
 | `pong` | `peer` | application heartbeatの応答 |
 | `closed` | `peer`, `cause` | サーバーが接続を終端する原原因 |
 
-`publication` の全fieldは `frame_id`, `assets_generation`, `resource_epoch`, `view_revision`, `server_time_ms`, `frame`, `scene`, `display`, `ui_scale`, `buffers` である。`frame` は `GameUiFrame`、`scene` は[共有SceneSource](https://github.com/tokutori/pr-simulator-game-1/blob/cbda1c3af92d41547b3aba7c55310831197c8291/crates/birdman-game-runtime/src/scene.rs)、`display` は共有 `DisplayAdjustment` である。サーバーのphysicsやUI状態をクライアントで再構築せず、この完全なpublicationから最新のローカルhead/lookを投影する。
+`publication` の全fieldは `frame_id`, `assets_generation`, `resource_epoch`, `view_revision`, `server_time_ms`, `frame`, `scene`, `display`, `ui_scale`, `buffers` である。`frame` は `GameUiFrame`、`scene` は[共有SceneSource](https://github.com/tokutori/pr-simulator-game-1/blob/24950fa161475bed1646e264768296ea1b889d1d/crates/birdman-game-runtime/src/scene.rs)、`display` は共有 `DisplayAdjustment` である。サーバーのphysicsやUI状態をクライアントで再構築せず、この完全なpublicationから最新のローカルhead/lookを投影する。
 
 ## View・Frame・GPU資源の順序
 
@@ -151,7 +151,7 @@ render用の `BufferManifest` は `key { buffer_id, revision }`, `data_type`, `b
 | render buffer | 単一64 MiB、クライアントのpin上限256 MiB |
 | Nativeクライアント生I/O | 合計予約64 MiB、うち送信credit 2 MiB。active/closing socket最大2、1受理batch最大8 messageか16 MiB+1 byte |
 
-上限の正本は[共有定数](https://github.com/tokutori/pr-simulator-game-1/blob/cbda1c3af92d41547b3aba7c55310831197c8291/crates/birdman-game-runtime/src/lib.rs)と[サーバーのqueue/pin管理](https://github.com/tokutori/pr-simulator-game-1/blob/cbda1c3af92d41547b3aba7c55310831197c8291/crates/birdman-game-runtime/src/server.rs)である。設定文書の総長はdocumentごとの既存format上限を使い、binary chunk上限とは区別する。
+上限の正本は[共有定数](https://github.com/tokutori/pr-simulator-game-1/blob/24950fa161475bed1646e264768296ea1b889d1d/crates/birdman-game-runtime/src/lib.rs)と[サーバーのqueue/pin管理](https://github.com/tokutori/pr-simulator-game-1/blob/24950fa161475bed1646e264768296ea1b889d1d/crates/birdman-game-runtime/src/server.rs)である。設定文書の総長はdocumentごとの既存format上限を使い、binary chunk上限とは区別する。
 
 接続上限は`--max-peers`と配信停止中の管理画面で設定し、次の配信開始時に反映する。現在の接続数を下回る設定を拒否し、変更による既存peerの自動退役は行わない。
 
@@ -175,4 +175,4 @@ render用の `BufferManifest` は `key { buffer_id, revision }`, `data_type`, `b
 {"kind":"pong","peer":{"client_id":1,"connection_epoch":1}}
 ```
 
-サーバー自身の実装には[Host service](https://github.com/tokutori/pr-simulator-game-1/blob/cbda1c3af92d41547b3aba7c55310831197c8291/crates/birdman-game-host/src/service.rs)と[Native HTTP/WebSocket I/O](https://github.com/tokutori/pr-simulator-game-1/blob/cbda1c3af92d41547b3aba7c55310831197c8291/crates/birdman-game-host/src/network_io.rs)、ソフトウェア接続の確認には[実Hostと複数クライアントの旅程](https://github.com/tokutori/pr-simulator-game-1/blob/cbda1c3af92d41547b3aba7c55310831197c8291/crates/birdman-game-host/tests/remote_session.rs)を参照する。
+サーバー自身の実装には[Host service](https://github.com/tokutori/pr-simulator-game-1/blob/24950fa161475bed1646e264768296ea1b889d1d/crates/birdman-game-host/src/service.rs)と[Native HTTP/WebSocket I/O](https://github.com/tokutori/pr-simulator-game-1/blob/24950fa161475bed1646e264768296ea1b889d1d/crates/birdman-game-host/src/network_io.rs)、ソフトウェア接続の確認には[実Hostと複数クライアントの旅程](https://github.com/tokutori/pr-simulator-game-1/blob/24950fa161475bed1646e264768296ea1b889d1d/crates/birdman-game-host/tests/remote_session.rs)を参照する。
