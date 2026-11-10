@@ -27,7 +27,6 @@ pub(super) fn platform() -> GameUiPlatformInput {
         hmd_available: false,
         phone_vr_available: false,
         touch_available: false,
-        menu_recenter_available: false,
         analysis_available: true,
         replay_available: true,
         stored_records_available: false,
@@ -1780,7 +1779,7 @@ fn title_projects_saved_timestamps_without_rewriting_platform_metadata() {
 }
 
 #[test]
-fn hmd_selection_and_menu_recenter_follow_adapter_capabilities() {
+fn hmd_selection_follows_adapter_capabilities() {
     let session = GameSession::new();
     let state = GameUiState::default();
     let mut platform = platform();
@@ -1810,31 +1809,6 @@ fn hmd_selection_and_menu_recenter_follow_adapter_capabilities() {
             command: GameUiPlatformCommand::SetPresentation {
                 mode: GameUiPresentationMode::Hmd
             }
-        }]
-    );
-    platform.presentation_mode = GameUiPresentationMode::Hmd;
-    let recenter = GameUiAction::Platform {
-        command: GameUiPlatformCommand::RecenterMenu {},
-    };
-    assert_eq!(
-        update_game_ui(
-            &state,
-            recenter.clone(),
-            &context(&session, difficulty(), &platform)
-        ),
-        Err(GameUiError::ActionUnavailable)
-    );
-    platform.menu_recenter_available = true;
-    assert_eq!(
-        update_game_ui(
-            &state,
-            recenter,
-            &context(&session, difficulty(), &platform)
-        )
-        .unwrap()
-        .effects,
-        vec![GameUiEffect::Platform {
-            command: GameUiPlatformCommand::RecenterMenu {}
         }]
     );
 }
@@ -2915,8 +2889,10 @@ fn structured_boundary_rejects_unknown_fields_and_exclusive_variant_payloads() {
         serde_json::from_str::<SessionCommand>(r#"{"kind":"open_setup","extra":true}"#).is_err()
     );
     assert!(
-        serde_json::from_str::<GameUiPlatformCommand>(r#"{"kind":"recenter_menu","extra":true}"#)
-            .is_err()
+        serde_json::from_str::<GameUiPlatformCommand>(
+            r#"{"kind":"recenter_phone_tracking","extra":true}"#
+        )
+        .is_err()
     );
     assert_eq!(
         serde_json::from_str::<GameUiAction>(r#"{"kind":"toggle_technical"}"#).unwrap(),

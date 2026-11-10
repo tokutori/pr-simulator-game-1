@@ -376,26 +376,10 @@ impl SurfaceOwner {
         }
     }
 
-    pub(super) fn recenter_menu(
-        &mut self,
-        head: Option<Pose>,
-    ) -> Result<(), birdman_game_presentation::camera::CameraError> {
-        if let Some(head) = head {
-            self.placement.recenter_menu(head)?;
-        }
+    /// Drops published input state after a tracking recenter moved every
+    /// head-relative surface at once.
+    pub(super) fn tracking_recentered(&mut self) {
         self.invalidate();
-        Ok(())
-    }
-
-    pub(super) fn recenter_tracking(
-        &mut self,
-        change: Option<Pose>,
-    ) -> Result<(), birdman_game_presentation::camera::CameraError> {
-        if let Some(change) = change {
-            self.placement.recenter_tracking(change)?;
-        }
-        self.invalidate();
-        Ok(())
     }
 
     fn invalidate(&mut self) {

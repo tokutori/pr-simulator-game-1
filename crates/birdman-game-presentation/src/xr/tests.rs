@@ -712,7 +712,7 @@ fn world_cockpit_and_head_keep_their_distinct_physical_owners() {
 }
 
 #[test]
-fn menu_opening_retains_motion_and_refits_camera_basis_changes() {
+fn menu_opening_follows_head_motion_and_ignores_camera_basis_changes() {
     let views = viewer(XrDepthRange::NegativeOneToOne);
     let geometry = menu_geometry();
     let observation = XrPanelObservation::Ready {
@@ -730,6 +730,15 @@ fn menu_opening_retains_motion_and_refits_camera_basis_changes() {
         head: plane(-10.0),
         ..reference
     };
+    let following = session.place_panel(observation.clone(), &views, Some(moved));
+    assert_ne!(following, before);
+    // A fresh opening at the moved head lands on the same pose: the retained
+    // placement is the fitted head-relative placement, recomposed per frame.
+    let mut fresh = XrSpatialSession::new();
+    assert_eq!(
+        fresh.place_panel(observation.clone(), &views, Some(moved)),
+        following
+    );
     for noise in [-1.0e-5_f64, -1.0e-7, 0.0, 1.0e-7, 1.0e-5] {
         let mut noisy = views.clone();
         let XrViewerFrame::Configured { eyes, .. } = &mut noisy else {
@@ -747,44 +756,25 @@ fn menu_opening_retains_motion_and_refits_camera_basis_changes() {
         eyes[0].projection[0] = ((eyes[0].projection[0] + noise) as f32).into();
         assert_eq!(
             session.place_panel(observation.clone(), &noisy, Some(moved)),
-            before
+            following
         );
     }
-    assert_eq!(
-        session.place_panel(observation.clone(), &views, Some(moved)),
-        before
-    );
     assert_eq!(
         session.place_panel(XrPanelObservation::Pending, &views, Some(moved)),
         XrPanelPlacement::Absent
     );
-    assert!(
-        session
-            .recenter_tracking(Pose {
-                orientation: Quaternion {
-                    w: 0.0,
-                    x: 0.0,
-                    y: 0.0,
-                    z: 0.0
-                },
-                ..Pose::IDENTITY
-            })
-            .is_err()
-    );
     assert_eq!(
         session.place_panel(observation.clone(), &views, Some(moved)),
-        before
+        following
     );
+    // The reference basis does not affect the menu: it is locked to the head.
     let changed_basis = XrReferenceFrame {
         basis: XrReferenceBasis::World,
         ..moved
     };
-    let refitted = session.place_panel(observation.clone(), &views, Some(changed_basis));
-    assert_ne!(refitted, before);
-    session.recenter_menu(plane(-20.0)).unwrap();
-    assert_ne!(
+    assert_eq!(
         session.place_panel(observation, &views, Some(changed_basis)),
-        refitted
+        following
     );
 }
 

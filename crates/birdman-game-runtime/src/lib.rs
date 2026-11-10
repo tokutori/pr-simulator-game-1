@@ -280,7 +280,6 @@ impl ApplicationRuntime {
             hmd_available: capabilities.hmd_available,
             phone_vr_available: phone.available(),
             touch_available: capabilities.touch_available,
-            menu_recenter_available: false,
             analysis_available: capabilities.analysis_available,
             replay_available: capabilities.replay_available,
             stored_records_available: capabilities.stored_records_available,
@@ -2095,26 +2094,14 @@ impl ApplicationRuntime {
                 GameUiEffect::Platform {
                     command: GameUiPlatformCommand::RecenterPhoneTracking {},
                 } => {
-                    if let Some(correction) = self
+                    if self
                         .phone
                         .recenter()
                         .map_err(ApplicationRuntimeError::Camera)?
+                        .is_some()
                     {
-                        let change = self
-                            .scene
-                            .tracking_change(correction)
-                            .map_err(ApplicationRuntimeError::Camera)?;
-                        self.surface
-                            .recenter_tracking(change)
-                            .map_err(ApplicationRuntimeError::Camera)?;
+                        self.surface.tracking_recentered();
                     }
-                }
-                GameUiEffect::Platform {
-                    command: GameUiPlatformCommand::RecenterMenu {},
-                } => {
-                    self.surface
-                        .recenter_menu(self.scene.reference_head())
-                        .map_err(ApplicationRuntimeError::Camera)?;
                 }
                 GameUiEffect::Platform {
                     command: GameUiPlatformCommand::OpenStoredRecord { id },

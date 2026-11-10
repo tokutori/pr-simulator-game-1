@@ -1453,8 +1453,6 @@ export type GameUiPlatformCommand = {
 } | {
     readonly kind: "recenter_phone_tracking";
 } | {
-    readonly kind: "recenter_menu";
-} | {
     readonly kind: "download_software_licenses";
 } | {
     readonly kind: "download_record_json";
