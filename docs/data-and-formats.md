@@ -9,7 +9,7 @@
 
 ## 正本と版管理
 
-外部データのcodecは`birdman-game-format`、実行環境・archiveの準備は`birdman-game-app`、filesystem・IndexedDB・ダウンロードはplatform adapterが所有する。runtimeで気象APIやGISサービスへ接続しない。
+ゲーム設定・保存記録のcodecは`birdman-game-format`、実行環境・archiveの準備は`birdman-game-app`、filesystem・IndexedDB・ダウンロードはplatform adapterが所有する。runtimeで気象APIやGISサービスへ接続しない。
 
 機体・制御設定・外部制御接続・環境JSONは解析時に先頭のUTF-8 BOMを1個無視し、サイズ制限・保存・SHA-256はBOMを含む原文bytesに適用する。
 
@@ -56,6 +56,18 @@
 - manifest検査は存在、hash、重複、登録経路を確認する。
 - 利用許諾そのものの証明にはならない。
 - 法的な表示文と個別条件は[第三者データ](../THIRD_PARTY_DATA.md)、配布への同梱は[nativeガイド](native-guide.md)に定める。
+
+### Native同梱Web
+
+- 配布: 同じソースから生成したWeb成果物を1回用意し、通常Nativeと管理サーバーを含む6構成の各archiveへ`web/`として同梱する。公開Pagesも同じ相対baseのビルド設定を使用する。
+- 固定ソース: versioned配布は、追跡済み・未追跡のソース変更がないチェックアウトの完全なHEADを使用する。CIの生成物とダウンロード成果物は`target/`と`web/dist/`へ配置する。
+- Native来歴: `BUILD-INFO.json` schema 2は完全なsource SHA、application契約SHA-256、Cargo.lock、toolchain、各実行ファイルの名前・feature・SHA-256・CPU起動結果を持つ。
+- Web manifest: `web-bundle-manifest.json` schema 1は`source_sha`、`contract_sha256`、各ファイルの正規相対path・size・SHA-256・content_typeを持つ。manifest自身のSHA-256をHTTP bootstrapと配布metadataが保持する。
+- 契約指紋: runtimeが生成するplatform・observation・output・font probe／metricsのcanonical JSON schemaをSHA-256へ入力する。接続時にはWebSocketプロトコル版と完全なsource SHAも照合する。
+- 容量: manifestは1 MiB、ファイル数は256、各ファイルは32 MiB、合計は128 MiBを上限とする。
+- 配信: hostが開始時に版と全ファイルを検証して不変bytesへ保持し、manifestにあるURIだけを応答する。`/`は`index.html`、`/api/host`と`/api/session/ws`はhostの動的なHTTP／WebSocket境界である。
+- キャッシュ: 実bytesの完全なSHA-256を名前に持つassetだけをimmutableとし、index・manifest・その他のファイルは`no-store`を使用する。
+- 利用条件: WebのWASM依存noticeとNative／server-uiの依存noticeを、それぞれの実際の依存graphから生成して配布する。
 
 ## 地理・景観データ
 

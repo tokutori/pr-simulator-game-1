@@ -41,7 +41,7 @@ type SchemaProvider = "birdman-game-format" | "birdman-game-app" | "birdman-game
 function schemaFeatures(name: SchemaProvider): readonly string[] {
   return name === "birdman-game-format" || name === "birdman-game-scene" ? ["dep:schemars"]
     : name === "birdman-game-app" ? ["dep:schemars", "birdman-game-format/schema"]
-    : name === "birdman-game-runtime" ? ["dep:schemars", "birdman-game-app/schema", "birdman-game-presentation/schema", "birdman-game-scene/schema"]
+    : name === "birdman-game-runtime" ? ["dep:schemars", "dep:sha2", "birdman-game-app/schema", "birdman-game-presentation/schema", "birdman-game-scene/schema"]
     : ["dep:schemars", "birdman-game-app/schema", "birdman-game-format/schema"];
 }
 
@@ -368,6 +368,29 @@ describe("Cargo dependency boundary", () => {
   );
 
   it("keeps native engine and shared session dependencies outside core and format", () => {
+    const host = { name: "birdman-game-host", kind: null, target: NATIVE_SCREEN_TARGET,
+      path: "/workspace/crates/birdman-game-host", source: null, rename: null,
+      optional: false, uses_default_features: true, features: [] };
+    const transport = { ...nativeTextDependency, name: "tokio", req: "=1.53.2", features: ["sync"] };
+    const executor = { ...transport, target: null,
+      features: ["rt-multi-thread", "net", "process", "io-util", "sync", "time", "macros"] };
+    expect(() => { assertDependencyBoundary([
+      { name: "birdman-game-bevy", dependencies: [host, transport] },
+      { name: "birdman-game-host", dependencies: [executor] }
+    ]); }).not.toThrow();
+    for (const name of ["birdman-game-core", "birdman-game-app", "birdman-game-runtime", "birdman-game-wasm"]) {
+      for (const dependency of [host, transport, executor]) {
+        expect(() => { assertDependencyBoundary([{ name, dependencies: [dependency] }]); }).toThrow();
+      }
+    }
+    expect(() => { assertDependencyBoundary([
+      { name: "birdman-game-bevy", dependencies: [{ ...transport, features: executor.features }] }
+    ]); }).toThrow();
+    for (const difference of [{ req: "^1.53.2" }, { uses_default_features: true }, { features: ["full"] }]) {
+      expect(() => { assertDependencyBoundary([
+        { name: "birdman-game-host", dependencies: [{ ...executor, ...difference }] }
+      ]); }).toThrow();
+    }
     for (const [name, req, features] of [
       ["bevy_mod_openxr", "=0.6.0", ["vulkan", "window_support"]],
       ["bevy_mod_xr", "=0.6.0", []],

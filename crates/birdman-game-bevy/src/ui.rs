@@ -102,6 +102,7 @@ struct Widget {
 
 #[derive(Resource)]
 struct RetainedUi {
+    input_enabled: bool,
     shell: Entity,
     heading: Entity,
     description: Entity,
@@ -213,6 +214,7 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
     let hud = setup_hud(&mut commands);
     let countdown = setup_countdown(&mut commands);
     commands.insert_resource(RetainedUi {
+        input_enabled: true,
         shell,
         heading,
         description,
@@ -258,8 +260,17 @@ pub(crate) fn viewport(world: &mut World) -> GameUiViewport {
     }
 }
 
+pub(crate) fn set_input_enabled(world: &mut World, enabled: bool) {
+    if let Some(mut ui) = world.get_resource_mut::<RetainedUi>() {
+        ui.input_enabled = enabled;
+    }
+}
+
 pub(crate) fn button_actions(world: &mut World) {
     control_pointer_inputs(world);
+    if !world.resource::<RetainedUi>().input_enabled {
+        return;
+    }
     let revision = world
         .resource::<RetainedUi>()
         .view
@@ -346,9 +357,10 @@ fn control_pointer_inputs(world: &mut World) {
     let Some(retained) = world.get_resource::<RetainedUi>() else {
         return;
     };
-    let visible = world
-        .get::<Visibility>(retained.shell)
-        .is_none_or(|value| *value != Visibility::Hidden);
+    let visible = retained.input_enabled
+        && world
+            .get::<Visibility>(retained.shell)
+            .is_none_or(|value| *value != Visibility::Hidden);
     let revision = retained.view.as_ref().map(|view| view.view_revision);
     let scope = retained
         .view

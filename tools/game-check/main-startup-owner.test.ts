@@ -4,26 +4,38 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplicationRuntimeBridge } from "../../web/pkg/birdman_game_wasm.js";
 import type { ApplicationDrawingOutput, ApplicationInput, ApplicationObservation, ApplicationOutput, ApplicationRendererObservation, ApplicationRequest, DisplayRequest } from "../../web/src/generated/application-contracts.js";
 import { applicationPlatformFixture } from "./application-fixture.js";
+import { ThreeApplicationBuffers } from "../../web/src/render/engines/three/application-buffers.js";
 import { BrowserFlightLogDownload } from "../../web/src/app/browser-flight-log-download.js";
 
 type Prepare = Extract<ApplicationRequest, { kind: "prepare_resources" }>;
 type Resource = Extract<ApplicationRequest, { kind: "commit_resources" | "cancel_resources" | "release_resources" }>;
 interface Driver {
+  readonly bytesRead: number;
   readonly requests: Prepare[];
   readonly dispose: ReturnType<typeof vi.fn>;
   readonly apply: ReturnType<typeof vi.fn>;
   finish(missing?: boolean): void;
 }
-const capture = vi.hoisted(() => ({ driver: null as Driver | null, permission: (): void => undefined, observation: (): void => undefined }));
+const actualFetch = globalThis.fetch;
+const capture = vi.hoisted(() => ({ readBytes: false, driver: null as Driver | null, permission: (): void => undefined, observation: (): void => undefined }));
 
 vi.mock("../../web/src/render/engines/three/application-renderer.js", () => ({
   ThreeApplicationRenderer: class {
     readonly requests: Prepare[] = [];
-    readonly apply = vi.fn<(drawing: ApplicationDrawingOutput) => void>();
-    readonly dispose = vi.fn();
+    bytesRead = 0;
+    readonly apply = vi.fn<(drawing: ApplicationDrawingOutput) => void>(drawing => {
+      if (capture.readBytes && drawing.asset_lease != null) {
+        for (const key of drawing.asset_lease.buffers) this.bytesRead += this.bytes(drawing.asset_lease.lease_id, key.buffer_id, key.revision).length;
+      }
+    });
+    private readonly softwareResources = new Map<number, ThreeApplicationBuffers>();
+    readonly dispose = vi.fn(() => {
+      for (const buffers of this.softwareResources.values()) buffers.dispose();
+      this.softwareResources.clear();
+    });
     private readonly candidates = new Map<number, Prepare>();
     private readonly pending = new Map<number, { request: Prepare; cancelled: boolean }>();
-    constructor(_canvas: HTMLCanvasElement, private readonly id: number, _bytes: (id: number) => Uint8Array,
+    constructor(_canvas: HTMLCanvasElement, private readonly id: number, private readonly bytes: (leaseId: number, id: number, revision: number) => Uint8Array,
       private readonly notify: (input: ApplicationInput) => void) { capture.driver = this; }
     observation(): ApplicationRendererObservation {
       capture.observation();
@@ -31,6 +43,24 @@ vi.mock("../../web/src/render/engines/three/application-renderer.js", () => ({
         gpu_timing: { kind: "unsupported", cause: "physical timer is unavailable" } };
     }
     prepare(request: Prepare): void {
+      if (capture.readBytes) {
+        const snapshot = new Map(request.asset_lease.buffers.map(key => {
+          const bytes = this.bytes(request.asset_lease.lease_id, key.buffer_id, key.revision);
+          this.bytesRead += bytes.length;
+          return [key.buffer_id, bytes] as const;
+        }));
+        const buffers = new ThreeApplicationBuffers(id => {
+          const bytes = snapshot.get(id);
+          if (bytes === undefined) throw new Error(`Missing scoped software buffer ${String(id)}`);
+          return bytes;
+        });
+        this.softwareResources.set(request.request_id, buffers);
+        for (const mesh of request.assets.scene.meshes) buffers.geometry(mesh);
+        for (const texture of request.assets.scene.wing_textures) buffers.wingTexture(texture);
+        buffers.image(request.assets.sky, true, 1);
+        for (const detail of request.assets.water.detail) buffers.image(detail.image, false, request.assets.water.detail_anisotropy_clamp);
+        for (const chunk of [...request.assets.water.geometry.near, request.assets.water.geometry.far]) buffers.waterGeometry(chunk);
+      }
       this.requests.push(request);
       this.pending.set(request.request_id, { request, cancelled: false });
     }
@@ -52,6 +82,8 @@ vi.mock("../../web/src/render/engines/three/application-renderer.js", () => ({
         if (preparation !== undefined) preparation.cancelled = true;
       } else if (request.kind === "release_resources") {
         this.candidates.delete(request.resource_id);
+        this.softwareResources.get(request.resource_id)?.dispose();
+        this.softwareResources.delete(request.resource_id);
         this.notify({ kind: "resources_released", resource_id: request.resource_id, failure: null });
       } else {
         const candidate = this.candidates.get(request.resource_id);
@@ -68,10 +100,13 @@ vi.mock("../../web/src/render/engines/three/application-renderer.js", () => ({
   }
 }));
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); capture.driver = null; capture.observation = (): void => undefined; });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); capture.driver = null; capture.readBytes = false; capture.observation = (): void => undefined; });
 
-async function browserFixture(phoneSensors: "probe" | "permission" | null = null, xr?: XRSystem) {
-  const browser = new Window({ url: "http://localhost/" });
+async function browserFixture(phoneSensors: "probe" | "permission" | null = null, xr?: XRSystem, hostUrl?: string) {
+  capture.readBytes = hostUrl !== undefined;
+  const browser = new Window({ url: hostUrl ?? "http://localhost/" });
+  Object.defineProperty(browser, "isSecureContext", { value: true });
+  vi.stubGlobal("fetch", hostUrl === undefined ? vi.fn(() => Promise.resolve(new Response(null, { status: 404 }))) : actualFetch);
   browser.innerWidth = 1280;
   browser.innerHeight = 720;
   browser.document.documentElement.lang = "ja";
@@ -100,6 +135,7 @@ async function browserFixture(phoneSensors: "probe" | "permission" | null = null
   const update = vi.spyOn(ApplicationRuntimeBridge.prototype, "update");
   new BrowserApplication(mount, { ...applicationPlatformFixture().capabilities,
     phone_sensors: phoneSensors === null ? null : { permission_required: phoneSensors === "permission", screen_angle_degrees: 0 } });
+  await vi.waitFor(() => { expect(capture.driver).not.toBeNull(); });
   const driver = capture.driver;
   if (driver === null) throw new Error("Main did not execute CreateRenderer");
   const page = (type: "pagehide" | "pageshow", persisted: boolean) => {
@@ -111,6 +147,34 @@ async function browserFixture(phoneSensors: "probe" | "permission" | null = null
 }
 
 describe("Single browser runtime ownership", () => {
+  it.skipIf(process.env.BPG_BROWSER_HOST_URL === undefined)("actual Host browser I/O", async () => {
+    const hostUrl = process.env.BPG_BROWSER_HOST_URL;
+    if (hostUrl === undefined) throw new Error("Actual Host URL is required");
+    const fixture = await browserFixture(null, undefined, hostUrl);
+    const available = (id: string): HappyButtonElement => {
+      const button = fixture.browser.document.querySelector<HappyButtonElement>(`[data-control-id="${id}"]`);
+      if (button === null || button.disabled || button.closest('[inert], [aria-disabled="true"]') !== null) throw new Error(`Unavailable actual Host control: ${id}`);
+      return button;
+    };
+    try {
+      await vi.waitFor(() => {
+        fixture.driver.finish();
+        expect(available("game-title-start")).toBeDefined();
+      }, { timeout: 60_000 });
+      expect(fixture.driver.bytesRead).toBeGreaterThan(0);
+      available("game-title-start").click();
+      await vi.waitFor(() => { expect(available("game-setup-back")).toBeDefined(); }, { timeout: 10_000 });
+      available("game-setup-back").click();
+      await vi.waitFor(() => { expect(available("game-title-start")).toBeDefined(); }, { timeout: 10_000 });
+      fixture.page("pagehide", false);
+      await vi.waitFor(() => { fixture.driver.finish(); expect(fixture.free).toHaveBeenCalledOnce(); }, { timeout: 10_000 });
+    } finally {
+      fixture.page("pagehide", false);
+      capture.driver?.finish();
+      await fixture.browser.happyDOM.abort();
+    }
+  }, 90_000);
+
   it("persists keyboard settings across owner recreation and preserves stored values after write failure", async () => {
     const fixture = await browserFixture();
     const key = "tokutori.pr-simulator-game-1.keyboard-controls";
@@ -144,7 +208,9 @@ describe("Single browser runtime ownership", () => {
       const mount = fixture.browser.document.createElement("main");
       fixture.browser.document.body.append(mount);
       const { BrowserApplication } = await import("../../web/src/browser-application.js");
+      const previous = capture.driver;
       new BrowserApplication(mount as unknown as HTMLElement, applicationPlatformFixture().capabilities);
+      await vi.waitFor(() => { expect(capture.driver).not.toBe(previous); });
       const restarted = capture.driver;
       if (restarted === null) throw new Error("Reloaded renderer missing");
       restarted.finish();

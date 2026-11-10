@@ -6,7 +6,6 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use bevy::{ecs as bevy_ecs, prelude::Resource};
 use birdman_game_app::record_persistence::{
     RecordPreviewObservation, RecordPreviewRequest, RecordPreviewRow, RecordWriteObservation,
     RecordWriteRequest,
@@ -53,15 +52,34 @@ struct FileRow {
     saved_at: String,
 }
 
+// A transaction releases the OS lock even while a child or clone retains a descriptor.
+struct StorageLock(File);
+
+impl StorageLock {
+    fn acquire(file: File) -> io::Result<Self> {
+        file.try_lock().map_err(io::Error::other)?;
+        Ok(Self(file))
+    }
+}
+
+impl Drop for StorageLock {
+    fn drop(&mut self) {
+        if let Err(cause) = self.0.unlock() {
+            // Releasing a lock does not undo an already committed catalog or settings file.
+            let _ = writeln!(io::stderr(), "Native storage lock release failed: {cause}");
+        }
+    }
+}
+
 struct WriteTransaction {
     catalog: Catalog,
-    _lock: File,
+    _lock: StorageLock,
     cursor: Option<u32>,
     created: Vec<PathBuf>,
 }
 
-#[derive(Resource)]
-pub(crate) struct NativeStorage {
+/// Transactional native file storage shared by graphical and headless hosts.
+pub struct NativeStorage {
     directory: PathBuf,
     keyboard_directory: Result<PathBuf, String>,
     writes: BTreeMap<u32, WriteTransaction>,
@@ -69,10 +87,8 @@ pub(crate) struct NativeStorage {
 }
 
 impl NativeStorage {
-    pub(crate) fn new(
-        directory: PathBuf,
-        keyboard_directory: io::Result<PathBuf>,
-    ) -> io::Result<Self> {
+    /// Opens bounded transactional storage in the explicit directory.
+    pub fn new(directory: PathBuf, keyboard_directory: io::Result<PathBuf>) -> io::Result<Self> {
         fs::create_dir_all(&directory)?;
         Ok(Self {
             directory: directory.canonicalize()?,
@@ -82,10 +98,8 @@ impl NativeStorage {
         })
     }
 
-    pub(crate) fn execute(
-        &mut self,
-        request: &ApplicationRequest,
-    ) -> Option<Vec<ApplicationInput>> {
+    /// Executes one storage request and returns its typed completion.
+    pub fn execute(&mut self, request: &ApplicationRequest) -> Option<Vec<ApplicationInput>> {
         match request {
             ApplicationRequest::ReadConfiguration {
                 document,
@@ -240,7 +254,7 @@ impl NativeStorage {
                         .read(true)
                         .write(true)
                         .open(self.directory.join("catalog.lock"))?;
-                    lock.try_lock().map_err(io::Error::other)?;
+                    let lock = StorageLock::acquire(lock)?;
                     let catalog = self.catalog()?;
                     for entry in fs::read_dir(&self.directory)? {
                         let entry = entry?;
@@ -302,7 +316,7 @@ impl NativeStorage {
                     });
                     if failed {
                         if let Err(cause) = self.abort(*request_id) {
-                            bevy::log::error!("Record rollback cleanup: {cause}");
+                            log::error!("Record rollback cleanup: {cause}");
                         }
                         break;
                     }
@@ -530,7 +544,7 @@ impl NativeStorage {
             .read(true)
             .write(true)
             .open(directory.join(format!("{}.lock", configuration_stem(document))))?;
-        lock.try_lock().map_err(io::Error::other)?;
+        let _lock = StorageLock::acquire(lock)?;
         match fs::remove_file(directory.join(format!(
             "{}.{}",
             configuration_stem(document),
@@ -601,7 +615,7 @@ impl NativeStorage {
             .read(true)
             .write(true)
             .open(directory.join(format!("{stem}.lock")))?;
-        lock.try_lock().map_err(io::Error::other)?;
+        let _lock = StorageLock::acquire(lock)?;
         let temporary = directory.join(format!("{stem}-{}-{request_id}.tmp", std::process::id()));
         let mut file = OpenOptions::new()
             .create_new(true)
@@ -802,7 +816,8 @@ impl NativeStorage {
 }
 
 /// User settings remain independent of the current working/export directory.
-pub(crate) fn keyboard_config_directory() -> io::Result<PathBuf> {
+/// Resolves the native user configuration directory.
+pub fn keyboard_config_directory() -> io::Result<PathBuf> {
     let environment = |name| {
         std::env::var_os(name)
             .filter(|value| !value.is_empty())
@@ -1142,7 +1157,14 @@ pub(crate) mod tests {
         let catalog = storage.catalog().unwrap();
         assert_eq!(catalog.records.len(), 1);
         assert_eq!(catalog.records[&1].file, "flight-log-123-4.json");
-        storage.execute(&ApplicationRequest::BeginRecordSave { request_id: 1 });
+        let opened = storage.execute(&ApplicationRequest::BeginRecordSave { request_id: 1 });
+        assert!(
+            matches!(
+                opened.as_deref(),
+                Some([ApplicationInput::RecordSaveOpened { request_id: 1, .. }])
+            ),
+            "record transaction did not open: {opened:?}"
+        );
         assert!(!directory.0.join("record-1-old.record").exists());
         storage
             .write(
@@ -1154,8 +1176,17 @@ pub(crate) mod tests {
             )
             .unwrap();
         let first = storage.writes[&1].created[0].clone();
+        // Keep the same OS description alive, as an in-flight child may do after fork.
+        let inherited = storage.writes[&1]._lock.0.try_clone().unwrap();
         storage.abort(1).unwrap();
-        storage.execute(&ApplicationRequest::BeginRecordSave { request_id: 1 });
+        let opened = storage.execute(&ApplicationRequest::BeginRecordSave { request_id: 1 });
+        assert!(
+            matches!(
+                opened.as_deref(),
+                Some([ApplicationInput::RecordSaveOpened { request_id: 1, .. }])
+            ),
+            "record transaction did not open: {opened:?}"
+        );
         storage
             .write(
                 1,
@@ -1167,5 +1198,6 @@ pub(crate) mod tests {
             .unwrap();
         assert_ne!(storage.writes[&1].created[0], first);
         storage.abort(1).unwrap();
+        drop(inherited);
     }
 }

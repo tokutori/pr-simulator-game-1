@@ -1,10 +1,17 @@
 use super::ApplicationRuntimeError;
-use super::scene::SceneFrame;
 use super::{ApplicationPointerObservation, ApplicationSpatialObservation};
 use birdman_game_presentation::camera::{Pose, Vector3, compose_pose};
 use birdman_game_presentation::game_ui::{GameUiAnchor, GameUiFrame, GameUiView};
 use birdman_game_presentation::xr::*;
 use serde::{Deserialize, Serialize};
+
+/// Endpoint-local tracking needed to arrange its spatial UI surfaces.
+pub(super) struct SurfaceTracking {
+    pub world_from_head: Option<birdman_game_presentation::camera::Pose>,
+    pub viewer: Option<birdman_game_presentation::xr::XrViewerFrame>,
+    pub rig: Option<birdman_game_presentation::xr::XrCameraRig>,
+    pub reference: Option<birdman_game_presentation::xr::XrReferenceFrame>,
+}
 
 /// Actual font resource and shaping locale reported by platform font I/O.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -95,6 +102,8 @@ pub struct ApplicationMenuPaint {
     pub content: MenuPaintLayer,
     /// Fixed footer painting.
     pub footer: Vec<SurfacePaintItem>,
+    /// Full-surface panel frame painting.
+    pub frame: Vec<SurfacePaintItem>,
 }
 
 #[derive(Clone, Debug)]
@@ -422,7 +431,7 @@ impl SurfaceOwner {
         &mut self,
         view: &GameUiView,
         frame: &GameUiFrame,
-        scene: &SceneFrame,
+        tracking: &SurfaceTracking,
         font: Option<&ApplicationSurfaceObservation>,
         display: SurfaceDisplay,
         measure: &mut impl FnMut(
@@ -483,9 +492,9 @@ impl SurfaceOwner {
         }
         let mut menu = match (
             panel,
-            scene.viewer.as_ref(),
-            scene.rig,
-            scene.reference,
+            tracking.viewer.as_ref(),
+            tracking.rig,
+            tracking.reference,
             font,
         ) {
             (None, ..) => ApplicationMenuProjection::Absent,
@@ -538,10 +547,7 @@ impl SurfaceOwner {
                                 geometry: XrPanelGeometry {
                                     scope: XrMenuScope {
                                         scene: format!("{:?}", view.scene),
-                                        overlay: Some(format!(
-                                            "{:?}:{}",
-                                            view.active_overlay, view.selections.credits_open
-                                        )),
+                                        overlay: Some(view.interaction_scope.clone()),
                                         panel_id: panel.id.clone(),
                                     },
                                     anchor: panel.anchor,
@@ -595,6 +601,7 @@ impl SurfaceOwner {
                                     opacity: projection.opacity,
                                     content: projection.content,
                                     footer: projection.footer,
+                                    frame: projection.frame,
                                 };
                                 ApplicationMenuProjection::Ready {
                                     world_from_panel: poses.world_from_panel,
@@ -630,12 +637,8 @@ impl SurfaceOwner {
         };
         let mut head_hud = match (
             active,
-            scene.viewer.as_ref(),
-            scene
-                .projection
-                .camera
-                .as_ref()
-                .and_then(|camera| camera.world_from_head),
+            tracking.viewer.as_ref(),
+            tracking.world_from_head,
             font,
         ) {
             (false, ..) => ApplicationHeadHudProjection::Absent,

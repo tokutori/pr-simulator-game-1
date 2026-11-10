@@ -104,7 +104,7 @@ pub struct XrAnchorFrames {
     pub world: Pose,
     /// Aircraft/cockpit anchor in the same reference.
     pub cockpit: Pose,
-    /// Head-locked menu anchor.
+    /// Menu anchor in the selected head-relative or retained spatial frame.
     pub menu: Pose,
     /// Observed mounted head pose.
     pub head: Pose,

@@ -11,7 +11,7 @@ mod spectrum;
 
 pub use detail::{
     LakeBroaderWavelets, LakeDetailConfig, LakeDetailImage, LakeDetailMetadata,
-    generate_lake_detail, production_lake_detail_configs,
+    generate_lake_detail, generate_lake_detail_while, production_lake_detail_configs,
 };
 pub use projection::{
     LakeMeshSpacingDomain, LakeWaveProjection, LakeWaveVisibility, lake_grid_spacing_gradient,

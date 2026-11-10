@@ -235,6 +235,9 @@ pub struct MenuLayoutControl {
     pub label: String,
     /// Widget presentation needed by measurement.
     pub widget: MenuWidget,
+    /// Shared minimum height in logical pixels, for button controls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_height_px: Option<f64>,
 }
 
 /// Complete source and typography observation for one layout pass.
@@ -268,6 +271,8 @@ pub struct MenuLayoutSource {
     pub control_padding_px: [f64; 2],
     /// Shared logical separation converted by the metric font scale.
     pub control_gap_px: f64,
+    /// Shared logical shell padding converted by the metric font scale.
+    pub shell_padding_px: f64,
     /// Observed font identity.
     pub font: MenuFont,
     /// Explicit text measurement locale.
@@ -366,6 +371,8 @@ pub struct MenuLayoutPlan {
     pub line_height_meters: f64,
     /// Inner padding in metres.
     pub padding_meters: f64,
+    /// Shell inset in metres.
+    pub shell_padding_meters: f64,
     /// Spacing between rows in metres.
     pub gap_meters: f64,
     /// Responsive section and control allocation.

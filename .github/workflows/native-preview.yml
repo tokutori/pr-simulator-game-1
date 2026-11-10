@@ -14,6 +14,9 @@ on:
 permissions:
   contents: read
 
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
 concurrency:
   group: native-preview-${{ github.event.pull_request.head.sha || inputs.source_sha || github.ref }}
   cancel-in-progress: false
@@ -98,16 +101,19 @@ jobs:
           features=()
           if [ -n '${{ matrix.features }}' ]; then features=(--features '${{ matrix.features }}'); fi
           cargo build -p birdman-game-bevy --release --locked --target '${{ matrix.target }}' "${features[@]}"
+          cargo build -p birdman-game-host --bin birdman-game-server --features server-ui --release --locked --target '${{ matrix.target }}'
       - name: Validate architecture and CPU-only startup outside the source tree
         run: |
           binary='target/${{ matrix.target }}/release/birdman-game-bevy'
+          server_binary='target/${{ matrix.target }}/release/birdman-game-server'
           if [ "$RUNNER_OS" = Windows ]; then binary="$binary.exe"; fi
-          python tools/native-release/package_native.py stage --binary "$binary" --target '${{ matrix.target }}' --source-sha "$BPG_NATIVE_SOURCE_SHA" --output native-raw
+          if [ "$RUNNER_OS" = Windows ]; then server_binary="$server_binary.exe"; fi
+          python tools/native-release/package_native.py stage --binary "$binary" --server-binary "$server_binary" --target '${{ matrix.target }}' --source-sha "$BPG_NATIVE_SOURCE_SHA" --output target/native-raw
       - name: Upload validated raw binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-raw-${{ matrix.target }}-${{ needs.source.outputs.sha }}
-          path: native-raw/*.tar.gz
+          path: target/native-raw/*.tar.gz
           compression-level: 0
           if-no-files-found: error
           retention-days: 7
@@ -135,17 +141,65 @@ jobs:
           echo "9099a59e820c38a68b9d65f300662a567d56562f9a10f6aa4c7e86c17c2566af  $RUNNER_TEMP/$archive" | sha256sum --check
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP"
       - name: Generate notices for all six native targets
-        run: python3 tools/native-release/package_native.py licenses --cargo-about "$RUNNER_TEMP/cargo-about-0.9.2-x86_64-unknown-linux-musl/cargo-about" --source-sha '${{ needs.source.outputs.sha }}' --output native-licenses
+        run: python3 tools/native-release/package_native.py licenses --cargo-about "$RUNNER_TEMP/cargo-about-0.9.2-x86_64-unknown-linux-musl/cargo-about" --source-sha '${{ needs.source.outputs.sha }}' --output target/native-licenses
+      - name: Generate notices for the bundled Web application
+        run: python3 tools/native-release/package_native.py licenses --web --cargo-about "$RUNNER_TEMP/cargo-about-0.9.2-x86_64-unknown-linux-musl/cargo-about" --source-sha '${{ needs.source.outputs.sha }}' --output target/web-licenses
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-licenses-${{ needs.source.outputs.sha }}
+          path: target/web-licenses/*
+          if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-licenses-${{ needs.source.outputs.sha }}
-          path: native-licenses/*
+          path: target/native-licenses/*
+          if-no-files-found: error
+          retention-days: 7
+
+  web:
+    name: Build same-source bundled Web application
+    needs: [source, licenses]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      BPG_NATIVE_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+      RUSTUP_TOOLCHAIN: ${{ needs.source.outputs.toolchain }}
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.14.1'
+          cache: npm
+      - name: Install the pinned Web toolchain
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update --target wasm32-unknown-unknown
+          cargo install wasm-bindgen-cli --version 0.2.129 --locked
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-licenses-${{ needs.source.outputs.sha }}
+          path: target/web-licenses
+      - name: Include Web notices and finalize the bundle manifest
+        run: |
+          cp target/web-licenses/THIRD-PARTY-LICENSES.html web/dist/THIRD-PARTY-LICENSES.html
+          cp target/web-licenses/LICENSE-INFO.json web/dist/LICENSE-INFO.json
+          cargo run -p birdman-game-host --locked --example web_bundle -- web/dist "$BPG_NATIVE_SOURCE_SHA"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-web-${{ needs.source.outputs.sha }}
+          path: web/dist/
           if-no-files-found: error
           retention-days: 7
 
   package:
     name: Assemble six same-source preview archives
-    needs: [source, build, licenses]
+    needs: [source, build, licenses, web]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -158,18 +212,22 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: native-raw-*-${{ needs.source.outputs.sha }}
-          path: native-raw
+          path: target/native-raw
           merge-multiple: true
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: native-licenses-${{ needs.source.outputs.sha }}
-          path: native-licenses
+          path: target/native-licenses
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-web-${{ needs.source.outputs.sha }}
+          path: target/native-web
       - name: Assemble and checksum the complete set
-        run: python3 tools/native-release/package_native.py assemble --binaries native-raw --licenses native-licenses --source-sha '${{ needs.source.outputs.sha }}' --output native-preview
+        run: python3 tools/native-release/package_native.py assemble --binaries target/native-raw --licenses target/native-licenses --web-bundle target/native-web --source-sha '${{ needs.source.outputs.sha }}' --output target/native-preview
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-preview-${{ needs.source.outputs.sha }}
-          path: native-preview/*
+          path: target/native-preview/*
           compression-level: 0
           if-no-files-found: error
           retention-days: 14

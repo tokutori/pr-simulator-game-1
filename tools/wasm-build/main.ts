@@ -15,8 +15,23 @@ if (version !== `wasm-bindgen ${wasmBindgenVersion}`) {
   throw new Error(`Expected wasm-bindgen ${wasmBindgenVersion}; found ${version}`);
 }
 
+const sourceSha = run("git", ["rev-parse", "--verify", "HEAD"], true).trim();
+if (!/^[0-9a-f]{40}$/u.test(sourceSha)) throw new Error("Web builds require a full source commit identity");
+const cleanSource = run("git", ["status", "--porcelain", "--untracked-files=normal"], true).trim().length === 0;
+const declaredSource = process.env["BPG_APPLICATION_SOURCE_SHA"] ?? process.env["BPG_NATIVE_SOURCE_SHA"];
+if (cleanSource && declaredSource !== undefined && declaredSource !== sourceSha) {
+  throw new Error("The declared build source differs from the checked-out commit");
+}
+const buildEnvironment = { ...process.env };
+if (cleanSource) buildEnvironment["BPG_APPLICATION_SOURCE_SHA"] = sourceSha;
+else {
+  delete buildEnvironment["BPG_APPLICATION_SOURCE_SHA"];
+  delete buildEnvironment["BPG_NATIVE_SOURCE_SHA"];
+}
+
 const build = spawnSync("cargo", ["build", "--release", "-p", "birdman-game-wasm", "--target", "wasm32-unknown-unknown", "--locked", "--message-format=json"], {
   cwd: root,
+  env: buildEnvironment,
   encoding: "utf8",
   stdio: ["inherit", "pipe", "inherit"],
   windowsHide: true,

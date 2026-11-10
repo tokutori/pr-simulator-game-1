@@ -20,6 +20,29 @@ pub struct LakeMeshSpacingDomain {
     gradient_magnitude: f64,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SpacingWire {
+    minimum: f64,
+    maximum: f64,
+    gradient_magnitude: f64,
+}
+
+impl<'de> serde::Deserialize<'de> for LakeMeshSpacingDomain {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        <SpacingWire as serde::Deserialize>::deserialize(deserializer)?
+            .try_into()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+impl TryFrom<SpacingWire> for LakeMeshSpacingDomain {
+    type Error = LakeRenderModelError;
+    fn try_from(value: SpacingWire) -> Result<Self, Self::Error> {
+        Self::try_new(value.minimum, value.maximum, value.gradient_magnitude)
+    }
+}
+
 impl LakeMeshSpacingDomain {
     /// Validates a finite spacing interval and nonnegative gradient bound.
     pub fn try_new(
@@ -162,6 +185,85 @@ pub struct LakeWaveProjection {
     detail_quadrature_samples: u32,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProjectionWire {
+    wave_k_amplitude: [[f32; 4]; MAX_LAKE_WAVE_COMPONENTS],
+    wave_omega_phase: [[f32; 4]; MAX_LAKE_WAVE_COMPONENTS],
+    wave_count: usize,
+    visual_wave_height: f64,
+    spacing: LakeMeshSpacingDomain,
+    horizontal_derivative_bound: f64,
+    choppiness: f32,
+    detail_filter_minification: [f32; 2],
+    detail_quadrature_samples: u32,
+}
+
+impl<'de> serde::Deserialize<'de> for LakeWaveProjection {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        <ProjectionWire as serde::Deserialize>::deserialize(deserializer)?
+            .try_into()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+impl TryFrom<ProjectionWire> for LakeWaveProjection {
+    type Error = LakeRenderModelError;
+    fn try_from(value: ProjectionWire) -> Result<Self, Self::Error> {
+        let fail = LakeRenderModelError::InvalidWaveProjection;
+        if value.wave_count > MAX_LAKE_WAVE_COMPONENTS
+            || !value
+                .wave_k_amplitude
+                .iter()
+                .flatten()
+                .chain(value.wave_omega_phase.iter().flatten())
+                .all(|v| v.is_finite())
+            || !value.visual_wave_height.is_finite()
+            || value.visual_wave_height < 0.0
+            || !value.horizontal_derivative_bound.is_finite()
+            || value.horizontal_derivative_bound < 0.0
+            || !value.choppiness.is_finite()
+            || value.choppiness < 0.0
+            || value.choppiness > 4.5
+            || !value
+                .detail_filter_minification
+                .into_iter()
+                .all(|v| v.is_finite() && v > 0.0)
+            || value.detail_filter_minification[0] >= value.detail_filter_minification[1]
+            || !matches!(value.detail_quadrature_samples, 1 | 4)
+        {
+            return Err(fail);
+        }
+        let mut bound = 0.0;
+        for wave in &value.wave_k_amplitude[..value.wave_count] {
+            bound += lake_wave_displacement_derivative_bound(*wave, value.spacing)?;
+        }
+        bound *= BOUND_RESERVE;
+        if !bound.is_finite() {
+            return Err(fail);
+        }
+        // The derived reserve is recomputed on the receiving target.  Taking the
+        // conservative maximum avoids relying on platform-specific hypot rounding.
+        let bound = bound.max(value.horizontal_derivative_bound);
+        let safe_choppiness = if bound == 0.0 {
+            4.5
+        } else {
+            4.5_f64.min(0.56 / bound * (1.0 - FLOAT32_RESERVE)) as f32
+        };
+        Ok(Self {
+            wave_k_amplitude: value.wave_k_amplitude,
+            wave_omega_phase: value.wave_omega_phase,
+            wave_count: value.wave_count,
+            visual_wave_height: value.visual_wave_height,
+            spacing: value.spacing,
+            horizontal_derivative_bound: bound,
+            choppiness: value.choppiness.min(safe_choppiness),
+            detail_filter_minification: value.detail_filter_minification,
+            detail_quadrature_samples: value.detail_quadrature_samples,
+        })
+    }
+}
+
 impl LakeWaveProjection {
     /// Projects the canonical 18-component spectrum into one Web quality budget.
     pub fn try_new(
@@ -207,7 +309,7 @@ impl LakeWaveProjection {
         } else {
             4.5_f64.min(0.56 / horizontal_derivative_bound * (1.0 - FLOAT32_RESERVE))
         } as f32;
-        Ok(Self {
+        Self::try_from(ProjectionWire {
             wave_k_amplitude,
             wave_omega_phase,
             wave_count: indices.len(),

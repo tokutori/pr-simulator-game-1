@@ -130,8 +130,16 @@ pub(super) fn project_view(
         },
     )?;
     world.entity_mut(retained.shell).insert((
-        shell_node(&view.layout),
+        shell_node(&view.layout, &view.theme),
         BackgroundColor(background),
+        BorderColor::all(color(
+            &view.theme.panel_border,
+            if view.layout.passthrough {
+                0.0
+            } else {
+                view.theme.panel_border_opacity
+            },
+        )?),
         if view.layout.passthrough {
             Pickable::IGNORE
         } else {
@@ -438,12 +446,18 @@ fn structure(view: &GameUiView) -> Vec<String> {
     result
 }
 
-fn shell_node(layout: &GameUiLayout) -> Node {
+fn shell_node(layout: &GameUiLayout, theme: &GameUiTheme) -> Node {
     let mut node = Node {
         position_type: PositionType::Absolute,
         width: px(layout.width_px),
         max_height: px(layout.maximum_height_px),
         padding: UiRect::all(px(layout.padding_px)),
+        border: UiRect::all(px(if matches!(layout.shell, GameUiShell::FlightBar) {
+            0.0
+        } else {
+            theme.panel_border_width_px
+        })),
+        border_radius: BorderRadius::all(px(layout.frame_radius_px)),
         flex_direction: FlexDirection::Column,
         row_gap: px(layout.gap_px),
         overflow: if layout.scroll_y {

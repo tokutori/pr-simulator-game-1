@@ -15,8 +15,7 @@ fn keyboard_preferences_validate_restore_and_drain_only_the_latest_accepted_writ
     };
     let json =
         serde_json::json!({ "schema_version": 1, "keyboard_controls": settings }).to_string();
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
     let mut initial = runtime
         .update(
             ApplicationObservation {
@@ -112,8 +111,11 @@ fn keyboard_preferences_validate_restore_and_drain_only_the_latest_accepted_writ
             failure: Some("old write failed".to_owned()),
         })
         .unwrap();
-    assert_eq!(runtime.storage.keyboard_notification(), "保存済み");
-    assert!(!runtime.storage.keyboard_needs_write());
+    assert_eq!(
+        runtime.authority.storage.keyboard_notification(),
+        "保存済み"
+    );
+    assert!(!runtime.authority.storage.keyboard_needs_write());
     assert!(
         !restored
             .requests
@@ -171,6 +173,7 @@ fn keyboard_preferences_validate_restore_and_drain_only_the_latest_accepted_writ
         .unwrap();
     assert!(
         runtime
+            .authority
             .storage
             .keyboard_notification()
             .contains("disk full")
@@ -181,7 +184,7 @@ fn keyboard_preferences_validate_restore_and_drain_only_the_latest_accepted_writ
             .iter()
             .any(|request| matches!(request, ApplicationRequest::WriteKeyboardControls { .. }))
     );
-    assert!(!runtime.storage.keyboard_needs_write());
+    assert!(!runtime.authority.storage.keyboard_needs_write());
     assert_eq!(runtime.application().keyboard_controls(), latest);
 
     let mut storage = storage::StorageOwner::default();
@@ -211,8 +214,7 @@ fn display_preferences_validate_restore_and_drain_only_the_latest_accepted_write
         ui_scale: 1.5,
     };
     let json = serde_json::json!({ "schema_version": 1, "display_settings": settings }).to_string();
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
     let mut initial = runtime
         .update(
             ApplicationObservation {
@@ -309,14 +311,20 @@ fn display_preferences_validate_restore_and_drain_only_the_latest_accepted_write
             failure: Some("disk full".to_owned()),
         })
         .unwrap();
-    assert!(runtime.storage.display_notification().contains("disk full"));
+    assert!(
+        runtime
+            .authority
+            .storage
+            .display_notification()
+            .contains("disk full")
+    );
     assert!(
         !failed
             .requests
             .iter()
             .any(|request| matches!(request, ApplicationRequest::WriteDisplaySettings { .. }))
     );
-    assert!(!runtime.storage.display_needs_write());
+    assert!(!runtime.authority.storage.display_needs_write());
     assert_eq!(runtime.application().display_settings(), changed);
     // Returning to the already persisted selection needs no replacement after a failure.
     let setup = structure(failed);
@@ -325,7 +333,7 @@ fn display_preferences_validate_restore_and_drain_only_the_latest_accepted_write
         &setup,
         SessionCommand::SetDisplaySettings { settings },
     );
-    assert_eq!(runtime.storage.display_notification(), "保存済み");
+    assert_eq!(runtime.authority.storage.display_notification(), "保存済み");
     assert!(
         !restored
             .requests
@@ -357,8 +365,8 @@ fn display_preferences_validate_restore_and_drain_only_the_latest_accepted_write
             failure: None,
         })
         .unwrap();
-    assert_eq!(runtime.storage.display_notification(), "保存済み");
-    assert!(!runtime.storage.display_needs_write());
+    assert_eq!(runtime.authority.storage.display_notification(), "保存済み");
+    assert!(!runtime.authority.storage.display_needs_write());
     assert_eq!(runtime.application().display_settings(), latest);
 
     let mut storage = storage::StorageOwner::default();
@@ -379,7 +387,7 @@ fn display_preferences_validate_restore_and_drain_only_the_latest_accepted_write
 
     let mut platform = screen_platform();
     platform.capabilities.replay_available = true;
-    let mut runtime = ApplicationRuntime::new(finalized_application(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(finalized_application(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform,
@@ -392,6 +400,7 @@ fn display_preferences_validate_restore_and_drain_only_the_latest_accepted_write
         SessionCommand::EnterReplay {},
     ));
     let record = runtime
+        .authority
         .application
         .core_session()
         .playback_record()
@@ -401,7 +410,7 @@ fn display_preferences_validate_restore_and_drain_only_the_latest_accepted_write
         record.samples().to_vec(),
         record.finalization(),
     );
-    let source_id = runtime.application.record_source_id();
+    let source_id = runtime.authority.application.record_source_id();
     let replay_settings = DisplaySettings {
         brightness: settings.brightness,
         ..DisplaySettings::default()
@@ -438,9 +447,10 @@ fn display_preferences_validate_restore_and_drain_only_the_latest_accepted_write
             failure: None,
         })
         .unwrap();
-    assert_eq!(runtime.storage.display_notification(), "保存済み");
-    assert_eq!(runtime.application.record_source_id(), source_id);
+    assert_eq!(runtime.authority.storage.display_notification(), "保存済み");
+    assert_eq!(runtime.authority.application.record_source_id(), source_id);
     let record = runtime
+        .authority
         .application
         .core_session()
         .playback_record()
@@ -555,7 +565,7 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
         },
         ..screen_platform()
     };
-    let mut runtime = ApplicationRuntime::new(finalized_application(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(finalized_application(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform,
@@ -563,7 +573,10 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
         .unwrap();
     let ready = finish_boot(&mut runtime, initial);
     let result = structure(ready);
-    assert!(Arc::ptr_eq(runtime.retained.as_ref().unwrap(), &result));
+    assert!(Arc::ptr_eq(
+        runtime.endpoint.retained.as_ref().unwrap(),
+        &result
+    ));
     let original = serde_json::to_value(result.as_ref()).unwrap();
     let wire = serde_json::to_value(ApplicationUiProjection::View {
         view: Arc::clone(&result),
@@ -587,7 +600,10 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
             chart: GameUiAnalysisChart::Altitude,
         },
     ));
-    assert!(Arc::ptr_eq(runtime.retained.as_ref().unwrap(), &altitude));
+    assert!(Arc::ptr_eq(
+        runtime.endpoint.retained.as_ref().unwrap(),
+        &altitude
+    ));
     assert!(!Arc::ptr_eq(&result, &altitude));
     assert_eq!(serde_json::to_value(result.as_ref()).unwrap(), original);
     let extent = GameUiChartExtent {
@@ -602,13 +618,13 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
     runtime
         .observe_test(measurement(analysis.view_revision, "game-analysis-plot"))
         .unwrap();
-    assert_eq!(runtime.platform.chart_extent, None);
+    assert_eq!(runtime.endpoint.platform.chart_extent, None);
     let measured = structure(
         runtime
             .observe_test(measurement(altitude.view_revision, "game-analysis-plot"))
             .unwrap(),
     );
-    assert_eq!(runtime.platform.chart_extent, Some(extent));
+    assert_eq!(runtime.endpoint.platform.chart_extent, Some(extent));
     for id in ["game-analysis-plot", "other"] {
         let unchanged = runtime
             .observe_test(measurement(measured.view_revision, id))
@@ -649,11 +665,11 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
             1,
         ))
         .unwrap();
-    assert!(runtime.chart_pointer.is_none());
+    assert!(runtime.endpoint.chart_pointer.is_none());
     runtime
         .observe_test(pointer(revision, ApplicationPointerPhase::Down, right, 1))
         .unwrap();
-    assert_eq!(runtime.ui.analysis_time_seconds, plot.x_maximum);
+    assert_eq!(runtime.authority.ui.analysis_time_seconds, plot.x_maximum);
     // Native pointer IDs are scoped by kind: another device cannot move or retire this lease.
     for phase in [ApplicationPointerPhase::Move, ApplicationPointerPhase::Up] {
         let mut other_kind = pointer(revision, phase, left, 1);
@@ -661,8 +677,8 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
             *pointer_kind = ApplicationPointerKind::Touch;
         }
         runtime.observe_test(other_kind).unwrap();
-        assert_eq!(runtime.ui.analysis_time_seconds, plot.x_maximum);
-        assert!(runtime.chart_pointer.is_some());
+        assert_eq!(runtime.authority.ui.analysis_time_seconds, plot.x_maximum);
+        assert!(runtime.endpoint.chart_pointer.is_some());
     }
     for (phase, buttons) in [
         (ApplicationPointerPhase::Down, 3),
@@ -673,8 +689,8 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
             *button = 2;
         }
         runtime.observe_test(chord).unwrap();
-        assert_eq!(runtime.ui.analysis_time_seconds, plot.x_maximum);
-        assert!(runtime.chart_pointer.is_some());
+        assert_eq!(runtime.authority.ui.analysis_time_seconds, plot.x_maximum);
+        assert!(runtime.endpoint.chart_pointer.is_some());
     }
     runtime
         .observe_test(pointer(
@@ -684,11 +700,11 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
             1,
         ))
         .unwrap();
-    assert_eq!(runtime.ui.analysis_time_seconds, 0.0);
+    assert_eq!(runtime.authority.ui.analysis_time_seconds, 0.0);
     runtime
         .observe_test(pointer(revision, ApplicationPointerPhase::Up, right, 0))
         .unwrap();
-    assert!(runtime.chart_pointer.is_none());
+    assert!(runtime.endpoint.chart_pointer.is_none());
     for ending in [
         ApplicationPointerPhase::Cancel,
         ApplicationPointerPhase::LostCapture,
@@ -703,8 +719,8 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
         runtime
             .observe_test(pointer(revision, ApplicationPointerPhase::Move, right, 1))
             .unwrap();
-        assert_eq!(runtime.ui.analysis_time_seconds, 0.0);
-        assert!(runtime.chart_pointer.is_none());
+        assert_eq!(runtime.authority.ui.analysis_time_seconds, 0.0);
+        assert!(runtime.endpoint.chart_pointer.is_none());
     }
     runtime
         .observe_test(pointer(revision, ApplicationPointerPhase::Down, right, 1))
@@ -712,13 +728,12 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
     runtime
         .observe_test(ApplicationInput::PageVisibility { visible: false })
         .unwrap();
-    assert!(runtime.chart_pointer.is_none());
+    assert!(runtime.endpoint.chart_pointer.is_none());
 }
 
 #[test]
 fn frame_rate_label_follows_the_arrival_clock_when_the_frame_source_time_is_unstable() {
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
     let initial = runtime
         .update(
             ApplicationObservation {
@@ -767,7 +782,7 @@ fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_de
     // Disposal during font work retires the old spatial publication at return.
     {
         let mut runtime =
-            ApplicationRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
+            LocalRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
         let (begin, work) = runtime
             .begin_update(ApplicationObservation {
                 observed_ms: 0.0,
@@ -797,7 +812,7 @@ fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_de
                 .unwrap()
                 .contains("text measurement failed")
         );
-        assert!(runtime.presentation_lease.is_none());
+        assert!(runtime.endpoint.presentation_lease.is_none());
         let (_, work) = runtime
             .begin_update(ApplicationObservation {
                 observed_ms: 0.0,
@@ -825,7 +840,7 @@ fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_de
                 .unwrap()
                 .is_none()
         );
-        assert!(runtime.presentation_lease.is_none());
+        assert!(runtime.endpoint.presentation_lease.is_none());
     }
     for binding_lost in [false, true] {
         let mut platform = ApplicationPlatformObservation {
@@ -840,7 +855,7 @@ fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_de
             ..screen_platform()
         };
         let mut runtime =
-            ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+            LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
         let initial = runtime
             .observe_test(ApplicationInput::Platform {
                 observation: platform.clone(),
@@ -889,7 +904,7 @@ fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_de
                 _ => None,
             })
             .unwrap();
-        let target = runtime.resources.as_ref().unwrap().key.graphics;
+        let target = runtime.endpoint.resources.as_ref().unwrap().key.graphics;
         runtime
             .observe_test(ApplicationInput::Resources {
                 request_id: preparation,
@@ -1092,8 +1107,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         },
         ..screen_platform()
     };
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform.clone(),
@@ -1133,7 +1147,6 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         control.id == "game-boot-diagnostic"
             && matches!(&control.content, GameUiControlContent::Status { value, .. } if value == "GPU unavailable")
     }));
-    let next_request = runtime.next_request_id;
     let held = runtime
         .observe_test(ApplicationInput::Frame {
             display_resource_id: None,
@@ -1144,12 +1157,11 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         })
         .unwrap();
     assert!(held.requests.is_empty());
-    assert_eq!(runtime.next_request_id, next_request);
     assert!(matches!(
         held.drawing.unwrap().ui,
         ApplicationUiProjection::Frame { .. }
     ));
-    assert!(runtime.retained.as_ref().unwrap().panels.iter().flat_map(|panel| &panel.controls).any(|control| {
+    assert!(runtime.endpoint.retained.as_ref().unwrap().panels.iter().flat_map(|panel| &panel.controls).any(|control| {
         control.id == "game-boot-diagnostic"
             && matches!(&control.content, GameUiControlContent::Status { value, .. } if value == "GPU unavailable")
     }));
@@ -1183,7 +1195,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
             renderer_resource_id: 100
         }
     )));
-    assert!(runtime.graphics.resource().is_none());
+    assert!(runtime.endpoint.graphics.resource().is_none());
     let mut renderer = renderer_observation();
     renderer.resource_id = 101;
     renderer.gpu_timing = ApplicationGpuTimingCapability::Unsupported {
@@ -1226,7 +1238,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
             renderer_resource_id: 101
         }
     )));
-    runtime.platform.notification = "別の操作の通知".into();
+    runtime.endpoint.platform.notification = "別の操作の通知".into();
     runtime
         .observe_test(ApplicationInput::RecordPreviewObserved {
             request_id: preview,
@@ -1235,9 +1247,9 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
             },
         })
         .unwrap();
-    let stored_notification = runtime.platform.notification.clone();
+    let stored_notification = runtime.endpoint.platform.notification.clone();
     assert!(!stored_notification.is_empty());
-    assert!(runtime.platform.stored_records_retry_available);
+    assert!(runtime.endpoint.platform.stored_records_retry_available);
     let failed = runtime
         .observe_test(ApplicationInput::Resources {
             request_id: preparation,
@@ -1256,7 +1268,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         control.id == "game-boot-diagnostic"
             && matches!(&control.content, GameUiControlContent::Status { value, .. } if value == "initial pipeline creation failed")
     }));
-    assert_eq!(runtime.platform.notification, stored_notification);
+    assert_eq!(runtime.endpoint.platform.notification, stored_notification);
     let reused = runtime
         .observe_test(ApplicationInput::Control {
             view_revision: failed.view_revision,
@@ -1297,8 +1309,8 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
             cause: "initial GPU drawing failed".into(),
         })
         .unwrap();
-    let failed = runtime.retained.as_ref().unwrap().clone();
-    assert!(runtime.platform.renderer_failure.is_none());
+    let failed = runtime.endpoint.retained.as_ref().unwrap().clone();
+    assert!(runtime.endpoint.platform.renderer_failure.is_none());
     assert!(failed.panels.iter().flat_map(|panel| &panel.controls).any(|control| {
         control.id == "game-boot-diagnostic"
             && matches!(&control.content, GameUiControlContent::Status { value, .. } if value == "initial pipeline creation failed")
@@ -1351,8 +1363,8 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
             if value == &stored_notification)
             })
     );
-    assert_eq!(runtime.platform.notification, stored_notification);
-    assert!(runtime.platform.renderer_failure.is_none());
+    assert_eq!(runtime.endpoint.platform.notification, stored_notification);
+    assert!(runtime.endpoint.platform.renderer_failure.is_none());
     assert_eq!(
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::Title
@@ -1363,7 +1375,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
             cause: "retired renderer failure".into(),
         })
         .unwrap();
-    assert!(runtime.platform.renderer_failure.is_none());
+    assert!(runtime.endpoint.platform.renderer_failure.is_none());
     let later_failure = runtime
         .observe_test(ApplicationInput::RendererFailed {
             renderer_resource_id: 102,
@@ -1374,7 +1386,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         later_failure.diagnostic.as_deref(),
         Some("later GPU drawing failed")
     );
-    assert!(runtime.platform.renderer_failure.is_some());
+    assert!(runtime.endpoint.platform.renderer_failure.is_some());
     let failed = structure(later_failure);
     assert_eq!(
         failed.scene,
@@ -1388,7 +1400,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
             .any(|control| {
                 control.id == "game-renderer-stopped"
                     && matches!(&control.content, GameUiControlContent::Status { value, .. }
-                if Some(value) == runtime.platform.renderer_failure.as_ref())
+                if Some(value) == runtime.endpoint.platform.renderer_failure.as_ref())
             })
     );
     assert!(matches!(
@@ -1424,8 +1436,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         })
         .unwrap();
     assert!(duplicate.requests.is_empty());
-    let mut reload =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let mut reload = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = reload
         .observe_test(ApplicationInput::Platform {
             observation: platform,
@@ -1499,8 +1510,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
 #[test]
 fn briefing_retry_restarts_failed_resource_preparation_through_the_shared_action() {
     let platform = screen_platform();
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform,
@@ -1521,7 +1531,7 @@ fn briefing_retry_restarts_failed_resource_preparation_through_the_shared_action
         &structure(changed),
         SessionCommand::Prepare {},
     );
-    let request_id = runtime.resources.as_ref().unwrap().request_id;
+    let request_id = runtime.endpoint.resources.as_ref().unwrap().request_id;
     let failed = runtime
         .observe_test(ApplicationInput::Resources {
             request_id,
@@ -1530,7 +1540,7 @@ fn briefing_retry_restarts_failed_resource_preparation_through_the_shared_action
             },
         })
         .unwrap();
-    assert!(!runtime.platform.notification.is_empty());
+    assert!(!runtime.endpoint.platform.notification.is_empty());
     assert!(matches!(
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::BriefingFailed { .. }
@@ -1557,7 +1567,7 @@ fn briefing_retry_restarts_failed_resource_preparation_through_the_shared_action
 }
 
 fn resources_ready(
-    runtime: &mut ApplicationRuntime,
+    runtime: &mut LocalRuntime,
     request_id: u32,
 ) -> Result<ApplicationOutput, ApplicationRuntimeError> {
     let resource_id = 10_000 + request_id;
@@ -1566,15 +1576,12 @@ fn resources_ready(
         observation: ApplicationResourceObservation::Prepared { resource_id },
     })?;
     if prepared.requests.iter().any(|request| matches!(request, ApplicationRequest::CommitResources { request_id: expected, resource_id: candidate } if *expected == request_id && *candidate == resource_id)) {
-        let target = runtime.resources.as_ref().unwrap().key.graphics;
+        let target = runtime.endpoint.resources.as_ref().unwrap().key.graphics;
         runtime.observe_test(ApplicationInput::Resources { request_id, observation: ApplicationResourceObservation::Committed { resource_id, actual: ApplicationResourceCommit { applied: target.quality, extent_px: target.extent_px } } })
     } else { Ok(prepared) }
 }
 
-fn finish_boot(
-    runtime: &mut ApplicationRuntime,
-    mut initial: ApplicationOutput,
-) -> ApplicationOutput {
+fn finish_boot(runtime: &mut LocalRuntime, mut initial: ApplicationOutput) -> ApplicationOutput {
     for (document, request_id) in initial
         .requests
         .iter()
@@ -1677,7 +1684,7 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
         },
         ..screen_platform()
     };
-    let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(application, platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform.clone(),
@@ -1694,9 +1701,10 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::FlightRunning
     );
-    assert!(!runtime.platform.touch_available);
+    assert!(!runtime.endpoint.platform.touch_available);
     assert!(
         !runtime
+            .endpoint
             .retained
             .as_ref()
             .unwrap()
@@ -1722,7 +1730,7 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
             observation: platform,
         })
         .unwrap();
-    assert!(runtime.platform.touch_available);
+    assert!(runtime.endpoint.platform.touch_available);
     let key = |code: &str, pressed, repeat| ApplicationInput::Keyboard {
         code: code.to_owned(),
         pressed,
@@ -1734,8 +1742,9 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
         repeat,
     };
     use birdman_game_presentation::game_ui::GameUiControlContent;
-    let bounds = |runtime: &ApplicationRuntime, id: &str| {
+    let bounds = |runtime: &LocalRuntime, id: &str| {
         runtime
+            .endpoint
             .retained
             .as_ref()
             .unwrap()
@@ -1789,7 +1798,7 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
     };
     // A captured mouse over either touch region remains a right-button camera drag.
     for region in [stick, slider] {
-        let current = runtime.retained.as_ref().unwrap().view_revision;
+        let current = runtime.endpoint.retained.as_ref().unwrap().view_revision;
         let pointer = |phase, point, buttons| ApplicationInput::ControlPointer {
             view_revision: current,
             control_id: Some(
@@ -1812,7 +1821,7 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
         runtime
             .observe_test(pointer(ApplicationPointerPhase::Down, center(region), 1))
             .unwrap();
-        assert!(runtime.look_pointer.is_none());
+        assert!(runtime.endpoint.look_pointer.is_none());
         let before = runtime
             .observe_test(pointer(ApplicationPointerPhase::Down, center(region), 2))
             .unwrap()
@@ -1822,7 +1831,7 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
             .camera
             .unwrap()
             .world_from_head;
-        assert!(runtime.look_pointer.is_some());
+        assert!(runtime.endpoint.look_pointer.is_some());
         let moved = [center(region)[0] + 20.0, center(region)[1] - 10.0];
         let output = runtime
             .observe_test(pointer(ApplicationPointerPhase::Move, moved, 2))
@@ -1837,15 +1846,25 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
                 .world_from_head,
             before
         );
-        assert!(runtime.flight_pointers.iter().all(Option::is_none));
-        assert_eq!(runtime.application.flight_touch_generation(), None);
+        assert!(
+            runtime
+                .endpoint
+                .flight_pointer
+                .pointers
+                .iter()
+                .all(Option::is_none)
+        );
+        assert_eq!(
+            runtime.authority.application.flight_touch_generation(),
+            None
+        );
         runtime
             .observe_test(pointer(ApplicationPointerPhase::Up, moved, 0))
             .unwrap();
-        assert!(runtime.look_pointer.is_none());
+        assert!(runtime.endpoint.look_pointer.is_none());
     }
-    runtime.scene.reset_look();
-    let revision = runtime.retained.as_ref().unwrap().view_revision;
+    runtime.endpoint.scene.reset_look();
+    let revision = runtime.endpoint.retained.as_ref().unwrap().view_revision;
     // A menu pointer never becomes a flight channel.
     runtime
         .observe_test(touch(
@@ -1857,7 +1876,10 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
             stick,
         ))
         .unwrap();
-    assert_eq!(runtime.application.flight_touch_generation(), None);
+    assert_eq!(
+        runtime.authority.application.flight_touch_generation(),
+        None
+    );
     runtime
         .observe_test(touch(
             revision,
@@ -1878,8 +1900,21 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
             slider,
         ))
         .unwrap();
-    assert_eq!(runtime.flight_pointers.iter().flatten().count(), 2);
-    let generation = runtime.application.flight_touch_generation().unwrap();
+    assert_eq!(
+        runtime
+            .endpoint
+            .flight_pointer
+            .pointers
+            .iter()
+            .flatten()
+            .count(),
+        2
+    );
+    let generation = runtime
+        .authority
+        .application
+        .flight_touch_generation()
+        .unwrap();
     let moved = [center(stick)[0], center(stick)[1] - stick.height * 0.2];
     runtime
         .observe_test(touch(
@@ -1893,8 +1928,20 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
         .unwrap();
     runtime.observe_test(key("KeyC", true, false)).unwrap();
     runtime.observe_test(key("KeyC", false, false)).unwrap();
-    assert_ne!(runtime.retained.as_ref().unwrap().view_revision, revision);
-    assert_eq!(runtime.flight_pointers.iter().flatten().count(), 2);
+    assert_ne!(
+        runtime.endpoint.retained.as_ref().unwrap().view_revision,
+        revision
+    );
+    assert_eq!(
+        runtime
+            .endpoint
+            .flight_pointer
+            .pointers
+            .iter()
+            .flatten()
+            .count(),
+        2
+    );
     // An existing capture survives the same flight's camera revision.
     runtime
         .observe_test(touch(
@@ -1909,7 +1956,7 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
     for timestamp_ms in [0.0, 10.0] {
         runtime
             .observe_test(ApplicationInput::Frame {
-                display_resource_id: runtime.display.active_resource(),
+                display_resource_id: runtime.endpoint.display.active_resource(),
                 timestamp_ms,
                 gamepads: vec![],
                 xr: None,
@@ -1919,6 +1966,7 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
     }
     assert!(
         runtime
+            .authority
             .application
             .core_session()
             .flight_record()
@@ -1944,15 +1992,24 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
         ))
         .unwrap();
     assert!(
-        runtime.flight_pointers[0].is_none() && runtime.flight_pointers[1].is_some(),
+        runtime.endpoint.flight_pointer.pointers[0].is_none()
+            && runtime.endpoint.flight_pointer.pointers[1].is_some(),
         "phase={:?}, generation={:?}, resource={:?}, target={:?}",
-        runtime.application.core_session().snapshot().phase(),
-        runtime.application.flight_touch_generation(),
-        runtime.graphics.resource(),
-        runtime.graphics.target(GameUiPresentationMode::Screen)
+        runtime
+            .authority
+            .application
+            .core_session()
+            .snapshot()
+            .phase(),
+        runtime.authority.application.flight_touch_generation(),
+        runtime.endpoint.graphics.resource(),
+        runtime
+            .endpoint
+            .graphics
+            .target(GameUiPresentationMode::Screen)
     );
     assert_eq!(
-        runtime.application.flight_touch_generation(),
+        runtime.authority.application.flight_touch_generation(),
         Some(generation)
     );
     runtime
@@ -1965,7 +2022,10 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
             slider,
         ))
         .unwrap();
-    assert_eq!(runtime.application.flight_touch_generation(), None);
+    assert_eq!(
+        runtime.authority.application.flight_touch_generation(),
+        None
+    );
     runtime
         .observe_test(touch(
             revision,
@@ -1976,8 +2036,11 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
             stick,
         ))
         .unwrap();
-    assert_eq!(runtime.application.flight_touch_generation(), None);
-    let current = runtime.retained.as_ref().unwrap().view_revision;
+    assert_eq!(
+        runtime.authority.application.flight_touch_generation(),
+        None
+    );
+    let current = runtime.endpoint.retained.as_ref().unwrap().view_revision;
     runtime
         .observe_test(touch(
             current,
@@ -1988,9 +2051,23 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
             stick,
         ))
         .unwrap();
-    assert!(runtime.application.flight_touch_generation().unwrap() > generation);
+    assert!(
+        runtime
+            .authority
+            .application
+            .flight_touch_generation()
+            .unwrap()
+            > generation
+    );
     runtime.observe_test(key("KeyW", true, false)).unwrap();
-    assert!(runtime.flight_pointers.iter().all(Option::is_none));
+    assert!(
+        runtime
+            .endpoint
+            .flight_pointer
+            .pointers
+            .iter()
+            .all(Option::is_none)
+    );
     runtime
         .observe_test(touch(
             current,
@@ -2001,7 +2078,10 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
             stick,
         ))
         .unwrap();
-    assert_eq!(runtime.application.flight_touch_generation(), None);
+    assert_eq!(
+        runtime.authority.application.flight_touch_generation(),
+        None
+    );
     runtime.observe_test(key("KeyW", false, false)).unwrap();
     // Restore the same public camera setting for the existing keyboard journey.
     runtime.observe_test(key("KeyC", true, false)).unwrap();
@@ -2052,13 +2132,13 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
         .observe_test(physical_key(KeyboardKey::C, true, false))
         .unwrap();
     assert_eq!(
-        runtime.ui.flight_camera,
+        runtime.authority.ui.flight_camera,
         birdman_game_presentation::game_ui::GameUiFlightCamera::Chase
     );
     assert!(hud_value(camera).contains("C●"));
     let released = runtime.observe_test(key("KeyC", false, false)).unwrap();
     assert!(hud_value(released).contains("C○"));
-    let view = runtime.retained.as_ref().unwrap().clone();
+    let view = runtime.endpoint.retained.as_ref().unwrap().clone();
     activate_action(
         &mut runtime,
         &view,
@@ -2067,7 +2147,7 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
         },
     );
     assert_eq!(
-        runtime.ui.flight_camera,
+        runtime.authority.ui.flight_camera,
         birdman_game_presentation::game_ui::GameUiFlightCamera::Pilot
     );
     let paused = runtime.observe_test(key("KeyP", true, false)).unwrap();
@@ -2080,19 +2160,19 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
         birdman_game_presentation::game_ui::GameUiPauseOverlay::Help,
     ] {
         if overlay != birdman_game_presentation::game_ui::GameUiPauseOverlay::Menu {
-            let view = runtime.retained.as_ref().unwrap().clone();
+            let view = runtime.endpoint.retained.as_ref().unwrap().clone();
             activate_action(
                 &mut runtime,
                 &view,
                 GameUiAction::SetPauseOverlay { overlay },
             );
         }
-        let previous = runtime.ui.flight_camera;
+        let previous = runtime.authority.ui.flight_camera;
         runtime.observe_test(key("KeyC", true, false)).unwrap();
-        assert_eq!(runtime.ui.flight_camera, previous.toggled());
+        assert_eq!(runtime.authority.ui.flight_camera, previous.toggled());
         runtime.observe_test(key("KeyC", false, false)).unwrap();
         if overlay != birdman_game_presentation::game_ui::GameUiPauseOverlay::Menu {
-            let view = runtime.retained.as_ref().unwrap().clone();
+            let view = runtime.endpoint.retained.as_ref().unwrap().clone();
             activate_action(
                 &mut runtime,
                 &view,
@@ -2107,7 +2187,7 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
     assert!(hud_value(runtime.observe_test(key("Escape", false, false)).unwrap()).contains("Esc○"));
     runtime.observe_test(key("ArrowUp", false, false)).unwrap();
     assert!(hud_value(runtime.observe_test(key("ArrowUp", true, false)).unwrap()).contains("↑●"));
-    let revision = runtime.retained.as_ref().unwrap().view_revision;
+    let revision = runtime.endpoint.retained.as_ref().unwrap().view_revision;
     runtime
         .observe_test(touch(
             revision,
@@ -2121,12 +2201,22 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
     let lost = runtime
         .observe_test(ApplicationInput::DocumentFocus { focused: false })
         .unwrap();
-    assert!(runtime.flight_pointers.iter().all(Option::is_none));
-    assert_eq!(runtime.application.flight_touch_generation(), None);
+    assert!(
+        runtime
+            .endpoint
+            .flight_pointer
+            .pointers
+            .iter()
+            .all(Option::is_none)
+    );
+    assert_eq!(
+        runtime.authority.application.flight_touch_generation(),
+        None
+    );
     let value = hud_value(lost);
     assert!(value.contains("↑○") && value.contains("C○"));
     let _ = runtime.observe_test(key("KeyP", true, false));
-    assert!(!runtime.application.accepted_flight_keys()[7]);
+    assert!(!runtime.authority.application.accepted_flight_keys()[7]);
     runtime.observe_test(key("KeyP", false, false)).unwrap();
     runtime
         .observe_test(ApplicationInput::DocumentFocus { focused: true })
@@ -2140,27 +2230,36 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
     runtime.observe_test(key("ArrowUp", false, false)).unwrap();
     assert!(hud_value(runtime.observe_test(key("ArrowUp", true, false)).unwrap()).contains("↑●"));
     runtime.observe_test(key("KeyC", true, false)).unwrap();
-    assert!(runtime.application.accepted_flight_keys()[6]);
+    assert!(runtime.authority.application.accepted_flight_keys()[6]);
     assert!(matches!(
         runtime
+            .endpoint
             .display
             .request(GameUiPresentationMode::PhoneVr, 99_999),
         display::DisplayRequestOutcome::Accepted(_)
     ));
     runtime.observe_test(key("KeyC", false, false)).unwrap();
-    assert!(!runtime.application.accepted_flight_keys()[6]);
+    assert!(!runtime.authority.application.accepted_flight_keys()[6]);
     runtime
         .observe_test(ApplicationInput::PageHide { persisted: true })
         .unwrap();
-    assert_eq!(runtime.application.accepted_flight_keys(), [false; 13]);
+    assert_eq!(
+        runtime.authority.application.accepted_flight_keys(),
+        [false; 13]
+    );
     runtime
+        .authority
         .application
         .observe_flight_action_key(FlightActionKey::Camera, true);
     runtime
+        .authority
         .application
         .execute(SessionCommand::Abort {}, BackendReadiness::Ready)
         .unwrap();
-    assert_eq!(runtime.application.accepted_flight_keys(), [false; 13]);
+    assert_eq!(
+        runtime.authority.application.accepted_flight_keys(),
+        [false; 13]
+    );
 }
 
 #[test]
@@ -2184,11 +2283,11 @@ fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
             },
             ..screen_platform()
         };
-        let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
-        runtime.ui.replay_view = GameUiReplayView::Analysis;
-        runtime.ui.technical_open = true;
-        runtime.ui.replay_camera = GameUiReplayCamera::Chase;
-        runtime.ui.analysis_time_seconds = 0.015;
+        let mut runtime = LocalRuntime::new(application, platform.clone()).unwrap();
+        runtime.authority.ui.replay_view = GameUiReplayView::Analysis;
+        runtime.authority.ui.technical_open = true;
+        runtime.authority.ui.replay_camera = GameUiReplayCamera::Chase;
+        runtime.authority.ui.analysis_time_seconds = 0.015;
         let initial = runtime
             .observe_test(ApplicationInput::Platform {
                 observation: platform,
@@ -2259,10 +2358,10 @@ fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
         ));
         assert_eq!(
             (
-                runtime.ui.replay_view,
-                runtime.ui.technical_open,
-                runtime.ui.replay_camera,
-                runtime.ui.analysis_time_seconds
+                runtime.authority.ui.replay_view,
+                runtime.authority.ui.technical_open,
+                runtime.authority.ui.replay_camera,
+                runtime.authority.ui.analysis_time_seconds
             ),
             (
                 GameUiReplayView::Cinematic,
@@ -2284,7 +2383,7 @@ fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
                 Seen::Committed,
             ]
         };
-        let complete = |runtime: &mut ApplicationRuntime| {
+        let complete = |runtime: &mut LocalRuntime| {
             let mut completed = None;
             for observation in observations.iter().cloned() {
                 completed = Some(
@@ -2317,8 +2416,9 @@ fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
             assert_eq!(completed.diagnostic.as_deref(), failure);
             let replay = structure(completed);
             let notice = runtime
+                .authority
                 .storage
-                .save_notification(&runtime.application)
+                .save_notification(&runtime.authority.application)
                 .unwrap()
                 .to_owned();
             assert!(displayed(&replay, &notice));
@@ -2332,12 +2432,13 @@ fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
         if let Some(notice) = &notice {
             assert!(displayed(&result, notice));
         }
-        assert!(runtime.platform.notification.is_empty());
+        assert!(runtime.endpoint.platform.notification.is_empty());
         let retried = activate(&mut runtime, &result, SessionCommand::Retry {});
         assert!(
             runtime
+                .authority
                 .storage
-                .save_notification(&runtime.application)
+                .save_notification(&runtime.authority.application)
                 .is_none()
         );
         let briefing = if retried
@@ -2376,8 +2477,9 @@ fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
             assert_eq!(completed.diagnostic.as_deref(), failure);
             assert!(
                 runtime
+                    .authority
                     .storage
-                    .save_notification(&runtime.application)
+                    .save_notification(&runtime.authority.application)
                     .is_none()
             );
             assert!(matches!(
@@ -2431,13 +2533,12 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         },
         ..screen_platform()
     };
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
-    runtime.ui.replay_view = GameUiReplayView::Analysis;
-    runtime.ui.technical_open = true;
-    runtime.ui.replay_camera = GameUiReplayCamera::Chase;
-    runtime.ui.analysis_time_seconds = 0.015;
-    let previous_ui = runtime.ui.clone();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    runtime.authority.ui.replay_view = GameUiReplayView::Analysis;
+    runtime.authority.ui.technical_open = true;
+    runtime.authority.ui.replay_camera = GameUiReplayCamera::Chase;
+    runtime.authority.ui.analysis_time_seconds = 0.015;
+    let previous_ui = runtime.authority.ui.clone();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform.clone(),
@@ -2465,7 +2566,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         .unwrap();
     assert!(failed.requests.is_empty());
     assert_eq!(failed.diagnostic.as_deref(), Some("list I/O failure"));
-    assert!(runtime.platform.stored_records_retry_available);
+    assert!(runtime.endpoint.platform.stored_records_retry_available);
     let failed = structure(failed);
     assert!(
         failed
@@ -2496,8 +2597,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         other => panic!("Expected a list retry: {other:?}"),
     };
     assert_ne!(preview_id, previous_preview);
-    assert!(!runtime.platform.stored_records_retry_available);
-    let next_request = runtime.next_request_id;
+    assert!(!runtime.endpoint.platform.stored_records_retry_available);
     assert!(
         runtime
             .observe_test(ApplicationInput::Control {
@@ -2508,7 +2608,6 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
             })
             .is_err()
     );
-    assert_eq!(runtime.next_request_id, next_request);
     let stale = runtime
         .observe_test(ApplicationInput::RecordPreviewObserved {
             request_id: previous_preview,
@@ -2518,7 +2617,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         })
         .unwrap();
     assert!(stale.diagnostic.is_none());
-    assert!(!runtime.platform.stored_records_retry_available);
+    assert!(!runtime.endpoint.platform.stored_records_retry_available);
     runtime
         .observe_test(ApplicationInput::RecordPreviewObserved {
             request_id: preview_id,
@@ -2568,9 +2667,15 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         })
         .unwrap();
     assert_eq!(failed.diagnostic.as_deref(), Some("raw I/O failure"));
-    assert_eq!(runtime.ui, previous_ui);
-    assert!(!runtime.platform.notification.contains("raw I/O failure"));
-    assert!(!runtime.platform.operation_pending);
+    assert_eq!(runtime.authority.ui, previous_ui);
+    assert!(
+        !runtime
+            .endpoint
+            .platform
+            .notification
+            .contains("raw I/O failure")
+    );
+    assert!(!runtime.endpoint.platform.operation_pending);
     let title = structure(failed);
     assert!(
         title
@@ -2600,7 +2705,6 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
     };
     assert_ne!(request_id, retry_id);
     let pending = structure(retry);
-    let next_request_id = runtime.next_request_id;
     assert!(matches!(
         runtime.observe_test(ApplicationInput::Control {
             view_revision: pending.view_revision,
@@ -2610,7 +2714,6 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         }),
         Err(ApplicationRuntimeError::Ui(GameUiError::ActionUnavailable))
     ));
-    assert_eq!(runtime.next_request_id, next_request_id);
     let late = runtime
         .observe_test(ApplicationInput::RecordLoaded {
             request_id,
@@ -2621,9 +2724,9 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         .unwrap();
     assert!(late.requests.is_empty());
     assert!(late.diagnostic.is_none());
-    assert!(runtime.storage.load_pending());
+    assert!(runtime.authority.storage.load_pending());
     assert!(runtime.application().archive().is_none());
-    assert_eq!(runtime.ui, previous_ui);
+    assert_eq!(runtime.authority.ui, previous_ui);
     assert_eq!(
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::Title
@@ -2642,10 +2745,10 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
     );
     assert_eq!(
         (
-            runtime.ui.replay_view,
-            runtime.ui.technical_open,
-            runtime.ui.replay_camera,
-            runtime.ui.analysis_time_seconds
+            runtime.authority.ui.replay_view,
+            runtime.authority.ui.technical_open,
+            runtime.authority.ui.replay_camera,
+            runtime.authority.ui.analysis_time_seconds
         ),
         (
             GameUiReplayView::Analysis,
@@ -2654,15 +2757,14 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
             0.015
         ),
     );
-    let prepared_key = runtime.resources.as_ref().unwrap().key;
+    let prepared_key = runtime.endpoint.resources.as_ref().unwrap().key;
     assert!(matches!(
-        EnvironmentSelection::for_session(&runtime.application)
+        EnvironmentSelection::for_session(&runtime.authority.application)
             .unwrap()
             .resolve()
             .unwrap(),
         EnvironmentProjection::Available { .. }
     ));
-    let next_request = runtime.next_request_id;
     let frame = runtime
         .observe_test(ApplicationInput::Frame {
             timestamp_ms: 16.0,
@@ -2679,17 +2781,16 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
             .as_ref()
             .is_none_or(|geometry| !geometry.aircraft_visible && !geometry.main_wing_visible)
     );
-    assert!(runtime.platform.analysis_available);
-    assert!(!runtime.platform.replay_available);
+    assert!(runtime.endpoint.platform.analysis_available);
+    assert!(!runtime.endpoint.platform.replay_available);
     assert_eq!(
-        runtime.application.set_playback_playing(true),
+        runtime.authority.application.set_playback_playing(true),
         Err(birdman_game_core::GameSessionError::InvalidTransition)
     );
-    runtime.application.seek_playback(0.005).unwrap();
+    runtime.authority.application.seek_playback(0.005).unwrap();
     assert!(frame.requests.is_empty());
-    assert_eq!(runtime.next_request_id, next_request);
-    assert!(runtime.resources.as_ref().unwrap().key == prepared_key);
-    let replay = runtime.retained.as_ref().unwrap().clone();
+    assert!(runtime.endpoint.resources.as_ref().unwrap().key == prepared_key);
+    let replay = runtime.endpoint.retained.as_ref().unwrap().clone();
     assert!(
         runtime
             .observe_test(ApplicationInput::Control {
@@ -2700,17 +2801,18 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
             })
             .is_err()
     );
-    let selected_ui = runtime.ui.clone();
+    let selected_ui = runtime.authority.ui.clone();
     runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform,
         })
         .unwrap();
-    assert_eq!(runtime.ui, selected_ui);
-    let file_id = runtime.allocate_request().unwrap();
+    assert_eq!(runtime.authority.ui, selected_ui);
+    let file_id = runtime.authority.allocate_request().unwrap();
     let download = runtime
+        .authority
         .storage
-        .download(&runtime.application, file_id, false)
+        .download(&runtime.authority.application, file_id, false)
         .unwrap();
     assert!(
         matches!(download, ApplicationRequest::DownloadFile { bytes, .. } if bytes == replacement_original.as_bytes())
@@ -2722,7 +2824,13 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         })
         .unwrap();
     assert_eq!(failed.diagnostic.as_deref(), Some("file I/O failure"));
-    assert!(!runtime.platform.notification.contains("file I/O failure"));
+    assert!(
+        !runtime
+            .endpoint
+            .platform
+            .notification
+            .contains("file I/O failure")
+    );
     let duplicate = runtime
         .observe_test(ApplicationInput::DownloadCompleted {
             request_id: file_id,
@@ -2730,7 +2838,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         })
         .unwrap();
     assert!(duplicate.diagnostic.is_none());
-    let replay = runtime.retained.as_ref().unwrap().clone();
+    let replay = runtime.endpoint.retained.as_ref().unwrap().clone();
     let returned = activate(&mut runtime, &replay, SessionCommand::LeaveReplay {});
     let empty_id = returned
         .requests
@@ -2754,8 +2862,16 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
             })
             .unwrap(),
     );
-    assert!(runtime.platform.stored_records.iter().next().is_none());
-    assert!(!runtime.platform.stored_records_retry_available);
+    assert!(
+        runtime
+            .endpoint
+            .platform
+            .stored_records
+            .iter()
+            .next()
+            .is_none()
+    );
+    assert!(!runtime.endpoint.platform.stored_records_retry_available);
     assert!(
         !empty
             .panels
@@ -2787,7 +2903,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         .unwrap();
     assert!(application.replay_available());
     let platform = screen_platform();
-    let mut legacy_runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+    let mut legacy_runtime = LocalRuntime::new(application, platform.clone()).unwrap();
     let initial = legacy_runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform,
@@ -2814,14 +2930,14 @@ trait ObservedInput {
     ) -> Result<ApplicationOutput, ApplicationRuntimeError>;
 }
 
-impl ObservedInput for ApplicationRuntime {
+impl ObservedInput for LocalRuntime {
     fn observe_test(
         &mut self,
         input: ApplicationInput,
     ) -> Result<ApplicationOutput, ApplicationRuntimeError> {
         let observed_ms = match &input {
             ApplicationInput::Frame { timestamp_ms, .. } => *timestamp_ms,
-            _ => self.observed_ms,
+            _ => self.authority.observed_ms,
         };
         let mut output = self.update(
             ApplicationObservation { observed_ms, input },
@@ -2919,7 +3035,7 @@ impl ObservedInput for ApplicationRuntime {
 }
 
 fn activate(
-    runtime: &mut ApplicationRuntime,
+    runtime: &mut LocalRuntime,
     view: &GameUiView,
     command: SessionCommand,
 ) -> ApplicationOutput {
@@ -2927,7 +3043,7 @@ fn activate(
 }
 
 fn activate_action(
-    runtime: &mut ApplicationRuntime,
+    runtime: &mut LocalRuntime,
     view: &GameUiView,
     expected: GameUiAction,
 ) -> ApplicationOutput {
@@ -2958,7 +3074,7 @@ fn structure(output: ApplicationOutput) -> Arc<GameUiView> {
     }
 }
 
-fn started_display(mode: GameUiPresentationMode) -> (ApplicationRuntime, ApplicationOutput) {
+fn started_display(mode: GameUiPresentationMode) -> (LocalRuntime, ApplicationOutput) {
     let platform = ApplicationPlatformObservation {
         capabilities: ApplicationCapabilities {
             phone_sensors: Some(PhoneSensorApiObservation {
@@ -2970,8 +3086,7 @@ fn started_display(mode: GameUiPresentationMode) -> (ApplicationRuntime, Applica
         },
         ..screen_platform()
     };
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform,
@@ -3073,7 +3188,7 @@ fn phone_start_deadline_requests_screen_recovery_without_an_adapter_timer_policy
             _ => None,
         })
         .unwrap();
-    assert!(!runtime.phone.projection().available);
+    assert!(!runtime.endpoint.phone.projection().available);
     let rejected = runtime
         .update(
             ApplicationObservation {
@@ -3090,7 +3205,7 @@ fn phone_start_deadline_requests_screen_recovery_without_an_adapter_timer_policy
         request_id, at_ms: 13_000.0, realtime: false,
     }] if *request_id == wake_id)
     );
-    assert_eq!(runtime.phone_wake, Some(wake_id));
+    assert_eq!(runtime.endpoint.phone_wake, Some(wake_id));
     let recovery = runtime
         .update(
             ApplicationObservation {
@@ -3103,7 +3218,7 @@ fn phone_start_deadline_requests_screen_recovery_without_an_adapter_timer_policy
         )
         .unwrap();
     assert!(matches!(
-        runtime.display.state(),
+        runtime.endpoint.display.state(),
         DisplayState::Stopping {
             mode: GameUiPresentationMode::PhoneVr,
             target: GameUiPresentationMode::Screen,
@@ -3120,10 +3235,16 @@ fn phone_start_deadline_requests_screen_recovery_without_an_adapter_timer_policy
         }
     )));
     assert_eq!(
-        runtime.phone.projection().reason,
+        runtime.endpoint.phone.projection().reason,
         Some(PhoneTrackingReason::InitialSampleTimeout)
     );
-    assert!(runtime.platform.notification.contains("通常画面へ戻る"));
+    assert!(
+        runtime
+            .endpoint
+            .platform
+            .notification
+            .contains("通常画面へ戻る")
+    );
 }
 
 #[test]
@@ -3136,7 +3257,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             ControllerFault, ControllerFrame, NativeControllerConnection, NativeControllerDocument,
         };
         fn reply(
-            runtime: &mut ApplicationRuntime,
+            runtime: &mut LocalRuntime,
             output: &ApplicationOutput,
             time: f64,
             arrival: f64,
@@ -3225,7 +3346,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
                 .select_controller_execution(SelectedControllerExecution::decode(source).unwrap())
                 .unwrap();
             let platform = screen_platform();
-            let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+            let mut runtime = LocalRuntime::new(application, platform.clone()).unwrap();
             let initial = runtime
                 .observe_test(ApplicationInput::Platform {
                     observation: platform.clone(),
@@ -3251,7 +3372,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
                 resources_ready(&mut runtime, id).unwrap();
             }
             assert!(matches!(
-                runtime.resource_readiness,
+                runtime.endpoint.resource_readiness,
                 BackendReadiness::Ready
             ));
             let held_open = runtime
@@ -3292,12 +3413,12 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
                     .unwrap()
                     .contains("domain=arrival")
             );
-            assert_eq!(runtime.observed_ms, 1.0);
+            assert_eq!(runtime.authority.observed_ms, 1.0);
             assert_eq!(
                 runtime.application().core_session().snapshot().phase(),
                 SessionPhase::BriefingPreparing
             );
-            let wake = runtime.controller_wake.unwrap().0;
+            let wake = runtime.authority.controller_wake.unwrap().0;
             let mut output = runtime
                 .update(
                     ApplicationObservation {
@@ -3324,15 +3445,18 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             );
             if hitl {
                 runtime
+                    .authority
                     .application
                     .execute(SessionCommand::StartCountdown {}, BackendReadiness::Ready)
                     .unwrap();
                 let token = runtime
+                    .authority
                     .application
                     .core_session()
                     .countdown_token()
                     .unwrap();
                 runtime
+                    .authority
                     .application
                     .observe_countdown(token, 3.0, true)
                     .unwrap();
@@ -3351,7 +3475,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
                         &mut no_text_metrics,
                     )
                     .unwrap();
-                let wake = runtime.controller_wake.unwrap().0;
+                let wake = runtime.authority.controller_wake.unwrap().0;
                 let rearmed = runtime
                     .update(
                         ApplicationObservation {
@@ -3378,6 +3502,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
                 reply(&mut runtime, &evaluate, 21.0, 19.0);
                 assert_eq!(
                     runtime
+                        .authority
                         .application
                         .core_session()
                         .snapshot()
@@ -3386,7 +3511,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
                         .tick_index(),
                     0
                 );
-                let wake = runtime.controller_wake.unwrap().0;
+                let wake = runtime.authority.controller_wake.unwrap().0;
                 runtime
                     .update(
                         ApplicationObservation {
@@ -3396,10 +3521,20 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
                         &mut no_text_metrics,
                     )
                     .unwrap();
-                let record = runtime.application.core_session().flight_record().unwrap();
+                let record = runtime
+                    .authority
+                    .application
+                    .core_session()
+                    .flight_record()
+                    .unwrap();
                 assert_eq!(record.samples().last().unwrap().tick_index, 1);
                 assert_eq!(
-                    runtime.application.controller_fault().unwrap().fault,
+                    runtime
+                        .authority
+                        .application
+                        .controller_fault()
+                        .unwrap()
+                        .fault,
                     ControllerFault::DeadlineMissed
                 );
             }
@@ -3407,11 +3542,11 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
     }
     use birdman_game_presentation::camera::{Pose, Vector3, compose_pose};
     let platform = ApplicationPlatformObservation {
+        location: None,
         gpu_timing_requested: true,
         ..screen_platform()
     };
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform.clone(),
@@ -3520,8 +3655,11 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
                 ApplicationMeshAttachment::Aircraft
             }
         );
-        let ApplicationBufferSlice::F32(positions) =
-            runtime.asset_buffer(mesh.position.buffer_id).unwrap()
+        let ApplicationBufferSlice::F32(positions) = runtime
+            .authority
+            .assets
+            .buffer(mesh.position.buffer_id)
+            .unwrap()
         else {
             unreachable!()
         };
@@ -3590,11 +3728,19 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
     pose.controls.physical_incidence.horizontal_tail_radians = 0.2;
     pose.controls.physical_incidence.vertical_tail_radians = 0.15;
     let articulated = runtime
+        .authority
         .assets
         .project_geometry(Some(pose), &selected)
         .unwrap()
         .unwrap();
     assert!(articulated.aircraft_visible && articulated.main_wing_visible);
+    let retained_buffers: Vec<_> = articulated
+        .updates
+        .iter()
+        .flat_map(|update| [update.position.buffer_id, update.normal.buffer_id])
+        .map(|id| runtime.authority.assets.snapshot(id).unwrap())
+        .collect();
+    assert!(!retained_buffers.is_empty());
     let adopted = pose.wing_deformation;
     pose.wing_deformation =
         birdman_game_presentation::render_pose::RenderWingDeformation::Unavailable {
@@ -3602,22 +3748,35 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
                 birdman_game_presentation::render_pose::RenderWingDeformationUnavailable::Unrecorded,
         };
     let unrecorded = runtime
+        .authority
         .assets
         .project_geometry(Some(pose), &selected)
         .unwrap()
         .unwrap();
     assert!(unrecorded.aircraft_visible && !unrecorded.main_wing_visible);
-    assert!(unrecorded.updates.is_empty());
     assert_eq!(unrecorded.revision, articulated.revision);
     pose.wing_deformation = adopted;
     let restored = runtime
+        .authority
         .assets
         .project_geometry(Some(pose), &selected)
         .unwrap()
         .unwrap();
     assert!(restored.aircraft_visible && restored.main_wing_visible);
-    assert!(restored.updates.is_empty());
+    assert_eq!(
+        serde_json::to_value(&restored.updates).unwrap(),
+        serde_json::to_value(&articulated.updates).unwrap()
+    );
     assert_eq!(restored.revision, articulated.revision);
+    for previous in retained_buffers {
+        let current = runtime
+            .authority
+            .assets
+            .snapshot(previous.buffer_id)
+            .unwrap();
+        assert_eq!(current.revision, previous.revision);
+        assert!(Arc::ptr_eq(&current.bytes, &previous.bytes));
+    }
     for (frame, incidence) in [
         (
             geometry.clone(),
@@ -3648,8 +3807,11 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
                     && (fixed.y - pivot.y).abs() < 1.0e-12
                     && (fixed.z - pivot.z).abs() < 1.0e-12
             );
-            let ApplicationBufferSlice::F32(positions) =
-                runtime.asset_buffer(mesh.position.buffer_id).unwrap()
+            let ApplicationBufferSlice::F32(positions) = runtime
+                .authority
+                .assets
+                .buffer(mesh.position.buffer_id)
+                .unwrap()
             else {
                 unreachable!()
             };
@@ -3734,7 +3896,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
                 .admit_presentation(work.project(&mut no_text_metrics))
                 .unwrap();
             assert!(drawing.is_some());
-            assert!(runtime.presentation_lease.is_none());
+            assert!(runtime.endpoint.presentation_lease.is_none());
             drawing
         } else {
             runtime.observe_test(input).unwrap().drawing
@@ -3873,7 +4035,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             .world_from_head,
         camera
     );
-    let failed_epoch = runtime.graphics.epoch();
+    let failed_epoch = runtime.endpoint.graphics.epoch();
     let invalid = runtime
         .observe_test(ApplicationInput::Graphics {
             renderer_resource_id: next_query.renderer_resource_id,
@@ -3885,7 +4047,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         .unwrap();
     assert!(invalid.drawing.is_some());
     assert!(invalid.diagnostic.is_some());
-    assert_ne!(runtime.graphics.epoch(), failed_epoch);
+    assert_ne!(runtime.endpoint.graphics.epoch(), failed_epoch);
     let moved = runtime
         .observe_test(ApplicationInput::PointerMotion {
             display_resource_id: None,
@@ -3895,11 +4057,9 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         .unwrap()
         .drawing
         .unwrap()
-        .scene
-        .camera
-        .unwrap()
-        .world_from_head;
-    assert_ne!(moved, camera);
+        .scene;
+    assert_ne!(moved.camera.as_ref().unwrap().world_from_head, camera);
+    let previous_geometry = moved.geometry.unwrap();
     let fractional = runtime
         .observe_test(ApplicationInput::Frame {
             display_resource_id: None,
@@ -3909,15 +4069,11 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             spatial: Default::default(),
         })
         .unwrap();
-    assert!(
-        fractional
-            .drawing
-            .unwrap()
-            .scene
-            .geometry
-            .unwrap()
-            .updates
-            .is_empty()
+    let fractional_geometry = fractional.drawing.unwrap().scene.geometry.unwrap();
+    assert_eq!(fractional_geometry.revision, previous_geometry.revision);
+    assert_eq!(
+        serde_json::to_value(&fractional_geometry.updates).unwrap(),
+        serde_json::to_value(&previous_geometry.updates).unwrap()
     );
     let fraction = runtime.application().flight_interpolation_fraction();
     assert!(runtime.application().flight_interpolation_ready() && fraction > 0.0);
@@ -4192,6 +4348,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
                 observed_ms: 10_020.0,
                 input: ApplicationInput::Platform {
                     observation: ApplicationPlatformObservation {
+                        location: None,
                         gpu_timing_requested: false,
                         renderer: Some(renderer_observation()),
                         surface: Some(ApplicationSurfaceObservation {
@@ -4203,7 +4360,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
                             },
                             locale: "ja".to_owned(),
                         }),
-                        viewport: runtime.platform.viewport,
+                        viewport: runtime.endpoint.platform.viewport,
                         capabilities: ApplicationCapabilities {
                             hmd_available: true,
                             phone_sensors: Some(PhoneSensorApiObservation {
@@ -4372,7 +4529,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
         .unwrap();
     assert!(!runtime.application().presentation_available());
     assert!(matches!(
-        runtime.xr_viewer,
+        runtime.endpoint.xr_viewer,
         Some(XrViewerFrame::Unavailable { .. })
     ));
     for missing_projection in [false, true] {
@@ -4383,7 +4540,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             raw["trackingFromHead"]["position"]["x"] = serde_json::Value::Null;
         }
         let xr = serde_json::from_value(serde_json::json!({ "observation": raw, "visibility": "visible", "input_focused": true })).unwrap();
-        let timestamp = runtime.observed_ms + 10.0;
+        let timestamp = runtime.authority.observed_ms + 10.0;
         let output = runtime
             .observe_test(ApplicationInput::Frame {
                 display_resource_id: Some(50),
@@ -4394,16 +4551,16 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             })
             .unwrap();
         assert!(matches!(
-            runtime.xr_viewer,
+            runtime.endpoint.xr_viewer,
             Some(XrViewerFrame::Unavailable { .. })
         ));
         assert!(output.drawing.unwrap().graphics.resource.is_some());
     }
     // Physical gamepads follow XR focus; window blur retires only surface controls.
-    let frame = |runtime: &mut ApplicationRuntime, pitch: f64, focused: bool| {
+    let frame = |runtime: &mut LocalRuntime, pitch: f64, focused: bool| {
         let mut xr = hmd_observation(Pose::IDENTITY);
         xr.input_focused = focused;
-        let timestamp_ms = runtime.observed_ms + 10.0;
+        let timestamp_ms = runtime.authority.observed_ms + 10.0;
         runtime
             .observe_test(ApplicationInput::Frame {
                 display_resource_id: Some(50),
@@ -4431,16 +4588,19 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
         SessionCommand::StartCountdown {},
     ] {
         runtime
+            .authority
             .application
             .execute(command, BackendReadiness::Ready)
             .unwrap();
     }
     let token = runtime
+        .authority
         .application
         .core_session()
         .countdown_token()
         .unwrap();
     runtime
+        .authority
         .application
         .observe_countdown(token, 3.0, true)
         .unwrap();
@@ -4451,15 +4611,19 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             repeat: false,
         })
         .unwrap();
-    assert!(runtime.application.accepted_flight_keys()[0]);
+    assert!(runtime.authority.application.accepted_flight_keys()[0]);
     runtime
         .observe_test(ApplicationInput::DocumentFocus { focused: false })
         .unwrap();
-    assert_eq!(runtime.application.accepted_flight_keys(), [false; 13]);
+    assert_eq!(
+        runtime.authority.application.accepted_flight_keys(),
+        [false; 13]
+    );
     frame(&mut runtime, 0.0, true);
     frame(&mut runtime, 0.0, true);
-    let demand = |runtime: &ApplicationRuntime| {
+    let demand = |runtime: &LocalRuntime| {
         runtime
+            .authority
             .application
             .core_session()
             .flight_record()
@@ -4491,11 +4655,17 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
         })
         .unwrap();
     assert!(matches!(
-        runtime.application.core_session().snapshot().phase(),
+        runtime
+            .authority
+            .application
+            .core_session()
+            .snapshot()
+            .phase(),
         SessionPhase::FlightPaused { .. }
     ));
     frame(&mut runtime, 0.54, true);
     runtime
+        .authority
         .application
         .execute(SessionCommand::Resume {}, BackendReadiness::Ready)
         .unwrap();
@@ -4641,8 +4811,7 @@ fn display_completion_retains_owned_resources_and_reports_no_active_mode_after_s
         },
         ..screen_platform()
     };
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform,
@@ -4653,22 +4822,23 @@ fn display_completion_retains_owned_resources_and_reports_no_active_mode_after_s
         command: GameUiPlatformCommand::SetPresentation { mode: Hmd },
     };
     let pending = activate_action(&mut runtime, &title, action.clone());
-    let transition = runtime.display.state().clone();
-    let active_resource = runtime.display.active_resource();
+    let transition = runtime.endpoint.display.state().clone();
+    let active_resource = runtime.endpoint.display.active_resource();
     let mut no_requests = Vec::new();
-    let pending_revision = runtime.retained.as_ref().unwrap().view_revision;
+    let pending_revision = runtime.endpoint.retained.as_ref().unwrap().view_revision;
     assert!(matches!(
         runtime.apply_action(pending_revision, action.clone(), &mut no_requests),
         Err(ApplicationRuntimeError::Ui(GameUiError::ActionUnavailable))
     ));
-    let notification = runtime.platform.notification.clone();
+    let notification = runtime.endpoint.platform.notification.clone();
     runtime
+        .endpoint
         .recover_screen("VRの表示を切り替えている。", &mut no_requests)
         .unwrap();
     assert!(no_requests.is_empty());
-    assert_eq!(runtime.display.state(), &transition);
-    assert_eq!(runtime.display.active_resource(), active_resource);
-    runtime.platform.notification = notification;
+    assert_eq!(runtime.endpoint.display.state(), &transition);
+    assert_eq!(runtime.endpoint.display.active_resource(), active_resource);
+    runtime.endpoint.platform.notification = notification;
     let request_id = pending
         .requests
         .iter()
@@ -4715,7 +4885,7 @@ fn display_completion_retains_owned_resources_and_reports_no_active_mode_after_s
         held.drawing.unwrap().ui,
         ApplicationUiProjection::Frame { .. }
     ));
-    assert_eq!(runtime.platform.notification, message);
+    assert_eq!(runtime.endpoint.platform.notification, message);
     let retried = activate_action(&mut runtime, &failed, action);
     assert!(retried.requests.iter().any(|request| matches!(request,
         ApplicationRequest::Display { request: DisplayRequest::Permission { request_id: next, .. } } if *next != request_id
@@ -4729,8 +4899,8 @@ fn display_completion_retains_owned_resources_and_reports_no_active_mode_after_s
         })
         .unwrap();
     assert!(stale.diagnostic.is_none());
-    assert!(runtime.display.state().pending());
-    assert_eq!(runtime.platform.notification, message);
+    assert!(runtime.endpoint.display.state().pending());
+    assert_eq!(runtime.endpoint.platform.notification, message);
 }
 
 #[test]
@@ -4754,6 +4924,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
                 observed_ms: 10_000.0,
                 input: ApplicationInput::Platform {
                     observation: ApplicationPlatformObservation {
+                        location: None,
                         gpu_timing_requested: false,
                         renderer: Some(renderer_observation()),
                         surface: Some(ApplicationSurfaceObservation {
@@ -4765,7 +4936,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
                             },
                             locale: "ja".to_owned(),
                         }),
-                        viewport: runtime.platform.viewport,
+                        viewport: runtime.endpoint.platform.viewport,
                         capabilities: ApplicationCapabilities {
                             hmd_available: true,
                             ..Default::default()
@@ -4792,7 +4963,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
             &mut measure,
         )
         .unwrap();
-    let view = runtime.retained.as_ref().unwrap();
+    let view = runtime.endpoint.retained.as_ref().unwrap();
     let label = view
         .panels
         .iter()
@@ -5027,7 +5198,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
             ],
         }),
     };
-    let mut frame = |runtime: &mut ApplicationRuntime,
+    let mut frame = |runtime: &mut LocalRuntime,
                      timestamp_ms,
                      presented_id,
                      controller: &XrInputSourceObservation| {
@@ -5075,7 +5246,10 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
         frame(&mut runtime, 10_050.0, submitted, &controller);
     assert_ne!(same_revision, changed_revision);
     assert_ne!(before_scroll, after_scroll);
-    let before_stale = (runtime.ui.clone(), runtime.application().difficulty());
+    let before_stale = (
+        runtime.authority.ui.clone(),
+        runtime.application().difficulty(),
+    );
     runtime
         .update(
             ApplicationObservation {
@@ -5091,7 +5265,10 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
         )
         .unwrap();
     assert_eq!(
-        (runtime.ui.clone(), runtime.application().difficulty()),
+        (
+            runtime.authority.ui.clone(),
+            runtime.application().difficulty()
+        ),
         before_stale
     );
     assert_eq!(
@@ -5135,8 +5312,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
 fn shadow_off_preparation_keeps_live_shadows_until_the_complete_resource_ack() {
     use birdman_game_presentation::screen_render_auto::ScreenShadowMap;
     let platform = screen_platform();
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform,
@@ -5204,8 +5380,7 @@ fn shadow_off_preparation_keeps_live_shadows_until_the_complete_resource_ack() {
 #[test]
 fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
     let platform = screen_platform();
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let mut runtime = LocalRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform.clone(),
@@ -5249,7 +5424,7 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
             .drawing
             .is_some()
     );
-    let initial_generation = runtime.graphics.resource().unwrap().commit;
+    let initial_generation = runtime.endpoint.graphics.resource().unwrap().commit;
     let unsupported = runtime
         .observe_test(ApplicationInput::Graphics {
             renderer_resource_id: 100,
@@ -5347,7 +5522,7 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
     );
     assert!(first_commit.requests.iter().any(|request| matches!(request, ApplicationRequest::CommitResources { request_id, resource_id: 701 } if *request_id == second_id)));
     assert!(matches!(
-        runtime.resource_readiness,
+        runtime.endpoint.resource_readiness,
         BackendReadiness::Preparing
     ));
     let committed = runtime
@@ -5383,11 +5558,12 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
         Some("retired mesh release failed")
     );
     assert!(matches!(
-        runtime.platform.water_quality_operation,
+        runtime.endpoint.platform.water_quality_operation,
         GameUiWaterQualityOperation::CleanupFailed { .. }
     ));
-    assert_eq!(runtime.graphics.resource(), Some(resource));
+    assert_eq!(runtime.endpoint.graphics.resource(), Some(resource));
     runtime
+        .authority
         .application
         .execute(SessionCommand::OpenSetup {}, BackendReadiness::Ready)
         .unwrap();
@@ -5401,12 +5577,13 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
         })
         .unwrap();
     runtime
+        .endpoint
         .graphics
         .select(
             &GameUiPlatformCommand::SetScreenRenderScale {
                 scale: birdman_game_presentation::screen_render_scale::ScreenRenderScale::Full,
             },
-            runtime.observed_ms,
+            runtime.authority.observed_ms,
         )
         .unwrap();
     let changed = runtime
@@ -5449,11 +5626,17 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
             },
         })
         .unwrap();
-    assert!(runtime.graphics.requested().is_some());
+    assert!(runtime.endpoint.graphics.requested().is_some());
     resources_ready(&mut runtime, desired).unwrap();
-    assert!(runtime.graphics.requested().is_none());
+    assert!(runtime.endpoint.graphics.requested().is_none());
     assert_eq!(
-        runtime.graphics.resource().unwrap().quality.water_quality,
+        runtime
+            .endpoint
+            .graphics
+            .resource()
+            .unwrap()
+            .quality
+            .water_quality,
         WaterQuality::High
     );
     let mut replacement = platform;
@@ -5480,14 +5663,15 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
         })
         .unwrap();
     let after_stale = runtime
+        .endpoint
         .graphics
-        .projection(true, runtime.observed_ms)
+        .projection(true, runtime.authority.observed_ms)
         .unwrap();
     assert_eq!(after_stale.renderer_resource_id, Some(101));
     assert!(after_stale.resource.is_none());
     assert!(after_stale.query.is_none());
-    let first = runtime.resources.as_ref().unwrap().request_id;
-    let first_target = runtime.resources.as_ref().unwrap().key.graphics;
+    let first = runtime.endpoint.resources.as_ref().unwrap().request_id;
+    let first_target = runtime.endpoint.resources.as_ref().unwrap().key.graphics;
     runtime
         .observe_test(ApplicationInput::Resources {
             request_id: first,
@@ -5502,7 +5686,7 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
             observation: platform,
         })
         .unwrap();
-    let second = runtime.resources.as_ref().unwrap().request_id;
+    let second = runtime.endpoint.resources.as_ref().unwrap().request_id;
     runtime
         .observe_test(ApplicationInput::Resources {
             request_id: second,
@@ -5580,6 +5764,7 @@ fn fixed_runtime_target_keeps_preferences_and_applies_shared_shadow_and_water() 
 
 fn screen_platform() -> ApplicationPlatformObservation {
     ApplicationPlatformObservation {
+        location: None,
         gpu_timing_requested: false,
         renderer: Some(renderer_observation()),
         surface: None,

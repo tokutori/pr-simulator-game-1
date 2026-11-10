@@ -82,6 +82,7 @@ struct SubmittedShadow {
 }
 
 struct Candidate {
+    mesh_scope: u32,
     manifest: ApplicationGeometryAssets,
     stage: ResourceStage,
     target: ApplicationGraphicsTarget,
@@ -109,7 +110,7 @@ struct Candidate {
 
 #[derive(Resource, Default)]
 pub(crate) struct NativeGpu {
-    meshes: BTreeMap<u32, Vec<Handle<Mesh>>>,
+    meshes: BTreeMap<(u32, u32), Vec<Handle<Mesh>>>,
     dirty_meshes: Vec<bevy::asset::AssetId<Mesh>>,
     water_meshes: BTreeMap<u32, Handle<Mesh>>,
     textures: BTreeMap<u32, Handle<Image>>,
@@ -356,6 +357,7 @@ pub(crate) fn execute(
             request_id,
             graphics,
             assets,
+            asset_lease,
             display_resource_id,
             ..
         } => {
@@ -371,7 +373,11 @@ pub(crate) fn execute(
                 Err("Requested renderer handle is unavailable".into())
             } else {
                 gpu.initial_failure.clone().map_or_else(
-                    || gpu.prepare(world, runtime, *graphics, assets, copy_display),
+                    || {
+                        runtime.buffers(asset_lease).and_then(|buffers| {
+                            gpu.prepare(world, &buffers, *graphics, assets, copy_display)
+                        })
+                    },
                     Err,
                 )
             };
@@ -526,7 +532,7 @@ impl NativeGpu {
     fn prepare(
         &mut self,
         world: &mut World,
-        runtime: &NativeRuntime,
+        runtime: &super::native_runtime::NativeBuffers,
         target: ApplicationGraphicsTarget,
         assets: &ApplicationEnvironmentAssets,
         copy_display: Option<u32>,
@@ -547,7 +553,11 @@ impl NativeGpu {
         let new_meshes = manifest
             .meshes
             .iter()
-            .filter(|asset| !self.meshes.contains_key(&asset.mesh_id))
+            .filter(|asset| {
+                !self
+                    .meshes
+                    .contains_key(&(runtime.resource_epoch, asset.mesh_id))
+            })
             .map(|asset| {
                 asset
                     .materials
@@ -619,7 +629,7 @@ impl NativeGpu {
         let reflection_image = super::water_reflection::image(target.reflection_extent_px)?;
         for (id, meshes) in new_meshes {
             self.meshes.insert(
-                id,
+                (runtime.resource_epoch, id),
                 meshes
                     .into_iter()
                     .map(|mesh| world.resource_mut::<Assets<Mesh>>().add(mesh))
@@ -680,7 +690,11 @@ impl NativeGpu {
         let mut meshes = Vec::new();
         let mut preparation_culling = Vec::new();
         for asset in &manifest.meshes {
-            for (source, mesh) in asset.materials.iter().zip(&self.meshes[&asset.mesh_id]) {
+            for (source, mesh) in asset
+                .materials
+                .iter()
+                .zip(&self.meshes[&(runtime.resource_epoch, asset.mesh_id)])
+            {
                 let material = materials
                     .entry(source.material_id)
                     .or_insert_with(|| {
@@ -859,6 +873,7 @@ impl NativeGpu {
             world.entity_mut(reflection_camera).insert(ambient);
         }
         Ok(Candidate {
+            mesh_scope: runtime.resource_epoch,
             manifest: manifest.clone(),
             stage: ResourceStage::Preparing,
             target,
@@ -1112,8 +1127,17 @@ pub(crate) fn submit(
             }
         }
         if let Some(geometry) = &drawing.scene.geometry {
+            let buffers = drawing
+                .asset_lease
+                .as_ref()
+                .map(|lease| runtime.buffers(lease))
+                .transpose()?;
             for update in &geometry.updates {
-                let Some(handles) = gpu.meshes.get(&update.mesh_id) else {
+                let Some(handles) = gpu
+                    .active
+                    .and_then(|id| gpu.candidates.get(&id))
+                    .and_then(|candidate| gpu.meshes.get(&(candidate.mesh_scope, update.mesh_id)))
+                else {
                     if gpu.active.is_none() {
                         continue;
                     }
@@ -1124,7 +1148,12 @@ pub(crate) fn submit(
                     let mesh = meshes
                         .get_mut_untracked(handle.id())
                         .ok_or("Dynamic GPU mesh is unavailable")?;
-                    environment::update_mesh(runtime, mesh, update.position, update.normal)?;
+                    environment::update_mesh(
+                        buffers.as_ref().ok_or("Dynamic upload lease is absent")?,
+                        mesh,
+                        update.position,
+                        update.normal,
+                    )?;
                     if !gpu.dirty_meshes.contains(&handle.id()) {
                         gpu.dirty_meshes.push(handle.id());
                     }
@@ -1668,6 +1697,7 @@ mod tests {
         gpu.candidates.insert(
             3,
             Candidate {
+                mesh_scope: 0,
                 manifest: ApplicationGeometryAssets {
                     meshes: Vec::new(),
                     wing_textures: std::array::from_fn(|_| {
@@ -1773,6 +1803,7 @@ mod tests {
             birdman_game_runtime::ApplicationRuntime::new(
                 birdman_game_app::application::ApplicationSession::default(),
                 birdman_game_runtime::ApplicationPlatformObservation {
+                    location: None,
                     gpu_timing_requested: false,
                     renderer: None,
                     surface: None,
@@ -1793,6 +1824,7 @@ mod tests {
                     observed_ms: 0.0,
                     input: ApplicationInput::Platform {
                         observation: birdman_game_runtime::ApplicationPlatformObservation {
+                            location: None,
                             gpu_timing_requested: false,
                             renderer: Some(platform(&mut world)),
                             surface: None,
@@ -1903,6 +1935,15 @@ mod tests {
             "Lost active vertex allocation"
         );
         world.get_mut::<Camera>(main).unwrap().is_active = camera_active;
+        let lease = initial
+            .requests
+            .iter()
+            .find_map(|request| match request {
+                ApplicationRequest::PrepareResources { asset_lease, .. } => Some(asset_lease),
+                _ => None,
+            })
+            .unwrap();
+        let buffers = runtime.buffers(lease).unwrap();
         let assets = initial
             .requests
             .iter()
@@ -1916,11 +1957,11 @@ mod tests {
         let mut sampler_assets = assets.clone();
         sampler_assets.water.detail_anisotropy_clamp = 8;
         let sampler_eight = sampler_gpu
-            .prepare(&mut world, &runtime, target, &sampler_assets, None)
+            .prepare(&mut world, &buffers, target, &sampler_assets, None)
             .unwrap();
         sampler_assets.water.detail_anisotropy_clamp = 4;
         let sampler_four = sampler_gpu
-            .prepare(&mut world, &runtime, target, &sampler_assets, None)
+            .prepare(&mut world, &buffers, target, &sampler_assets, None)
             .unwrap();
         let material_count = assets
             .scene
@@ -2022,7 +2063,7 @@ mod tests {
         full.quality.scale =
             birdman_game_presentation::screen_render_scale::ScreenRenderScale::Full;
         let candidate = direct_gpu
-            .prepare(&mut world, &runtime, full, &sampler_assets, None)
+            .prepare(&mut world, &buffers, full, &sampler_assets, None)
             .unwrap();
         let isolated = candidate.output.as_ref().unwrap().id();
         assert_eq!(candidate.output_format, TextureFormat::Bgra8UnormSrgb);
@@ -2166,7 +2207,7 @@ mod tests {
 
         let mut direct_gpu = world.remove_resource::<NativeGpu>().unwrap();
         let mut scaled = direct_gpu
-            .prepare(&mut world, &runtime, target, &sampler_assets, None)
+            .prepare(&mut world, &buffers, target, &sampler_assets, None)
             .unwrap();
         scaled.stage = ResourceStage::Prepared;
         direct_gpu.candidates.insert(42, scaled);
@@ -2187,7 +2228,7 @@ mod tests {
                 .unwrap()
                 .format = TextureFormat::Rgba8UnormSrgb;
             let mut stereo = direct_gpu
-                .prepare(&mut world, &runtime, full, &sampler_assets, Some(91))
+                .prepare(&mut world, &buffers, full, &sampler_assets, Some(91))
                 .unwrap();
             let image = stereo.output.as_ref().unwrap().id();
             let descriptor = &world
@@ -2312,7 +2353,7 @@ mod tests {
             .expect("Prepared scene upload");
         let wing = &scene.meshes[0];
         let range = &wing.materials[0];
-        let mut mesh = environment::mesh(&runtime, wing, range.start, range.count).unwrap();
+        let mut mesh = environment::mesh(&buffers, wing, range.start, range.count).unwrap();
         let indices = mesh.get_index_buffer_bytes().unwrap().to_vec();
         let packed = mesh.create_packed_vertex_buffer_data();
         for attribute in [Mesh::ATTRIBUTE_POSITION, Mesh::ATTRIBUTE_NORMAL] {
@@ -2323,7 +2364,7 @@ mod tests {
             };
             values.fill([f32::NAN; 3]);
         }
-        environment::update_mesh(&runtime, &mut mesh, wing.position, wing.normal).unwrap();
+        environment::update_mesh(&buffers, &mut mesh, wing.position, wing.normal).unwrap();
         assert_eq!(mesh.create_packed_vertex_buffer_data(), packed);
         assert_eq!(mesh.get_index_buffer_bytes().unwrap(), indices);
         let mut grouped_assets = Assets::<Mesh>::default();
@@ -2332,7 +2373,7 @@ mod tests {
             .iter()
             .map(|range| {
                 grouped_assets
-                    .add(environment::mesh(&runtime, wing, range.start, range.count).unwrap())
+                    .add(environment::mesh(&buffers, wing, range.start, range.count).unwrap())
             })
             .collect();
         assert!(handles.len() > 1);
@@ -2347,7 +2388,9 @@ mod tests {
                 .get_index_buffer_bytes()
         );
         let mut grouped_gpu = NativeGpu::default();
-        grouped_gpu.meshes.insert(wing.mesh_id, handles.clone());
+        grouped_gpu
+            .meshes
+            .insert((0, wing.mesh_id), handles.clone());
         let mut pending = Vec::new();
         readiness::extract_meshes(
             &grouped_gpu,
@@ -2419,7 +2462,7 @@ mod tests {
         readiness::extract_meshes(&grouped_gpu, &grouped_assets, Vec::new(), &mut pending);
         assert!(pending.is_empty());
         for texture in &scene.wing_textures {
-            let image = environment::wing_image(&runtime, texture).unwrap();
+            let image = environment::wing_image(&buffers, texture).unwrap();
             assert!(
                 matches!(&image.sampler, bevy::image::ImageSampler::Descriptor(s) if s.anisotropy_clamp == 8)
             );
@@ -2434,12 +2477,10 @@ mod tests {
                 image.texture_descriptor.format,
                 bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb
             );
-            let Some(crate::app::native_runtime::NativeBuffer::U8(bytes)) =
-                runtime.asset_buffer(texture.buffer.buffer_id)
-            else {
+            let Some(bytes) = buffers.bytes(texture.buffer.buffer_id) else {
                 panic!("Prepared wing upload")
             };
-            assert_eq!(image.data.as_deref(), Some(bytes.as_slice()));
+            assert_eq!(image.data.as_deref(), Some(bytes));
         }
         assert!(
             execute(

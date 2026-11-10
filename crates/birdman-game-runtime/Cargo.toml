@@ -8,7 +8,7 @@ repository.workspace = true
 
 [features]
 verus-proof = ["dep:vstd", "birdman-game-core/verus-proof", "birdman-game-presentation/verus-proof"]
-schema = ["dep:schemars", "birdman-game-app/schema", "birdman-game-presentation/schema", "birdman-game-scene/schema"]
+schema = ["dep:schemars", "dep:sha2", "birdman-game-app/schema", "birdman-game-presentation/schema", "birdman-game-scene/schema"]
 
 [package.metadata.verus]
 verify = true
@@ -23,7 +23,9 @@ birdman-game-presentation.workspace = true
 birdman-game-scene.workspace = true
 serde = { workspace = true, features = ["rc"] }
 serde_json.workspace = true
+url.workspace = true
 schemars = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
 time = { version = "=0.3.55", default-features = false, features = ["formatting", "parsing"] }
 
 [lints]

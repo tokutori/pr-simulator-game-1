@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import struct
 import subprocess
 import tarfile
@@ -25,6 +26,7 @@ TARGETS = {
 
 DOCUMENTATION_FILES = (
     "docs/architecture.md",
+    "docs/websocket-server.md",
     "docs/aircraft-json-guide.md",
     "docs/data-and-formats.md",
     "docs/flight-dynamics.md",
@@ -55,17 +57,85 @@ def write_json(path: Path, value) -> None:
 def require_source(root: Path, source_sha: str) -> None:
     if re.fullmatch(r"[0-9a-f]{40}", source_sha) is None:
         raise ValueError("source_sha must be a complete lowercase commit SHA")
-    actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True, encoding="utf-8").strip()
     if actual != source_sha:
         raise ValueError(f"checkout {actual} differs from requested source {source_sha}")
+    status = subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=normal"], cwd=root, text=True, encoding="utf-8")
+    if status:
+        raise ValueError("versioned Native packages require a clean fixed-source checkout")
 
 
 def binary_name(target: str) -> str:
     return "birdman-game-bevy" + (".exe" if TARGETS[target][1] == "windows" else "")
 
 
+def server_binary_name(target: str) -> str:
+    return "birdman-game-server" + (".exe" if TARGETS[target][1] == "windows" else "")
+
+
+def notice_features() -> list[str]:
+    return ["birdman-game-host/server-ui", "openxr"]
+
+
 def native_features(target: str) -> list[str]:
     return ["openxr"] if TARGETS[target][1] in ("windows", "linux") else []
+
+
+def contract_hash(root: Path) -> str:
+    generated = (root / "crates/birdman-game-runtime/src/generated_contract.rs").read_text(encoding="utf-8")
+    matches = re.findall(r'pub const APPLICATION_CONTRACT_SHA256\s*:\s*&str\s*=\s*"([0-9a-f]{64})";', generated)
+    if len(matches) != 1:
+        raise ValueError("the canonical application contract fingerprint is missing")
+    return matches[0]
+
+
+def web_bundle_files(web: Path, source_sha: str, expected_contract: str) -> tuple[str, list[Path]]:
+    manifest_path = web / "web-bundle-manifest.json"
+    for path in (web, manifest_path):
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise ValueError("Web bundle root and manifest must be regular entries")
+    with manifest_path.open("rb") as stream:
+        manifest_bytes = stream.read(1_048_577)
+    if len(manifest_bytes) > 1_048_576:
+        raise ValueError("Web bundle manifest exceeds its byte limit")
+    manifest = json.loads(manifest_bytes)
+    if (set(manifest) != {"schema_version", "source_sha", "contract_sha256", "files"}
+            or type(manifest["schema_version"]) is not int or manifest["schema_version"] != 1
+            or manifest["source_sha"] != source_sha
+            or manifest["contract_sha256"] != expected_contract):
+        raise ValueError("Web bundle source or application contract differs")
+    files, names = [manifest_path], set()
+    if not 1 <= len(manifest["files"]) <= 256:
+        raise ValueError("Web bundle file count is invalid")
+    total = 0
+    for entry in manifest["files"]:
+        if set(entry) != {"path", "size", "sha256", "content_type"}:
+            raise ValueError("Web file metadata is invalid")
+        name = entry["path"]
+        if (not isinstance(name, str) or len(name) > 240
+                or any(not re.fullmatch(r"[a-zA-Z0-9_-][a-zA-Z0-9_.-]*", part) for part in name.split("/"))
+                or name == "web-bundle-manifest.json" or name.startswith("api/") or name in names):
+            raise ValueError("Web file path is invalid")
+        path = web
+        for part in name.split("/"):
+            path /= part
+            info = path.lstat()
+            if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                raise ValueError("Web bundle contains a linked file")
+        if (not path.is_file() or not path.resolve().is_relative_to(web.resolve())
+                or type(entry["size"]) is not int or not 0 <= entry["size"] <= 32 * 1_048_576
+                or path.stat().st_size != entry["size"] or digest(path) != entry["sha256"]):
+            raise ValueError("Web file bytes differ from the manifest")
+        total += entry["size"]
+        if total > 128 * 1_048_576:
+            raise ValueError("Web bundle exceeds its byte limit")
+        names.add(name)
+        files.append(path)
+    if "index.html" not in names:
+        raise ValueError("Web bundle has no entry point")
+    return hashlib.sha256(manifest_bytes).hexdigest(), files
 
 
 def validate_header(binary: Path, target: str) -> None:
@@ -86,45 +156,55 @@ def validate_header(binary: Path, target: str) -> None:
         raise ValueError(f"binary header does not match {target}: machine={machine}")
 
 
-def stage_binary(root: Path, binary: Path, target: str, source_sha: str, output: Path) -> None:
+def stage_binary(root: Path, binary: Path, server_binary: Path, target: str,
+                 source_sha: str, output: Path) -> None:
     require_source(root, source_sha)
-    validate_header(binary, target)
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="birdman-native-cli-") as directory:
         staging = Path(directory)
-        executable = staging / binary_name(target)
-        shutil.copy2(binary, executable)
-        executable.chmod(0o755)
-        results = {}
-        for option in ("--help", "--version"):
-            result = subprocess.run([str(executable), option], cwd=staging, check=True,
-                                    capture_output=True, text=True, encoding="utf-8", timeout=30)
-            results[option] = result.stdout.strip()
         _, system, architecture, _, _ = TARGETS[target]
         version = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
-        expected_version = f"birdman-game-bevy {version} source {source_sha} {system} {architecture}"
-        if results["--version"] != expected_version:
-            raise ValueError(f"unexpected native version: {results['--version']!r}")
-        if "birdman-game-bevy" not in results["--help"] or "--help" not in results["--help"]:
-            raise ValueError("native --help did not describe the application")
-        if ("--openxr" in results["--help"]) != ("openxr" in native_features(target)):
-            raise ValueError(f"native --help does not match the release features for {target}")
-        if sorted(path.name for path in staging.iterdir()) != [executable.name]:
-            raise ValueError("CPU-only CLI unexpectedly created files")
+        binaries = []
+        for original, name, features in (
+                (binary, binary_name(target), native_features(target)),
+                (server_binary, server_binary_name(target), ["server-ui"])):
+            validate_header(original, target)
+            executable = staging / name
+            shutil.copy2(original, executable)
+            executable.chmod(0o755)
+            before = {path.name for path in staging.iterdir()}
+            results = {}
+            for option in ("--help", "--version"):
+                result = subprocess.run([str(executable), option], cwd=staging, check=True,
+                                        capture_output=True, text=True, encoding="utf-8", timeout=30)
+                results[option] = result.stdout.strip()
+            program = name.removesuffix(".exe")
+            expected_version = f"{program} {version} source {source_sha} {system} {architecture}"
+            if results["--version"] != expected_version:
+                raise ValueError(f"unexpected native version: {results['--version']!r}")
+            if program not in results["--help"] or "--help" not in results["--help"]:
+                raise ValueError("native --help did not describe the application")
+            if program == "birdman-game-bevy" and (
+                    ("--openxr" in results["--help"]) != ("openxr" in native_features(target))):
+                raise ValueError(f"native --help does not match the release features for {target}")
+            if {path.name for path in staging.iterdir()} != before:
+                raise ValueError("CPU-only CLI unexpectedly created files")
+            binaries.append({"name": name, "features": features, "sha256": digest(executable),
+                             "cpu_cli": results})
         metadata = {
+            "schema_version": 2,
             "source_sha": source_sha,
+            "contract_sha256": contract_hash(root),
             "target": target,
-            "features": native_features(target),
-            "binary_sha256": digest(executable),
+            "binaries": binaries,
             "cargo_lock_sha256": digest(root / "Cargo.lock"),
-            "rustc": subprocess.check_output(["rustc", "-vV"], text=True).strip(),
+            "rustc": subprocess.check_output(["rustc", "-vV"], text=True, encoding="utf-8").strip(),
             "workflow_run": os.environ.get("NATIVE_WORKFLOW_RUN", "local"),
-            "cpu_cli": results,
         }
         write_json(staging / "BUILD-INFO.json", metadata)
         with tarfile.open(output / f"{target}.tar.gz", "w:gz") as archive:
-            archive.add(executable, arcname=executable.name)
-            archive.add(staging / "BUILD-INFO.json", arcname="BUILD-INFO.json")
+            for path in sorted(staging.iterdir()):
+                archive.add(path, arcname=path.name)
 
 
 def append_source_form_notices(root: Path, source_sha: str, notice: Path, features: list[str],
@@ -206,12 +286,12 @@ def append_source_form_notices(root: Path, source_sha: str, notice: Path, featur
 
 def generate_licenses(root: Path, cargo_about: Path, source_sha: str, output: Path, web: bool = False) -> None:
     require_source(root, source_sha)
-    version = subprocess.check_output([str(cargo_about), "--version"], text=True).strip()
+    version = subprocess.check_output([str(cargo_about), "--version"], text=True, encoding="utf-8").strip()
     if version != "cargo-about 0.9.2":
         raise ValueError(f"unexpected license tool: {version}")
     output.mkdir(parents=True, exist_ok=True)
     targets = ("wasm32-unknown-unknown",) if web else tuple(TARGETS)
-    features = [] if web else sorted({feature for target in TARGETS for feature in native_features(target)})
+    features = [] if web else notice_features()
     manifest = root / ("crates/birdman-game-wasm/Cargo.toml" if web else "crates/birdman-game-bevy/Cargo.toml")
     command = [str(cargo_about), "generate", "--locked", "--fail", "--manifest-path",
                str(manifest), "--config",
@@ -253,6 +333,8 @@ def copy_notices(root: Path, licenses: Path, staging: Path) -> None:
         "- [同梱ライブラリの利用条件](THIRD-PARTY-LICENSES.html)\n\n"
         "Windows/Linux版は `--openxr` でruntimeを初期化し、タイトル画面からHMD表示を選ぶ。"
         "前提runtimeと実機での確認範囲はNativeガイドを参照する。\n\n"
+        "同梱の `birdman-game-server` は管理画面からWeb配信を開始できる。"
+        "表示されたアドレスを同じPCまたはLANのブラウザで開く。\n\n"
         "ビルド来歴は `BUILD-INFO.json` に記録している。"
         "配布ファイルの照合には、配布ページの `SHA256SUMS` を使用する。\n",
         encoding="utf-8", newline="\n")
@@ -284,14 +366,21 @@ def validate_license_info(info, *, source_sha: str, lock_hash: str,
         raise ValueError("license artifact provenance does not match the source")
 
 
-def assemble(root: Path, binaries: Path, licenses: Path, source_sha: str, output: Path) -> None:
+def assemble(root: Path, binaries: Path, licenses: Path, web: Path,
+             source_sha: str, output: Path) -> None:
     require_source(root, source_sha)
+    expected_contract = contract_hash(root)
+    web_hash, web_files = web_bundle_files(web, source_sha, expected_contract)
     license_info = json.loads((licenses / "LICENSE-INFO.json").read_text(encoding="utf-8"))
     lock_hash = digest(root / "Cargo.lock")
     validate_license_info(license_info, source_sha=source_sha, lock_hash=lock_hash,
                           targets=list(TARGETS),
-                          features=sorted({feature for target in TARGETS for feature in native_features(target)}),
+                          features=notice_features(),
                           licenses_hash=digest(licenses / "THIRD-PARTY-LICENSES.html"))
+    validate_license_info(json.loads((web / "LICENSE-INFO.json").read_text(encoding="utf-8")),
+                          source_sha=source_sha, lock_hash=lock_hash,
+                          targets=["wasm32-unknown-unknown"], features=[],
+                          licenses_hash=digest(web / "THIRD-PARTY-LICENSES.html"))
     output.mkdir(parents=True, exist_ok=True)
     packages = []
     for target in TARGETS:
@@ -300,23 +389,37 @@ def assemble(root: Path, binaries: Path, licenses: Path, source_sha: str, output
             staging = Path(directory) / name
             staging.mkdir()
             with tarfile.open(binaries / f"{target}.tar.gz", "r:gz") as raw:
-                if sorted(raw.getnames()) != sorted([binary_name(target), "BUILD-INFO.json"]):
+                if sorted(raw.getnames()) != sorted([binary_name(target), server_binary_name(target), "BUILD-INFO.json"]):
                     raise ValueError(f"unexpected raw artifact entries for {target}")
                 for member in raw.getmembers():
                     if not member.isfile():
                         raise ValueError("raw artifact contains a non-file entry")
                     with raw.extractfile(member) as source, (staging / member.name).open("wb") as destination:
                         shutil.copyfileobj(source, destination)
-            executable = staging / binary_name(target)
-            executable.chmod(0o755)
             info = json.loads((staging / "BUILD-INFO.json").read_text(encoding="utf-8"))
-            if (info["source_sha"] != source_sha or info["target"] != target
-                    or info["features"] != native_features(target)
+            expected_binaries = {binary_name(target): native_features(target),
+                                 server_binary_name(target): ["server-ui"]}
+            actual_binaries = info.get("binaries", [])
+            if (info.get("schema_version") != 2 or info["source_sha"] != source_sha
+                    or info["contract_sha256"] != expected_contract or info["target"] != target
                     or info["cargo_lock_sha256"] != lock_hash
-                    or info["binary_sha256"] != digest(executable)):
+                    or len(actual_binaries) != 2
+                    or {entry["name"] for entry in actual_binaries} != set(expected_binaries)):
                 raise ValueError(f"binary artifact provenance differs for {target}")
-            validate_header(executable, target)
+            for entry in actual_binaries:
+                executable = staging / entry["name"]
+                if entry["features"] != expected_binaries[entry["name"]] or entry["sha256"] != digest(executable):
+                    raise ValueError(f"binary artifact provenance differs for {target}")
+                validate_header(executable, target)
+                executable.chmod(0o755)
             copy_notices(root, licenses, staging)
+            for source in web_files:
+                destination = staging / "web" / source.relative_to(web)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+            copied_web_hash, _ = web_bundle_files(staging / "web", source_sha, expected_contract)
+            if copied_web_hash != web_hash:
+                raise ValueError("copied Web bundle differs from the verified input")
             if TARGETS[target][1] == "windows":
                 package = output / f"{name}.zip"
                 with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -327,7 +430,7 @@ def assemble(root: Path, binaries: Path, licenses: Path, source_sha: str, output
                 package = output / f"{name}.tar.gz"
 
                 def permissions(member):
-                    if member.name == f"{name}/{executable.name}":
+                    if member.name in {f"{name}/{binary}" for binary in expected_binaries}:
                         member.mode = 0o755
                     return member
 
@@ -338,6 +441,8 @@ def assemble(root: Path, binaries: Path, licenses: Path, source_sha: str, output
     write_json(output / "SOURCE.json", {
         "source_sha": source_sha,
         "cargo_lock_sha256": lock_hash,
+        "contract_sha256": expected_contract,
+        "web_manifest_sha256": web_hash,
         "workflow_run": os.environ.get("NATIVE_WORKFLOW_RUN", "local"),
         "packages": packages,
         "verification": "native-host Release build, binary architecture and CPU-only CLI; GPU unverified",
@@ -358,6 +463,7 @@ def main() -> None:
         subparser.add_argument("--output", type=Path, required=True)
         if command == "stage":
             subparser.add_argument("--binary", type=Path, required=True)
+            subparser.add_argument("--server-binary", type=Path, required=True)
             subparser.add_argument("--target", choices=TARGETS, required=True)
         elif command == "licenses":
             subparser.add_argument("--cargo-about", type=Path, required=True)
@@ -365,17 +471,21 @@ def main() -> None:
         else:
             subparser.add_argument("--binaries", type=Path, required=True)
             subparser.add_argument("--licenses", type=Path, required=True)
+            subparser.add_argument("--web-bundle", type=Path, required=True)
     arguments = parser.parse_args()
     if arguments.command == "matrix":
         print(json.dumps({"include": [{"target": target, "runner": spec[0],
-                                       "features": ",".join(native_features(target))}
+                                       "features": ",".join(native_features(target)),
+                                       "notice_features": ",".join(notice_features())}
                                       for target, spec in TARGETS.items()]}))
     elif arguments.command == "stage":
-        stage_binary(arguments.root, arguments.binary.resolve(), arguments.target, arguments.source_sha, arguments.output)
+        stage_binary(arguments.root, arguments.binary.resolve(), arguments.server_binary.resolve(),
+                     arguments.target, arguments.source_sha, arguments.output)
     elif arguments.command == "licenses":
         generate_licenses(arguments.root, arguments.cargo_about.resolve(), arguments.source_sha, arguments.output, arguments.web)
     else:
-        assemble(arguments.root, arguments.binaries, arguments.licenses, arguments.source_sha, arguments.output)
+        assemble(arguments.root, arguments.binaries, arguments.licenses, arguments.web_bundle.resolve(),
+                 arguments.source_sha, arguments.output)
 
 
 if __name__ == "__main__":

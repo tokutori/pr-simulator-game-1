@@ -30,7 +30,7 @@ npm ci
 npm run dev
 ```
 
-ブラウザーで `http://localhost:5173/pr-simulator-game-1/` を開く。
+ブラウザーで `http://localhost:5173/` を開く。
 PowerShellでスクリプト実行が制限される場合は `npm.cmd` を使用する。
 
 ### Bevyネイティブ版

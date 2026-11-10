@@ -200,6 +200,16 @@ pub fn production_lake_detail_configs(
 pub fn generate_lake_detail(
     config: LakeDetailConfig,
 ) -> Result<LakeDetailImage, LakeRenderModelError> {
+    generate_lake_detail_while(config, || true)
+        .map(|image| image.expect("uninterrupted detail generation"))
+}
+
+/// Generates the same detail raster while the caller admits each bounded work row.
+/// Cancellation returns no partially generated image.
+pub fn generate_lake_detail_while(
+    config: LakeDetailConfig,
+    mut keep_running: impl FnMut() -> bool,
+) -> Result<Option<LakeDetailImage>, LakeRenderModelError> {
     let size = LAKE_DETAIL_IMAGE_SIZE;
     let texel_meters = config.extent_meters / size as f64;
     let feature_scale = config.extent_meters / 96.0;
@@ -210,6 +220,9 @@ pub fn generate_lake_detail(
     let total_count = config.wavelet_count + config.broader_wavelets.map_or(0, |waves| waves.count);
 
     for wavelet in 0..total_count {
+        if !keep_running() {
+            return Ok(None);
+        }
         let broader = wavelet >= config.wavelet_count;
         let broader_parameters = config.broader_wavelets;
         let local_feature_scale = if broader {
@@ -260,6 +273,9 @@ pub fn generate_lake_detail(
             return Err(LakeRenderModelError::NonFinite);
         }
         for offset_z in -radius..=radius {
+            if !keep_running() {
+                return Ok(None);
+            }
             for offset_x in -radius..=radius {
                 let delta_x = (f64::from(offset_x) - center_fraction_x) * texel_meters;
                 let delta_z = (f64::from(offset_z) - center_fraction_z) * texel_meters;
@@ -307,6 +323,9 @@ pub fn generate_lake_detail(
 
     let mut rgba = vec![0_u8; size * size * 4];
     for index in 0..size * size {
+        if index.is_multiple_of(size) && !keep_running() {
+            return Ok(None);
+        }
         if ![height_field[index], slope_x[index], slope_z[index]]
             .iter()
             .all(|value| value.is_finite())
@@ -323,7 +342,7 @@ pub fn generate_lake_detail(
             .round()
             .clamp(0.0, 255.0) as u8;
     }
-    Ok(LakeDetailImage {
+    Ok(Some(LakeDetailImage {
         metadata: LakeDetailMetadata {
             model_version: LAKE_RENDER_MODEL_VERSION,
             width: size,
@@ -331,7 +350,7 @@ pub fn generate_lake_detail(
             configuration: config,
         },
         rgba,
-    })
+    }))
 }
 
 fn web_uint32(value: f64) -> u32 {

@@ -4,16 +4,14 @@
 mod display_adjustment;
 #[path = "flight_devices.rs"]
 mod flight_devices;
+#[path = "host.rs"]
+mod host;
 #[path = "mip_filter.rs"]
 mod mip_filter;
 #[path = "native_assets.rs"]
 mod native_assets;
-#[path = "native_controller.rs"]
-mod native_controller;
 #[path = "native_runtime.rs"]
 mod native_runtime;
-#[path = "native_storage.rs"]
-mod native_storage;
 #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
 #[path = "native_xr.rs"]
 mod native_xr;
@@ -26,6 +24,9 @@ mod projection;
 mod screen_render;
 #[path = "terrain_haze.rs"]
 mod terrain_haze;
+#[cfg(test)]
+#[path = "test_support.rs"]
+mod test_support;
 #[path = "ui.rs"]
 mod ui;
 #[cfg(feature = "verify-harness")]
@@ -68,9 +69,57 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
     let mut openxr = false;
     let mut export_directory = None;
+    let mut connect = None;
+    let mut host = None;
+    let mut host_peer_limit = None;
+    let mut web_root = None;
+    let mut tls_certificate = None;
+    let mut tls_private_key = None;
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--no-vsync" => no_vsync = true,
+            "--host" => {
+                host = Some(
+                    arguments
+                        .next()
+                        .ok_or("--host requires a bind address")?
+                        .parse::<std::net::SocketAddr>()?,
+                );
+            }
+            "--max-peers" => {
+                let limit = arguments
+                    .next()
+                    .ok_or("--max-peers requires a connection count")?
+                    .parse::<usize>()?;
+                birdman_game_runtime::ApplicationServer::validate_peer_limit(limit)?;
+                host_peer_limit = Some(limit);
+            }
+            "--web-root" => {
+                web_root = Some(PathBuf::from(
+                    arguments.next().ok_or("--web-root requires a directory")?,
+                ));
+            }
+            "--tls-cert" => {
+                tls_certificate = Some(PathBuf::from(
+                    arguments
+                        .next()
+                        .ok_or("--tls-cert requires a PEM certificate path")?,
+                ));
+            }
+            "--tls-key" => {
+                tls_private_key = Some(PathBuf::from(
+                    arguments
+                        .next()
+                        .ok_or("--tls-key requires a PEM key path")?,
+                ));
+            }
+            "--connect" => {
+                connect = Some(
+                    arguments
+                        .next()
+                        .ok_or("--connect requires an HTTP(S) host URL")?,
+                );
+            }
             #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
             "--openxr" => openxr = true,
             "--font" => {
@@ -104,6 +153,11 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                 println!(
                     "--export-dir DIR: 飛行ログJSON/CSVの保存先。既定は起動時の作業directory/flight-logs。既存fileは上書きしない。"
                 );
+                println!("--connect URL: HTTP(S)のゲームホストへ接続する。");
+                println!("--max-peers COUNT: --hostの接続上限。既定8、1〜16でホスト自身を含む。");
+                println!(
+                    "--host ADDRESS: 共有セッションを配信し、自機も表示・操作端末として接続する。 --web-root DIR: 同梱Web資産。 --tls-cert PEM / --tls-key PEM: HTTPS証明書と秘密鍵。"
+                );
                 #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
                 println!(
                     "--openxr: OpenXR runtimeとVulkanを初期化し、共有設定のHMD表示を利用する。"
@@ -132,16 +186,30 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             }
         }
     }
+    if host.is_some() && connect.is_some() {
+        return Err("--host and --connect select exclusive transports".into());
+    }
+    if host.is_none()
+        && (web_root.is_some()
+            || tls_certificate.is_some()
+            || tls_private_key.is_some()
+            || host_peer_limit.is_some())
+    {
+        return Err("Host listener options require --host".into());
+    }
+    if tls_certificate.is_some() != tls_private_key.is_some() {
+        return Err("HTTPS requires both --tls-cert and --tls-key".into());
+    }
     #[cfg(feature = "verify-harness")]
     verification.validate()?;
     let directory = export_directory.unwrap_or(std::env::current_dir()?.join("flight-logs"));
     #[cfg(feature = "verify-harness")]
     let keyboard_directory = verification
         .keyboard_config_directory()
-        .map_or_else(native_storage::keyboard_config_directory, Ok);
+        .map_or_else(birdman_game_host::storage_io::keyboard_config_directory, Ok);
     #[cfg(not(feature = "verify-harness"))]
-    let keyboard_directory = native_storage::keyboard_config_directory();
-    let storage = native_storage::NativeStorage::new(directory, keyboard_directory)?;
+    let keyboard_directory = birdman_game_host::storage_io::keyboard_config_directory();
+    let storage = birdman_game_host::storage_io::NativeStorage::new(directory, keyboard_directory)?;
     let font_bytes = match font_path {
         Some(path) => std::fs::read(&path).map_err(|error| {
             format!("指定した日本語fontを読めない: {} ({error})", path.display())
@@ -180,9 +248,33 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     app.add_plugins(plugins)
         .add_plugins(UiMaterialPlugin::<ui::DirectionMaterial>::default())
         .add_plugins(bevy::input_focus::tab_navigation::TabNavigationPlugin)
-        .insert_resource(storage)
+        .insert_resource(native_runtime::NativeStorageResource(storage))
         .init_resource::<native_runtime::NativeInputs>()
         .init_resource::<native_runtime::NativeIo>();
+    if let Some(bind) = host {
+        let executable = std::env::current_exe()?;
+        let package = executable
+            .parent()
+            .ok_or("Native executable has no parent directory")?;
+        let options = birdman_game_host::server_cli::ServerOptions {
+            peer_limit: host_peer_limit
+                .unwrap_or(birdman_game_runtime::APPLICATION_DEFAULT_PEER_LIMIT),
+            bind,
+            web_root: web_root.unwrap_or_else(|| package.join("web")),
+            records: package.join("records"),
+            certificate: tls_certificate,
+            private_key: tls_private_key,
+        };
+        let source = birdman_game_runtime::APPLICATION_SOURCE_SHA
+            .ok_or("Hosting requires a fixed-source native build")?;
+        let native_host = host::NativeHost::start(options, std::time::Instant::now(), source)?;
+        connect = Some(native_host.local_origin());
+        app.insert_resource(native_host);
+        host::install(&mut app);
+    }
+    if let Some(url) = connect {
+        app.insert_resource(native_runtime::NativeConnection(url));
+    }
     native_assets::register(&mut app);
     #[cfg(feature = "verify-harness")]
     verification.configure_output(&mut app, no_vsync)?;

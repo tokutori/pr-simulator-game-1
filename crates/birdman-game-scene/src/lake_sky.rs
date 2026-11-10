@@ -87,7 +87,7 @@ impl LakeSunlight {
 }
 
 /// Final sunlight placement and aircraft-following shadow volume in render-world axes.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct LakeSceneShadow {
     /// Directional light origin in render East/Up/negative-North metres.
@@ -377,12 +377,24 @@ fn clear_sky_pixel(longitude: f64, latitude: f64, sun: [f64; 3], daylight: f64) 
 
 /// Generates the shared opaque sky and distant cloud panorama.
 pub fn generate_lake_sky(condition: LakeSkyRenderCondition) -> LakeSkyImage {
+    generate_lake_sky_while(condition, || true).expect("uninterrupted sky generation")
+}
+
+/// Generates the same sky raster while the caller admits each bounded work row.
+/// Cancellation returns no partially generated image.
+pub fn generate_lake_sky_while(
+    condition: LakeSkyRenderCondition,
+    mut keep_running: impl FnMut() -> bool,
+) -> Option<LakeSkyImage> {
     let sunlight = LakeSunlight::for_condition(condition);
     let sun = sunlight.direction;
     let daylight = f64::from(sunlight.daylight);
     let fraction = condition.cloud_fraction;
     let mut rgba = Vec::with_capacity((LAKE_SKY_IMAGE_WIDTH * LAKE_SKY_IMAGE_HEIGHT * 4) as usize);
     for row in 0..LAKE_SKY_IMAGE_HEIGHT {
+        if !keep_running() {
+            return None;
+        }
         let latitude = if row + 1 == LAKE_SKY_IMAGE_HEIGHT {
             1.0
         } else {
@@ -393,7 +405,7 @@ pub fn generate_lake_sky(condition: LakeSkyRenderCondition) -> LakeSkyImage {
             rgba.extend_from_slice(&sky_pixel(longitude, latitude, sun, daylight, fraction));
         }
     }
-    LakeSkyImage { rgba }
+    Some(LakeSkyImage { rgba })
 }
 
 #[cfg(test)]

@@ -2,9 +2,9 @@ import { AmbientLight, BufferGeometry, CanvasTexture, CircleGeometry, Color, Cus
   Group, LinearFilter, Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, PerspectiveCamera, PlaneGeometry,
   Scene, ShaderMaterial, SRGBColorSpace, UniformsLib, UniformsUtils, Vector2, Vector4, WebGLRenderer, WebGLRenderTarget } from "three";
 import type { Material, Object3D } from "three";
-import type { ApplicationDrawingOutput, ApplicationInput, ApplicationMeshAsset,
+import type { ApplicationAssetLease, ApplicationDrawingOutput, ApplicationInput, ApplicationMeshAsset,
   ApplicationMeshAttachment, ApplicationRequest, ApplicationRendererObservation, DisplayRequest, Pose, XrSurfaceStyle } from "../../../generated/application-contracts.js";
-import { ThreeApplicationBuffers, type ImageLease } from "./application-buffers.js";
+import { ThreeApplicationBuffers } from "./application-buffers.js";
 import { GpuWorkTimer } from "./gpu-work-timer.js";
 import { browserSurfaceContext } from "../../../presentation/browser-canvas.js";
 import { paintSurface } from "../../../presentation/surface-canvas.js";
@@ -30,6 +30,10 @@ function submitSun(sun: DirectionalLight, light: ApplicationDrawingOutput["scene
 
 interface PreparedResources {
   readonly request: PrepareRequest;
+  readonly buffers: ThreeApplicationBuffers;
+  readonly base_geometry: Map<number, BufferGeometry>;
+  readonly range_geometry: Map<number, readonly BufferGeometry[]>;
+  readonly materials: Map<number, Material>;
   readonly scene: Scene;
   readonly aircraft: Group;
   readonly attachments: Readonly<Record<ApplicationMeshAttachment, Group>>;
@@ -39,7 +43,6 @@ interface PreparedResources {
   readonly water_geometries: readonly BufferGeometry[];
   readonly sun: DirectionalLight;
   readonly reflection: WebGLRenderTarget;
-  readonly image_leases: readonly ImageLease[];
 }
 
 interface XrHandle {
@@ -51,13 +54,9 @@ interface XrHandle {
 
 export class ThreeApplicationRenderer {
   private readonly renderer: WebGLRenderer;
-  private readonly buffers: ThreeApplicationBuffers;
   private readonly timer: GpuWorkTimer;
   private readonly resources = new Map<number, PreparedResources>();
   private readonly preparations = new Map<number, { cancelled: boolean; complete: (() => void) | null; candidate: PreparedResources | null }>();
-  private readonly base_geometry = new Map<number, BufferGeometry>();
-  private readonly range_geometry = new Map<number, readonly BufferGeometry[]>();
-  private readonly materials = new Map<number, Material>();
   private readonly sources = new WeakMap<XRInputSource, number>();
   private readonly gamepad_generations = new Map<number, number>();
   private readonly canvasPointers = new Map<number, Extract<ApplicationInput, { kind: "control_pointer" }>>();
@@ -82,7 +81,7 @@ export class ThreeApplicationRenderer {
   private gpu_failure: { cause: Error; reported: boolean } | null = null;
 
   constructor(private readonly canvas: HTMLCanvasElement, private readonly id: number,
-    bytes: (id: number) => Uint8Array, private readonly notify: (input: ApplicationInput) => void,
+    private readonly bytes: (lease: number, id: number, revision: number) => Uint8Array, private readonly notify: (input: ApplicationInput) => void,
     private readonly platformChanged: () => void) {
     this.renderer = new WebGLRenderer({ canvas, antialias: true, alpha: false });
     installDisplayAdjustment();
@@ -93,7 +92,6 @@ export class ThreeApplicationRenderer {
     this.reflection_camera.layers.set(1);
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
-    this.buffers = new ThreeApplicationBuffers(bytes);
     this.timer = new GpuWorkTimer(this.renderer.getContext() as WebGL2RenderingContext);
     this.menu_canvas = canvas.ownerDocument.createElement("canvas");
     this.head_canvas = canvas.ownerDocument.createElement("canvas");
@@ -144,9 +142,7 @@ export class ThreeApplicationRenderer {
     try { candidate = this.createResources(request); preparation.candidate = candidate; }
     catch (cause) {
       this.preparations.delete(request.request_id);
-      let failure = cause;
-      try { this.pruneGeometry(); } catch (cleanup) { failure = new AggregateError([cause, cleanup], "Scene construction cleanup failed"); }
-      this.notify({ kind: "resources", request_id: request.request_id, observation: { kind: "failed", cause: errorMessage(failure) } });
+      this.notify({ kind: "resources", request_id: request.request_id, observation: { kind: "failed", cause: errorMessage(cause) } });
       return;
     }
     const failed = (cause: unknown): void => {
@@ -407,12 +403,18 @@ export class ThreeApplicationRenderer {
     }
     const assets = request.assets;
     const manifest = assets.scene;
-    const cleanup: (() => void)[] = [];
+    const buffers = new ThreeApplicationBuffers(this.scopedBytes(request.asset_lease));
+    const base_geometry = new Map<number, BufferGeometry>();
+    const range_geometry = new Map<number, readonly BufferGeometry[]>();
+    const materials = new Map<number, Material>();
+    const cleanup: (() => void)[] = [() => { buffers.dispose(); },
+      () => { for (const ranges of range_geometry.values()) for (const geometry of ranges) geometry.dispose(); },
+      () => { for (const material of materials.values()) material.dispose(); }];
     try {
     const scene = new Scene();
     const lighting = assets.lighting;
-    const skyTexture = this.buffers.image(assets.sky, true, 1);
-    cleanup.push(() => { this.buffers.releaseImages([[assets.sky.buffer_id, 1]]); });
+    const skyTexture = buffers.image(assets.sky, true, 1);
+    cleanup.push(() => { buffers.releaseImages([[assets.sky.buffer_id, 1]]); });
     // The explicit background primitive participates in the same scene tone
     // mapping as meshes and water. The actual eye matrices supply its rays.
     const sky = new Mesh(new PlaneGeometry(2, 2), new ShaderMaterial({
@@ -447,8 +449,7 @@ export class ThreeApplicationRenderer {
     scene.add(sky);
     cleanup.push(() => { sky.geometry.dispose(); sky.material.dispose(); });
     scene.fog = new Fog(lighting.haze_color_srgb, lighting.haze_range_meters[0], lighting.haze_range_meters[1]);
-    const images: ImageLease[] = [[assets.sky.buffer_id, 1]];
-    for (const texture of manifest.wing_textures) this.buffers.wingTexture(texture);
+    for (const texture of manifest.wing_textures) buffers.wingTexture(texture);
     const sun = new DirectionalLight(lighting.sunlight_color_srgb, lighting.sunlight_irradiance);
     submitSun(sun, lighting.initial_shadow, lighting.sunlight_irradiance);
     sun.shadow.mapSize.fromArray(request.graphics.shadow_extent_px);
@@ -461,10 +462,10 @@ export class ThreeApplicationRenderer {
     aircraft.add(attachments.main_wing, attachments.horizontal_tail, attachments.vertical_tail);
     scene.add(attachments.world, aircraft);
     for (const asset of manifest.meshes) {
-      let ranges = this.range_geometry.get(asset.mesh_id);
+      let ranges = range_geometry.get(asset.mesh_id);
       if (ranges === undefined) {
-        const base = this.buffers.geometry(asset);
-        this.base_geometry.set(asset.mesh_id, base);
+        const base = buffers.geometry(asset);
+        base_geometry.set(asset.mesh_id, base);
         ranges = asset.materials.map(material => {
           const geometry = new BufferGeometry();
           geometry.setIndex(base.getIndex());
@@ -472,12 +473,12 @@ export class ThreeApplicationRenderer {
           geometry.setDrawRange(material.start, material.count);
           return geometry;
         });
-        this.range_geometry.set(asset.mesh_id, ranges);
+        range_geometry.set(asset.mesh_id, ranges);
       }
       asset.materials.forEach((source, index) => {
         const geometry = ranges[index];
         if (geometry === undefined) throw new Error("Incomplete material range geometry");
-        const mesh = new Mesh(geometry, this.material(asset, index, manifest));
+        const mesh = new Mesh(geometry, this.material(asset, index, manifest, buffers, materials));
         mesh.name = asset.name;
         mesh.castShadow = source.cast_shadow;
         mesh.receiveShadow = source.receive_shadow;
@@ -489,12 +490,10 @@ export class ThreeApplicationRenderer {
     }
     const [near, far] = assets.water.detail;
     const anisotropy = assets.water.detail_anisotropy_clamp;
-    const nearTexture = this.buffers.image(near.image, false, anisotropy);
-    images.push([near.image.buffer_id, anisotropy]);
-    cleanup.push(() => { this.buffers.releaseImages([[near.image.buffer_id, anisotropy]]); });
-    const farTexture = this.buffers.image(far.image, false, anisotropy);
-    images.push([far.image.buffer_id, anisotropy]);
-    cleanup.push(() => { this.buffers.releaseImages([[far.image.buffer_id, anisotropy]]); });
+    const nearTexture = buffers.image(near.image, false, anisotropy);
+    cleanup.push(() => { buffers.releaseImages([[near.image.buffer_id, anisotropy]]); });
+    const farTexture = buffers.image(far.image, false, anisotropy);
+    cleanup.push(() => { buffers.releaseImages([[far.image.buffer_id, anisotropy]]); });
     const reflection = new WebGLRenderTarget(request.graphics.reflection_extent_px[0], request.graphics.reflection_extent_px[1], { minFilter: LinearFilter, magFilter: LinearFilter });
     cleanup.push(() => { reflection.dispose(); });
     reflection.texture.colorSpace = SRGBColorSpace;
@@ -532,7 +531,7 @@ export class ThreeApplicationRenderer {
     cleanup.push(() => { backing.dispose(); });
     const water = new Group();
     const waterGeometries = [...assets.water.geometry.near, assets.water.geometry.far].map((chunk, index) => {
-      const geometry = this.buffers.waterGeometry(chunk);
+      const geometry = buffers.waterGeometry(chunk);
       cleanup.push(() => { geometry.dispose(); });
       const mesh = new Mesh(geometry, index < assets.water.geometry.near.length ? material : backing);
       mesh.frustumCulled = chunk.frustum_culled;
@@ -545,7 +544,7 @@ export class ThreeApplicationRenderer {
     for (const texture of [skyTexture, nearTexture, farTexture]) this.renderer.initTexture(texture);
     for (const mesh of [this.menu_mesh, this.head_mesh]) if (mesh.material.map !== null) this.renderer.initTexture(mesh.material.map);
     this.renderer.initRenderTarget(reflection);
-    return { request, scene, aircraft, attachments, water, sky, water_materials: [material, backing], sun, reflection, image_leases: images, water_geometries: waterGeometries };
+    return { request, buffers, base_geometry, range_geometry, materials, scene, aircraft, attachments, water, sky, water_materials: [material, backing], sun, reflection, water_geometries: waterGeometries };
     } catch (cause) {
       const failures = [cause];
       for (const release of cleanup.reverse()) {
@@ -555,53 +554,44 @@ export class ThreeApplicationRenderer {
     }
   }
 
-  private material(asset: ApplicationMeshAsset, index: number, manifest: PrepareRequest["assets"]["scene"]): Material {
+  private material(asset: ApplicationMeshAsset, index: number, manifest: PrepareRequest["assets"]["scene"], buffers: ThreeApplicationBuffers, materials: Map<number, Material>): Material {
     const source = asset.materials[index];
     if (source === undefined) throw new Error("Missing shared material range");
     const key = source.material_id;
-    let material = this.materials.get(key);
+    let material = materials.get(key);
     if (material !== undefined) return material;
     const texture = manifest.wing_textures.find(image => image.buffer.buffer_id === source.texture_buffer_id);
     const values = { color: source.color_srgb, opacity: source.opacity, transparent: source.transparent,
       depthWrite: source.depth_write, side: source.double_sided ? DoubleSide : FrontSide,
-      vertexColors: asset.color != null, map: texture === undefined ? null : this.buffers.wingTexture(texture) };
+      vertexColors: asset.color != null, map: texture === undefined ? null : buffers.wingTexture(texture) };
     material = source.lit ? new MeshLambertMaterial(values) : new MeshBasicMaterial(values);
     material.onBeforeCompile = shader => {
       shader.uniforms.displayAdjustment = displayAdjustmentUniform;
     };
-    this.materials.set(key, material);
+    materials.set(key, material);
     return material;
   }
 
   private releaseCandidate(candidate: PreparedResources): void {
     const resources = [candidate.sun.shadow, candidate.sky.geometry, candidate.sky.material,
-      ...candidate.water_geometries, ...candidate.water_materials, candidate.reflection];
+      ...candidate.water_geometries, ...candidate.water_materials, candidate.reflection,
+      ...candidate.materials.values(), ...[...candidate.range_geometry.values()].flat()];
     const failures: unknown[] = [];
     for (const resource of resources) {
       try { resource.dispose(); } catch (cause) { failures.push(cause); }
     }
-    try { this.buffers.releaseImages(candidate.image_leases); } catch (cause) { failures.push(cause); }
-    try { this.pruneGeometry(); } catch (cause) { failures.push(cause); }
+    try { candidate.buffers.dispose(); } catch (cause) { failures.push(cause); }
     if (failures.length > 0) throw new AggregateError(failures, "Prepared scene cleanup failed");
   }
 
-  private pruneGeometry(): void {
-    const candidates = [...this.resources.values(), ...[...this.preparations.values()].flatMap(preparation => preparation.candidate === null ? [] : [preparation.candidate])];
-    const manifests = candidates.map(candidate => candidate.request.assets.scene);
-    const meshes = new Set(manifests.flatMap(manifest => manifest.meshes.map(mesh => mesh.mesh_id)));
-    const materials = new Set(manifests.flatMap(manifest => manifest.meshes.flatMap(mesh => mesh.materials.map(material => material.material_id))));
-    const failures: unknown[] = [];
-    for (const [id, ranges] of this.range_geometry) if (!meshes.has(id)) {
-      for (const geometry of ranges) { try { geometry.dispose(); } catch (cause) { failures.push(cause); } }
-      this.range_geometry.delete(id);
-    }
-    for (const id of this.base_geometry.keys()) if (!meshes.has(id)) this.base_geometry.delete(id);
-    for (const [id, material] of this.materials) if (!materials.has(id)) {
-      try { material.dispose(); } catch (cause) { failures.push(cause); }
-      this.materials.delete(id);
-    }
-    try { this.buffers.pruneScene(manifests, candidates.flatMap(candidate => candidate.water_geometries)); } catch (cause) { failures.push(cause); }
-    if (failures.length > 0) throw new AggregateError(failures, "Scene cache retirement failed");
+  private scopedBytes(lease: ApplicationAssetLease | null | undefined): (id: number) => Uint8Array {
+    if (lease == null) throw new Error("GPU upload has no immutable buffer lease");
+    const revisions = new Map(lease.buffers.map(key => [key.buffer_id, key.revision]));
+    return id => {
+      const revision = revisions.get(id);
+      if (revision === undefined) throw new Error("GPU buffer is outside its immutable lease");
+      return this.bytes(lease.lease_id, id, revision);
+    };
   }
 
   private surface(canvas: HTMLCanvasElement): Mesh<PlaneGeometry, MeshBasicMaterial> {
@@ -624,27 +614,25 @@ export class ThreeApplicationRenderer {
     const geometry = drawing.scene.geometry;
     if (geometry != null) {
       for (const update of geometry.updates) {
-        const base = this.base_geometry.get(update.mesh_id);
+        const base = this.active.base_geometry.get(update.mesh_id);
         if (base === undefined) throw new Error("Dynamic upload has no prepared static mesh");
-        this.buffers.update(base, update);
-        for (const range of this.range_geometry.get(update.mesh_id) ?? []) {
+        this.active.buffers.update(base, update, this.scopedBytes(drawing.asset_lease));
+        for (const range of this.active.range_geometry.get(update.mesh_id) ?? []) {
           range.setAttribute("position", base.getAttribute("position"));
           range.setAttribute("normal", base.getAttribute("normal"));
         }
       }
     }
-    for (const candidate of this.resources.values()) {
-      setPose(candidate.aircraft, drawing.scene.world_from_aircraft);
-      candidate.aircraft.visible = geometry?.aircraft_visible === true;
-      candidate.attachments.main_wing.visible = geometry?.main_wing_visible === true;
-      candidate.attachments.world.visible = drawing.scene.venue_visible;
-      for (const part of geometry?.part_poses ?? []) setPose(candidate.attachments[part.attachment], part.pose);
-      setPose(candidate.water, drawing.scene.water_world_from_surface);
-      submitSun(candidate.sun, candidate === this.active ? drawing.scene.lighting : candidate.request.assets.lighting.initial_shadow,
-        candidate.request.assets.lighting.sunlight_irradiance);
-      for (const material of candidate.water_materials) {
-        uniform(material, "uTimeSeconds", drawing.scene.water_time_seconds);
-      }
+    const active = this.active;
+    setPose(active.aircraft, drawing.scene.world_from_aircraft);
+    active.aircraft.visible = geometry?.aircraft_visible === true;
+    active.attachments.main_wing.visible = geometry?.main_wing_visible === true;
+    active.attachments.world.visible = drawing.scene.venue_visible;
+    for (const part of geometry?.part_poses ?? []) setPose(active.attachments[part.attachment], part.pose);
+    setPose(active.water, drawing.scene.water_world_from_surface);
+    submitSun(active.sun, drawing.scene.lighting, active.request.assets.lighting.sunlight_irradiance);
+    for (const material of active.water_materials) {
+      uniform(material, "uTimeSeconds", drawing.scene.water_time_seconds);
     }
   }
 
@@ -1107,6 +1095,7 @@ export class ThreeApplicationRenderer {
       paintSurface(context, paint.content.items, scaleX, scaleY);
     } finally { context.restore(); }
     paintSurface(context, paint.footer, scaleX, scaleY);
+    paintSurface(context, paint.frame, scaleX, scaleY);
     if (this.menu_mesh.material.map !== null) this.menu_mesh.material.map.needsUpdate = true;
     this.menu_paint = { revision: menu.paint_revision, texture: this.menu_mesh.material.map };
   }
@@ -1220,8 +1209,6 @@ export class ThreeApplicationRenderer {
     release(() => { this.timer.clear(); });
     for (const candidate of this.resources.values()) release(() => { this.releaseCandidate(candidate); });
     this.resources.clear();
-    for (const material of this.materials.values()) release(() => { material.dispose(); });
-    for (const ranges of this.range_geometry.values()) for (const geometry of ranges) release(() => { geometry.dispose(); });
     for (const mesh of [this.menu_mesh, this.head_mesh]) if (mesh !== null) {
       release(() => { mesh.geometry.dispose(); });
       release(() => { mesh.material.map?.dispose(); });
@@ -1229,7 +1216,6 @@ export class ThreeApplicationRenderer {
     }
     for (const mesh of this.cursor_meshes) release(() => { mesh.material.dispose(); });
     release(() => { this.cursor_geometry?.dispose(); });
-    release(() => { this.buffers.dispose(); });
     release(() => { this.renderer.dispose(); });
     release(() => { this.canvas.remove(); });
     if (failures.length > 0) throw new AggregateError(failures, "Renderer cleanup failed");

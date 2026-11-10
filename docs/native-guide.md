@@ -19,6 +19,21 @@ OSとCPUに一致する配布アーカイブを展開し、実行ファイルを
 - ビルド来歴: 配布物の `SOURCE.json` とアーカイブ内の `BUILD-INFO.json` に記録する。
 - 画面の最低対応解像度: UI倍率を適用した後の表示領域で1280×720。推奨は1920×1080以上である。
 
+## 同じセッションを複数端末で利用する
+
+配布アーカイブにはゲーム本体、配信管理アプリ、同版の`web/`を同梱する。アーカイブ全体を展開し、Web配信には展開した`web/`を使用する。
+
+- ゲーム本体で配信: `./birdman-game-bevy --host 0.0.0.0:8080`で起動する。画面右上の「配信管理」で開始・停止、操作担当の変更、接続の切断、飛行の一時停止を行う。自機の表示は配信停止中も利用できる。
+- 配信管理のみ起動: `./birdman-game-server --bind 0.0.0.0:8080`で管理画面を開く。
+- 別PCのNative表示: 同じ配布版を用い、`./birdman-game-bevy --connect http://<配信PCのLANアドレス>:8080/`で接続する。
+- スマートフォン・ブラウザー: `http://<配信PCのLANアドレス>:8080/`を開く。操作担当は配信PCの管理画面で指定し、他の接続は閲覧として利用する。
+- Windows: 実行コマンドの`./`を`.\`、実行ファイル名を`.exe`付きに置き換える。OSのファイアウォールでは、利用するネットワークから待受ポートへの接続を許可する。
+- 接続上限: `--max-peers COUNT`でホスト自身を含む同時接続数を1〜16に設定する（既定8）。管理画面では配信停止中に変更し、次の配信開始時に反映する。
+- HTTPS: `--tls-cert chain.pem --tls-key key.pem`を両方指定する。利用端末で信頼され、接続先の名前に一致する証明書を使用する。HMD・センサー等にsecure contextが必要なブラウザー機能は、別端末のLAN URLではHTTPSで利用する。同PCの`http://127.0.0.1/`・`http://[::1]/`と、名前解決条件に対応するブラウザーの`http://localhost/`は[信頼できるローカルorigin](https://www.w3.org/TR/secure-contexts/#is-origin-trustworthy)として扱われる。各機能の対応状況と権限はブラウザー・端末に従う。
+- バージョン: 接続するNative、配信するWeb、ホストは同じsource版を使用する。`--version`と配布物の`BUILD-INFO.json`で確認できる。
+
+`0.0.0.0`はPC内の全IPv4インターフェースで待ち受ける指定である。別端末では配信PCのLANアドレスをURLへ指定する。自分のPCだけで利用する場合は`127.0.0.1:8080`で待ち受ける。
+
 ## HMD表示（Windows・Linux）
 
 Windows/Linuxの配布版はOpenXRを同梱機能として有効にしている。HMDに対応するOpenXR runtimeをインストールし、そのruntimeの案内に従って有効なruntimeとして選択する。対応するVulkan GPUドライバーを用意し、次の引数で起動してタイトル画面のVR欄から「VRヘッドセットで表示」を選ぶ。
@@ -29,7 +44,7 @@ Windows/Linuxの配布版はOpenXRを同梱機能として有効にしている�
 - 操作: 物理ゲームパッドはHMD表示中も操縦に使い、共通の中立確認・重心位置の取得規則を適用する。XR controllerはtrigger完了または視線のdwellで選択し、squeezeで戻り、thumbstick上下または未操作時のtouchpad上下でscrollする。
 - 確認範囲: CPUの契約試験と、共有paint・materialの非表示GPU描画を確認した。実runtime・HMDでの両眼表示・操作・終了は未受入である。
 
-引数なしでは通常画面を起動する。ビルド時の機能は`BUILD-INFO.json`の`features`と`--help`で確認できる。runtimeの選択とloaderの役割は[Khronos公式資料](https://registry.khronos.org/OpenXR/specs/1.1/loader.html#runtime-discovery)を参照する。
+引数なしでは通常画面を起動する。ビルド時の機能は`BUILD-INFO.json`の`binaries`配列にある該当実行ファイルの`features`と`--help`で確認できる。runtimeの選択とloaderの役割は[Khronos公式資料](https://registry.khronos.org/OpenXR/specs/1.1/loader.html#runtime-discovery)を参照する。
 
 ## 操縦設定の保存
 
@@ -97,6 +112,10 @@ cargo run -p birdman-game-bevy --release --locked
 | オプション | 説明 |
 |---|---|
 | `--help` / `--version` | 引数一覧、またはバージョン・ビルド情報を表示して終了 |
+| `--host ADDRESS` | セッションと同版Webを配信し、自機も同じセッションへ接続 |
+| `--connect URL` | HTTP(S)ホストの共有セッションへ接続 |
+| `--web-root PATH` | `--host`で配信するWeb配置先（既定は実行ファイル隣の`web/`） |
+| `--tls-cert PATH` / `--tls-key PATH` | `--host`のHTTPS証明書チェーンと秘密鍵（PEM） |
 | `--no-vsync` | 垂直同期の解除を要求。GPU・OSにより選択される同期方式が異なり、画面のちらつきや消費電力が増える場合がある |
 | `--export-dir DIR` | 飛行記録の保存先を変更 |
 | `--font PATH` | 組込みのM PLUS 1p Regularを指定フォントへ変更 |

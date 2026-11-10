@@ -167,8 +167,6 @@ body {
   top: max(0.75rem, env(safe-area-inset-top));
   right: max(0.75rem, env(safe-area-inset-right));
   display: block;
-  border: 1px solid rgb(185 214 207 / 45%);
-  border-radius: 0.75rem;
 }
 
 .screen-ui-shell[data-shared="true"][data-shell="pause_settings"] > h1,

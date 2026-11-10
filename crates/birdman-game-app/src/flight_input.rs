@@ -141,6 +141,16 @@ pub struct FlightGamepadObservation {
     pub axes: [Option<f64>; 3],
 }
 
+impl FlightGamepadObservation {
+    /// Reports neutral pickup using the shared finite axis dead zone.
+    pub fn is_neutral(&self) -> bool {
+        !self.connected
+            || self.axes.iter().all(|axis| {
+                axis.is_some_and(|value| value.is_finite() && value.abs() <= GAMEPAD_DEAD_ZONE)
+            })
+    }
+}
+
 /// Independent channels belonging to one touch flight device.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -387,6 +397,10 @@ impl FlightInputState {
             self.rearm_gamepad();
         }
         true
+    }
+
+    pub(crate) fn next_touch_generation(&self) -> Option<u32> {
+        self.touch_generation.checked_add(1)
     }
 
     pub(crate) fn touch_generation(&self) -> Option<u32> {

@@ -17,6 +17,13 @@ import package_native as packaging
 
 
 SOURCE_SHA = "a" * 40
+CONTRACT_SHA = "b" * 64
+
+
+def fixture_contract(root: Path) -> None:
+    generated = root / "crates/birdman-game-runtime/src/generated_contract.rs"
+    generated.parent.mkdir(parents=True, exist_ok=True)
+    generated.write_text(f'pub const APPLICATION_CONTRACT_SHA256: &str = "{CONTRACT_SHA}";\n', encoding="utf-8")
 
 
 def header(target: str) -> bytes:
@@ -39,13 +46,21 @@ def header(target: str) -> bytes:
 def raw_artifact(directory: Path, root: Path, target: str, binary: bytes,
                  source_sha: str = SOURCE_SHA, additional: str = "", features: list[str] | None = None) -> None:
     info = {
+        "schema_version": 2,
         "source_sha": source_sha,
+        "contract_sha256": CONTRACT_SHA,
         "target": target,
-        "features": packaging.native_features(target) if features is None else features,
+        "binaries": [
+            {"name": packaging.binary_name(target),
+             "features": packaging.native_features(target) if features is None else features,
+             "sha256": hashlib.sha256(binary).hexdigest()},
+            {"name": packaging.server_binary_name(target), "features": ["server-ui"],
+             "sha256": hashlib.sha256(binary).hexdigest()},
+        ],
         "cargo_lock_sha256": packaging.digest(root / "Cargo.lock"),
-        "binary_sha256": hashlib.sha256(binary).hexdigest(),
     }
-    entries = {packaging.binary_name(target): binary, "BUILD-INFO.json": json.dumps(info).encode()}
+    entries = {packaging.binary_name(target): binary, packaging.server_binary_name(target): binary,
+               "BUILD-INFO.json": json.dumps(info).encode()}
     if additional:
         entries[additional] = b"unexpected"
     with tarfile.open(directory / f"{target}.tar.gz", "w:gz") as archive:
@@ -80,7 +95,8 @@ class NativePackagingTests(unittest.TestCase):
                         "size_in_bytes": archive.stat().st_size,
                         "digest": "sha256:" + packaging.digest(archive)}
             matrix = json.dumps({"include": [{"target": target,
-                                            "features": ",".join(packaging.native_features(target))}
+                                            "features": ",".join(packaging.native_features(target)),
+                                            "notice_features": ",".join(packaging.notice_features())}
                                            for target in packaging.TARGETS]})
             with patch("artifact_transfer.require_source"), \
                     patch("artifact_transfer.subprocess.check_output", return_value=matrix):
@@ -155,11 +171,17 @@ class NativePackagingTests(unittest.TestCase):
                             packaging.validate_header(binary, target)
 
     def test_source_requires_complete_exact_sha(self) -> None:
-        with patch("package_native.subprocess.check_output", return_value=SOURCE_SHA + "\n"):
+        def output(command, **_options):
+            return "" if command[1] == "status" else SOURCE_SHA + "\n"
+        with patch("package_native.subprocess.check_output", side_effect=output):
             packaging.require_source(Path("."), SOURCE_SHA)
             for invalid in ("a" * 7, "b" * 40, SOURCE_SHA.upper(), "main"):
                 with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                     packaging.require_source(Path("."), invalid)
+        for dirty in (" M source.rs\n", "?? new-source.rs\n"):
+            with patch("package_native.subprocess.check_output", side_effect=[SOURCE_SHA + "\n", dirty]), \
+                    self.subTest(dirty=dirty), self.assertRaises(ValueError):
+                packaging.require_source(Path("."), SOURCE_SHA)
 
     def test_cpu_cli_runs_copied_binary_without_gpu_from_external_cwd(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -167,9 +189,12 @@ class NativePackagingTests(unittest.TestCase):
             root.mkdir()
             (root / "Cargo.lock").write_text("fixture lock", encoding="utf-8")
             (root / "Cargo.toml").write_text('[workspace.package]\nversion="0.1.0"\n', encoding="utf-8")
+            fixture_contract(root)
             target = "x86_64-pc-windows-msvc"
             binary = root / "original.exe"
             binary.write_bytes(header(target))
+            server_binary = root / "server-original.exe"
+            server_binary.write_bytes(header(target))
             output = root / "output"
             calls = []
             advertise_openxr = True
@@ -180,24 +205,28 @@ class NativePackagingTests(unittest.TestCase):
                 self.assertNotEqual(executable, binary)
                 self.assertNotEqual(options["cwd"], root)
                 self.assertEqual(executable.read_bytes(), binary.read_bytes())
-                text = ("birdman-game-bevy --help" + (" --openxr" if advertise_openxr else "") if command[1] == "--help" else
-                        f"birdman-game-bevy 0.1.0 source {SOURCE_SHA} windows x86_64")
+                name = executable.stem
+                text = (name + " --help" + (" --openxr" if advertise_openxr and name == "birdman-game-bevy" else "")
+                        if command[1] == "--help" else f"{name} 0.1.0 source {SOURCE_SHA} windows x86_64")
                 return subprocess.CompletedProcess(command, 0, text, "")
 
             with patch("package_native.require_source"), patch("package_native.subprocess.run", side_effect=run), \
                     patch("package_native.subprocess.check_output", return_value="rustc fixture"):
-                packaging.stage_binary(root, binary, target, SOURCE_SHA, output)
-            self.assertEqual([call[0][1] for call in calls], ["--help", "--version"])
+                packaging.stage_binary(root, binary, server_binary, target, SOURCE_SHA, output)
+            self.assertEqual([call[0][1] for call in calls], ["--help", "--version"] * 2)
             with tarfile.open(output / f"{target}.tar.gz") as archive:
                 info = json.load(archive.extractfile("BUILD-INFO.json"))
                 self.assertEqual(info["source_sha"], SOURCE_SHA)
-                self.assertEqual(info["features"], ["openxr"])
-                self.assertEqual(info["binary_sha256"], packaging.digest(binary))
-                self.assertEqual(sorted(archive.getnames()), ["BUILD-INFO.json", "birdman-game-bevy.exe"])
+                self.assertEqual(info["schema_version"], 2)
+                self.assertEqual(info["contract_sha256"], CONTRACT_SHA)
+                self.assertEqual(info["binaries"][0]["features"], ["openxr"])
+                self.assertEqual(info["binaries"][0]["sha256"], packaging.digest(binary))
+                self.assertEqual(info["binaries"][1]["features"], ["server-ui"])
+                self.assertEqual(sorted(archive.getnames()), ["BUILD-INFO.json", "birdman-game-bevy.exe", "birdman-game-server.exe"])
             advertise_openxr = False
             with patch("package_native.require_source"), patch("package_native.subprocess.run", side_effect=run), \
                     self.assertRaisesRegex(ValueError, "release features"):
-                packaging.stage_binary(root, binary, target, SOURCE_SHA, output)
+                packaging.stage_binary(root, binary, server_binary, target, SOURCE_SHA, output)
 
     def fixture(self, directory: str):
         root = Path(directory) / "source"
@@ -206,13 +235,33 @@ class NativePackagingTests(unittest.TestCase):
         for path in (root, binaries, licenses):
             path.mkdir()
         (root / "Cargo.lock").write_text("fixture lock", encoding="utf-8")
+        fixture_contract(root)
+        web = root / "web"
+        web.mkdir()
+        (web / "index.html").write_text('<script type="module" src="./application.js"></script>', encoding="utf-8")
+        (web / "application.js").write_text("export {};", encoding="utf-8")
+        (web / "THIRD-PARTY-LICENSES.html").write_text("web notice", encoding="utf-8")
+        packaging.write_json(web / "LICENSE-INFO.json", {
+            "source_sha": SOURCE_SHA, "cargo_lock_sha256": packaging.digest(root / "Cargo.lock"),
+            "targets": ["wasm32-unknown-unknown"], "features": [],
+            "licenses_sha256": packaging.digest(web / "THIRD-PARTY-LICENSES.html"),
+        })
+        packaging.write_json(web / "web-bundle-manifest.json", {
+            "schema_version": 1, "source_sha": SOURCE_SHA, "contract_sha256": CONTRACT_SHA,
+            "files": [{"path": name, "size": (web / name).stat().st_size,
+                       "sha256": packaging.digest(web / name), "content_type": mime}
+                      for name, mime in (("index.html", "text/html; charset=utf-8"),
+                                         ("application.js", "application/javascript"),
+                                         ("THIRD-PARTY-LICENSES.html", "text/html; charset=utf-8"),
+                                         ("LICENSE-INFO.json", "application/json"))],
+        })
         notice = licenses / "THIRD-PARTY-LICENSES.html"
         notice.write_text("license fixture", encoding="utf-8")
         packaging.write_json(licenses / "LICENSE-INFO.json", {
             "source_sha": SOURCE_SHA,
             "cargo_lock_sha256": packaging.digest(root / "Cargo.lock"),
             "targets": list(packaging.TARGETS),
-            "features": ["openxr"],
+            "features": packaging.notice_features(),
             "licenses_sha256": packaging.digest(notice),
         })
         for target in packaging.TARGETS:
@@ -227,18 +276,23 @@ class NativePackagingTests(unittest.TestCase):
                 (destination / "THIRD-PARTY-LICENSES.html").write_text("notice", encoding="utf-8")
 
             with patch("package_native.require_source"), patch("package_native.copy_notices", side_effect=notices):
-                packaging.assemble(root, binaries, licenses, SOURCE_SHA, output)
+                packaging.assemble(root, binaries, licenses, root / "web", SOURCE_SHA, output)
             source = json.loads((output / "SOURCE.json").read_text(encoding="utf-8"))
             self.assertEqual(len(source["packages"]), 6)
             self.assertEqual(source["source_sha"], SOURCE_SHA)
+            self.assertEqual(source["contract_sha256"], CONTRACT_SHA)
+            self.assertEqual(source["web_manifest_sha256"], packaging.digest(root / "web/web-bundle-manifest.json"))
             for package in source["packages"]:
                 self.assertEqual(package["features"], packaging.native_features(package["target"]))
                 path = output / package["file"]
                 self.assertEqual(package["sha256"], packaging.digest(path))
                 if path.suffix == ".zip":
                     with zipfile.ZipFile(path) as archive:
-                        self.assertEqual(len(archive.namelist()), 3)
+                        self.assertEqual(len(archive.namelist()), 9)
                         self.assertTrue(any(name.endswith("/birdman-game-bevy.exe") for name in archive.namelist()))
+                        self.assertTrue(any(name.endswith("/birdman-game-server.exe") for name in archive.namelist()))
+                        web_manifest = next(name for name in archive.namelist() if name.endswith("/web/web-bundle-manifest.json"))
+                        self.assertEqual(archive.read(web_manifest), (root / "web/web-bundle-manifest.json").read_bytes())
                 else:
                     with tarfile.open(path) as archive:
                         executable = next(member for member in archive if member.name.endswith("/birdman-game-bevy"))
@@ -248,7 +302,8 @@ class NativePackagingTests(unittest.TestCase):
                 self.assertEqual(checksum, packaging.digest(output / name))
 
     def test_rejects_mixed_source_architecture_and_unexpected_archive_paths(self) -> None:
-        for mutation in ("source", "architecture", "path", "hash", "missing", "features", "license-features"):
+        for mutation in ("source", "architecture", "path", "hash", "missing", "features", "license-features",
+                         "web-source", "web-contract", "web-bytes", "web-path"):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
                 root, binaries, licenses, output = self.fixture(directory)
                 target = next(iter(packaging.TARGETS))
@@ -266,11 +321,23 @@ class NativePackagingTests(unittest.TestCase):
                     info = json.loads((licenses / "LICENSE-INFO.json").read_text(encoding="utf-8"))
                     info["features"] = []
                     packaging.write_json(licenses / "LICENSE-INFO.json", info)
+                elif mutation.startswith("web-"):
+                    manifest_path = root / "web/web-bundle-manifest.json"
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    if mutation == "web-source":
+                        manifest["source_sha"] = "c" * 40
+                    elif mutation == "web-contract":
+                        manifest["contract_sha256"] = "d" * 64
+                    elif mutation == "web-path":
+                        manifest["files"][0]["path"] = "../outside"
+                    else:
+                        (root / "web/application.js").write_text("changed", encoding="utf-8")
+                    packaging.write_json(manifest_path, manifest)
                 else:
                     (binaries / f"{target}.tar.gz").unlink()
                 with patch("package_native.require_source"), patch("package_native.copy_notices"), \
                         self.assertRaises((ValueError, FileNotFoundError)):
-                    packaging.assemble(root, binaries, licenses, SOURCE_SHA, output)
+                    packaging.assemble(root, binaries, licenses, root / "web", SOURCE_SHA, output)
 
     def test_licenses_use_locked_native_package_and_all_target_union(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -310,9 +377,9 @@ class NativePackagingTests(unittest.TestCase):
             self.assertEqual(command.count("--target"), 6)
             self.assertEqual(set(targets), set(packaging.TARGETS))
             self.assertTrue(set(packaging.TARGETS).issubset(command))
-            self.assertEqual(command[command.index("--features") + 1], "openxr")
+            self.assertEqual(command[command.index("--features") + 1], "birdman-game-host/server-ui")
             info = json.loads((licenses / "LICENSE-INFO.json").read_text(encoding="utf-8"))
-            self.assertEqual(info["features"], ["openxr"])
+            self.assertEqual(info["features"], packaging.notice_features())
             self.assertEqual(len(info["source_forms"]), 2)
             notice = (licenses / "THIRD-PARTY-LICENSES.html").read_text(encoding="utf-8")
             self.assertIn("https://crates.io/api/v1/crates/serialport/4.10.1/download", notice)
@@ -341,6 +408,7 @@ class NativePackagingTests(unittest.TestCase):
                                  (licenses / "THIRD-PARTY-LICENSES.html").read_bytes())
                 guide = output / "docs/native-guide.md"
                 self.assertTrue(guide.is_file())
+                self.assertTrue((output / "docs/websocket-server.md").is_file())
                 self.assertIn("(docs/native-guide.md)", (output / "README.md").read_text(encoding="utf-8"))
                 self.assertNotEqual((output / "README.md").read_bytes(), guide.read_bytes())
                 self.assertFalse((output / "assets/test-fonts").exists())

@@ -1,6 +1,6 @@
 import { Box3, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, DataTexture, EquirectangularReflectionMapping,
   LinearFilter, LinearMipmapLinearFilter, NoColorSpace, RepeatWrapping, RGBAFormat, Sphere, SRGBColorSpace, UnsignedByteType, Vector3 } from "three";
-import type { ApplicationBufferDescriptor, ApplicationGeometryAssets, ApplicationGeometryTexture, ApplicationImageAsset, ApplicationMeshAsset,
+import type { ApplicationBufferDescriptor, ApplicationGeometryTexture, ApplicationImageAsset, ApplicationMeshAsset,
   ApplicationMeshUpdate, ApplicationWaterChunkAsset } from "../../../generated/application-contracts.js";
 
 export type ImageLease = readonly [bufferId: number, anisotropy: number];
@@ -13,8 +13,8 @@ export class ThreeApplicationBuffers {
 
   constructor(private readonly bytes: (id: number) => Uint8Array) {}
 
-  private checkedBytes(descriptor: ApplicationBufferDescriptor): Uint8Array {
-    const bytes = this.bytes(descriptor.buffer_id);
+  private checkedBytes(descriptor: ApplicationBufferDescriptor, read = this.bytes): Uint8Array {
+    const bytes = read(descriptor.buffer_id);
     const count = descriptor.count * descriptor.components;
     const width = descriptor.data_type === "u8" ? 1 : 4;
     if (descriptor.stride_bytes !== descriptor.components * width || bytes.length !== count * width) throw new Error("Shared GPU buffer layout does not match its bytes");
@@ -77,15 +77,15 @@ export class ThreeApplicationBuffers {
     return geometry;
   }
 
-  update(geometry: BufferGeometry, update: ApplicationMeshUpdate): void {
+  update(geometry: BufferGeometry, update: ApplicationMeshUpdate, bytes: (id: number) => Uint8Array): void {
     const uploads = ([["position", update.position], ["normal", update.normal]] as const).map(([name, descriptor]) => {
       if (descriptor.data_type !== "f32") throw new Error("Dynamic GPU attributes require Float32 uploads");
-      const bytes = this.checkedBytes(descriptor);
+      const upload = this.checkedBytes(descriptor, bytes);
       const retained = this.attributes.get(descriptor.buffer_id);
       const attribute = retained ?? new BufferAttribute(new Float32Array(descriptor.count * descriptor.components), descriptor.components);
       if (!(attribute.array instanceof Float32Array) || attribute.array.length !== descriptor.count * descriptor.components
           || attribute.itemSize !== descriptor.components) throw new Error("Dynamic GPU attribute layout differs from its prepared topology");
-      return { name, descriptor, attribute, values: attribute.array, view: new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), retained };
+      return { name, descriptor, attribute, values: attribute.array, view: new DataView(upload.buffer, upload.byteOffset, upload.byteLength), retained };
     });
     for (const { name, descriptor, attribute, values, view, retained } of uploads) {
       this.copyFloat32(view, values);
@@ -158,27 +158,6 @@ export class ThreeApplicationBuffers {
     texture.needsUpdate = true;
     this.textures.set(key, texture);
     return texture;
-  }
-
-  pruneScene(manifests: readonly ApplicationGeometryAssets[], water: readonly BufferGeometry[]): void {
-    const indices = new Set(manifests.flatMap(manifest => manifest.meshes.map(mesh => mesh.index.buffer_id)));
-    const textures = new Set(manifests.flatMap(manifest => manifest.wing_textures.map(texture => String(texture.buffer.buffer_id))));
-    const failures: unknown[] = [];
-    for (const [id, geometry] of this.geometries) if (!indices.has(id)) {
-      try { geometry.dispose(); } catch (cause) { failures.push(cause); }
-      this.geometries.delete(id);
-    }
-    const attributes = new Set<unknown>();
-    for (const geometry of [...this.geometries.values(), ...water]) {
-      attributes.add(geometry.getIndex());
-      for (const attribute of Object.values(geometry.attributes)) attributes.add(attribute);
-    }
-    for (const [id, attribute] of this.attributes) if (!attributes.has(attribute)) this.attributes.delete(id);
-    for (const [id, texture] of this.textures) if (!id.includes(":") && !textures.has(id)) {
-      try { texture.dispose(); } catch (cause) { failures.push(cause); }
-      this.textures.delete(id);
-    }
-    if (failures.length > 0) throw new AggregateError(failures, "Scene buffer retirement failed");
   }
 
   dispose(): void {

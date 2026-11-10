@@ -12,9 +12,10 @@ const allowed = new Map<string, readonly string[]>([
   ["birdman-game-format", ["birdman-game-core", "serde", "serde_json", "sha2"]],
   ["birdman-game-cli", ["birdman-game-app", "birdman-game-content", "birdman-game-core", "birdman-game-format", "serde", "serde_json"]],
   ["birdman-game-wasm", ["birdman-game-app", "birdman-game-presentation", "birdman-game-runtime", "serde_json", "wasm-bindgen"]],
-  ["birdman-game-runtime", ["birdman-game-app", "birdman-game-content", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-scene", "serde", "serde_json", "time"]],
+  ["birdman-game-runtime", ["birdman-game-app", "birdman-game-content", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-scene", "serde", "serde_json", "sha2", "time", "url"]],
   ["birdman-game-presentation", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "time", "unicode-width"]],
   ["birdman-game-scene", ["birdman-game-app", "birdman-game-content", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "sha2", "earcut"]],
+  ["birdman-game-host", ["birdman-game-app", "birdman-game-format", "birdman-game-presentation", "birdman-game-runtime", "serde", "serde_json", "sha2", "url"]],
   ["birdman-game-bevy", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-runtime", "birdman-game-scene", "bevy", "serde", "serde_json"]]
 ]);
 
@@ -64,21 +65,68 @@ function isNativeEngineDependency(crate: string, dependency: Record<string, unkn
 
 function isControllerExecutionDependency(crate: string, dependency: Record<string, unknown>): boolean {
   const shared = crate === "birdman-game-app" && dependency.target === null;
-  const native = crate === "birdman-game-bevy" && dependency.target === NATIVE_SCREEN_TARGET;
   const name = dependency.name;
   const version = shared && (name === "wasmi" || name === "wasmi_core") ? "=2.0.0"
-    : shared && name === "wasmparser" ? "=0.228.0"
-    : native && name === "serialport" ? "=4.10.1"
-    : native && name === "tokio" ? "=1.53.2"
-    : native && name === "sha2" ? "=0.11.0" : undefined;
-  const features = name === "wasmi" ? ["stable", "validate", "deterministic", "portable-dispatch", "prefer-btree-collections"]
-    : name === "tokio" ? ["rt", "process", "io-util", "sync", "time", "macros"] : [];
+    : shared && name === "wasmparser" ? "=0.228.0" : undefined;
+  const features = name === "wasmi" ? ["stable", "validate", "deterministic", "portable-dispatch", "prefer-btree-collections"] : [];
   const enabled = dependency.features;
   return version !== undefined && dependency.req === version && dependency.kind === null
     && isDefaultRegistrySource(dependency) && dependency.path === undefined && dependency.rename === null
     && dependency.optional === false && dependency.uses_default_features === false
     && Array.isArray(enabled) && enabled.length === features.length
     && features.every(feature => enabled.includes(feature));
+}
+
+// OS execution, storage, HTTP and WebSocket dependencies belong to the Host adapter.
+const hostIoDependencies = new Map<string, readonly [string, boolean, boolean, readonly string[]]>([
+  ["axum", ["=0.8.9", false, false, ["http1", "tokio", "ws", "json"]]],
+  ["axum-server", ["=0.8.0", false, false, ["tls-rustls-no-provider"]]],
+  ["bytes", ["=1.12.1", true, false, []]],
+  ["eframe", ["=0.33.3", false, true, ["glow", "wayland", "x11"]]],
+  ["futures-util", ["=0.3.34", false, false, ["sink", "std"]]],
+  ["http-body-util", ["=0.1.5", true, false, []]],
+  ["hyper", ["=1.12.0", false, false, ["client", "http1"]]],
+  ["hyper-rustls", ["=0.27.9", false, false, ["http1", "ring", "tls12"]]],
+  ["hyper-util", ["=0.1.21", false, false, ["client", "client-legacy", "http1", "tokio"]]],
+  ["log", ["=0.4.34", true, false, []]],
+  ["rfd", ["=0.15.4", true, false, []]],
+  ["rustls", ["=0.23.46", false, false, ["ring", "std", "tls12"]]],
+  ["rustls-platform-verifier", ["=0.7.1", true, false, []]],
+  ["serialport", ["=4.10.1", false, false, []]],
+  ["tokio", ["=1.53.2", false, false, ["rt-multi-thread", "net", "process", "io-util", "sync", "time", "macros"]]],
+  ["tokio-tungstenite", ["=0.29.0", false, false, ["connect", "rustls-tls-native-roots"]]]
+]);
+
+function isHostIoDependency(crate: string, dependency: Record<string, unknown>): boolean {
+  const features = dependency.features;
+  const expected = crate === "birdman-game-host" && typeof dependency.name === "string"
+    ? hostIoDependencies.get(dependency.name) : undefined;
+  return expected !== undefined && dependency.req === expected[0]
+    && dependency.kind === null && dependency.target === null
+    && isDefaultRegistrySource(dependency) && dependency.path === undefined
+    && dependency.rename === null && dependency.uses_default_features === expected[1]
+    && dependency.optional === expected[2] && Array.isArray(features)
+    && features.length === expected[3].length
+    && expected[3].every(feature => features.includes(feature));
+}
+
+function isNativeHostTransportDependency(crate: string, dependency: Record<string, unknown>): boolean {
+  if (crate !== "birdman-game-bevy" || dependency.target !== NATIVE_SCREEN_TARGET
+    || dependency.kind !== null || dependency.rename !== null || dependency.optional !== false
+    || !Array.isArray(dependency.features)) return false;
+  if (dependency.name === "birdman-game-host") {
+    return typeof dependency.path === "string" && dependency.source === null
+      && dependency.uses_default_features === true && dependency.features.length === 0;
+  }
+  return dependency.name === "tokio" && dependency.req === "=1.53.2"
+    && isDefaultRegistrySource(dependency) && dependency.path === undefined
+    && dependency.uses_default_features === false
+    && dependency.features.length === 1 && dependency.features[0] === "sync";
+}
+
+function isHostTestDependency(crate: string, dependency: Record<string, unknown>): boolean {
+  return crate === "birdman-game-host" && dependency.name === "birdman-game-core"
+    && dependency.kind === "dev" && dependency.target === null && dependency.optional === false;
 }
 
 function isNativeGpuIoDependency(crate: string, dependency: Record<string, unknown>): boolean {
@@ -282,7 +330,7 @@ function isSchemaGenerationDependency(crate: string, dependency: Record<string, 
   const expected = crate === "birdman-game-format" || crate === "birdman-game-scene" ? ["dep:schemars"]
     : crate === "birdman-game-app" ? ["dep:schemars", "birdman-game-format/schema"]
     : crate === "birdman-game-presentation" ? ["dep:schemars", "birdman-game-app/schema", "birdman-game-format/schema"]
-    : crate === "birdman-game-runtime" ? ["dep:schemars", "birdman-game-app/schema", "birdman-game-presentation/schema", "birdman-game-scene/schema"] : undefined;
+    : crate === "birdman-game-runtime" ? ["dep:schemars", "dep:sha2", "birdman-game-app/schema", "birdman-game-presentation/schema", "birdman-game-scene/schema"] : undefined;
   return expected !== undefined
     && hasSchemaFeature(features, expected)
     && dependency.name === "schemars"
@@ -336,6 +384,9 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
       }
       if (!permitted.includes(dependencyName)
         && !isControllerExecutionDependency(name, dependency)
+        && !isHostIoDependency(name, dependency)
+        && !isNativeHostTransportDependency(name, dependency)
+        && !isHostTestDependency(name, dependency)
         && !isNativeGpuIoDependency(name, dependency)
         && !isNativeFileDialogDependency(name, dependency)
         && !isNativeTextDependency(name, dependency)

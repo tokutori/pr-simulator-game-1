@@ -17,8 +17,7 @@ use crate::{
     wing_texture::{self, WingTextureError},
 };
 
-static WING_TEXTURES: OnceLock<Result<PreparedWingTextures, ScenePreparationError>> =
-    OnceLock::new();
+static WING_TEXTURES: OnceLock<PreparedWingTextures> = OnceLock::new();
 
 /// Original CPU asset-generation failures, before any GPU resources are created.
 #[derive(Clone, Debug)]
@@ -208,7 +207,12 @@ impl PreparedWingTextures {
         &self.mipmaps
     }
 
-    fn prepare() -> Result<Self, ScenePreparationError> {
+    fn prepare_while(
+        keep_running: &mut impl FnMut() -> bool,
+    ) -> Result<Option<Self>, ScenePreparationError> {
+        if !keep_running() {
+            return Ok(None);
+        }
         let decal = image::load_from_memory_with_format(
             include_bytes!("../../../assets/indigo-resist-decal.png"),
             image::ImageFormat::Png,
@@ -216,16 +220,39 @@ impl PreparedWingTextures {
         .map_err(|cause| ScenePreparationError::Decal(cause.to_string()))?
         .into_rgba8();
         let alpha: Vec<_> = decal.pixels().map(|pixel| pixel[3]).collect();
-        let mut pixels = wing_texture::indigo_wing_textures();
-        wing_texture::apply_indigo_wing_decal(&mut pixels, decal.width(), decal.height(), &alpha)
-            .map_err(ScenePreparationError::WingTexture)?;
-        let left = wing_texture::indigo_wing_mipmaps(&pixels[..wing_texture::SIDE_BYTES])
-            .map_err(ScenePreparationError::WingTexture)?;
-        let right = wing_texture::indigo_wing_mipmaps(&pixels[wing_texture::SIDE_BYTES..])
-            .map_err(ScenePreparationError::WingTexture)?;
-        Ok(Self {
+        let Some(mut pixels) = wing_texture::indigo_wing_textures_while(keep_running) else {
+            return Ok(None);
+        };
+        if !wing_texture::apply_indigo_wing_decal_while(
+            &mut pixels,
+            decal.width(),
+            decal.height(),
+            &alpha,
+            keep_running,
+        )
+        .map_err(ScenePreparationError::WingTexture)?
+        {
+            return Ok(None);
+        }
+        let Some(left) = wing_texture::indigo_wing_mipmaps_while(
+            &pixels[..wing_texture::SIDE_BYTES],
+            keep_running,
+        )
+        .map_err(ScenePreparationError::WingTexture)?
+        else {
+            return Ok(None);
+        };
+        let Some(right) = wing_texture::indigo_wing_mipmaps_while(
+            &pixels[wing_texture::SIDE_BYTES..],
+            keep_running,
+        )
+        .map_err(ScenePreparationError::WingTexture)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
             mipmaps: [left, right],
-        })
+        }))
     }
 }
 
@@ -244,12 +271,37 @@ pub struct PreparedScene {
 impl PreparedScene {
     /// Owns the selected aircraft templates; world assets and fixed images retain their shared caches.
     pub fn prepare(definition: &AircraftDefinition) -> Result<Self, ScenePreparationError> {
+        Self::prepare_while(definition, &mut || true)
+            .map(|scene| scene.expect("uninterrupted scene preparation"))
+    }
+
+    /// Prepares the same selected-aircraft source with cancellation between pure generation stages.
+    /// Cancelled candidates are never stored as failures in the shared immutable cache.
+    pub fn prepare_while(
+        definition: &AircraftDefinition,
+        keep_running: &mut impl FnMut() -> bool,
+    ) -> Result<Option<Self>, ScenePreparationError> {
+        if !keep_running() {
+            return Ok(None);
+        }
         let mut structure =
             AirframeStructure::new(definition).map_err(ScenePreparationError::Structure)?;
         structure
             .update_with_factor(definition, WingBendingFactor::try_new(0.0).unwrap())
             .map_err(ScenePreparationError::Structure)?;
-        Ok(Self {
+        if WING_TEXTURES.get().is_none() {
+            let Some(textures) = PreparedWingTextures::prepare_while(keep_running)? else {
+                return Ok(None);
+            };
+            if !keep_running() {
+                return Ok(None);
+            }
+            let _ = WING_TEXTURES.set(textures);
+        }
+        if !keep_running() {
+            return Ok(None);
+        }
+        Ok(Some(Self {
             wing: WingGeometry::new(definition),
             cockpit: CockpitGeometry::new(definition),
             tails: TailGeometry::from_definition(definition)
@@ -258,12 +310,9 @@ impl PreparedScene {
             terrain: registered_terrain().map_err(ScenePreparationError::Terrain)?,
             shore_structures: registered_structures()
                 .map_err(ScenePreparationError::VenueStructures)?,
-            wing_textures: WING_TEXTURES
-                .get_or_init(PreparedWingTextures::prepare)
-                .as_ref()
-                .map_err(Clone::clone)?,
+            wing_textures: WING_TEXTURES.get().expect("complete wing textures"),
             launch_platform: LaunchPlatformGeometry::prepare()?,
-        })
+        }))
     }
 
     /// Borrows neutral main-wing topology, material ranges and UVs.

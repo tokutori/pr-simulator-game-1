@@ -7,6 +7,7 @@ initializeWasmFixture();
 
 export function applicationPlatformFixture(): ApplicationPlatformObservation {
   return {
+    location: null,
     gpu_timing_requested: false,
     renderer: null,
     surface: { font: { family: "Arial", generation: 0, style: "normal", weight: 400 }, locale: "ja" },

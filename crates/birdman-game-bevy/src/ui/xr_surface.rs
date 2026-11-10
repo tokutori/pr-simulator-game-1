@@ -402,6 +402,14 @@ fn submit_inner(
                 scale,
                 &mut used,
             )?;
+            target.paint(
+                world,
+                &paint.frame,
+                target.root,
+                Vec2::ZERO,
+                scale,
+                &mut used,
+            )?;
             target.paint_revision = Some(*paint_revision);
         }
         for (index, cursor) in cursors.iter().enumerate() {
@@ -699,6 +707,7 @@ mod tests {
                         items: Vec::new(),
                     },
                     footer: Vec::new(),
+                    frame: Vec::new(),
                 }),
                 cursors: Vec::new(),
             },

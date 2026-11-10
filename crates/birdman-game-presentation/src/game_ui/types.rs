@@ -467,7 +467,8 @@ pub struct GameUiUpdate {
 }
 
 /// Browser or OS observations that never own game physics or phase.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GameUiPlatformInput {
     /// Current physical display viewport.
     pub viewport: GameUiViewport,
@@ -490,6 +491,7 @@ pub struct GameUiPlatformInput {
     /// Platform supports persisted record lookup.
     pub stored_records_available: bool,
     /// The shared record owner admits an explicit retry of the failed Title list.
+    #[serde(skip)]
     pub stored_records_retry_available: bool,
     /// Platform supports record downloads.
     pub flight_log_available: bool,
@@ -508,6 +510,7 @@ pub struct GameUiPlatformInput {
     /// Captured head-HUD resource failure, separate from the domain and physical state.
     pub head_hud_failure: Option<String>,
     /// Bounded newest-record preview; the persistence index and PB search remain separate.
+    #[serde(skip)]
     pub stored_records: GameUiStoredRecordPreview,
 }
 
@@ -1713,6 +1716,8 @@ pub struct GameUiLayout {
     pub maximum_height_px: f64,
     /// Shared shell padding.
     pub padding_px: f64,
+    /// Shared shell frame corner radius in logical pixels.
+    pub frame_radius_px: f64,
     /// Shared control gap.
     pub gap_px: f64,
     /// Responsive choice grid count.
@@ -1800,6 +1805,12 @@ pub struct GameUiTheme {
     pub flight_path_marker: String,
     /// Panel background color.
     pub panel_background: String,
+    /// Panel frame color.
+    pub panel_border: String,
+    /// Panel frame opacity.
+    pub panel_border_opacity: f64,
+    /// Panel frame width in logical pixels.
+    pub panel_border_width_px: f64,
     /// Centered menu opacity.
     pub panel_opacity: f64,
     /// Head-relative HUD background opacity, preserving forward visibility.

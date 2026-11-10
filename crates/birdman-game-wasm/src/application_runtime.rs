@@ -1,4 +1,3 @@
-use birdman_game_app::application::ApplicationSession;
 use birdman_game_presentation::xr::MenuLayoutFailure;
 use birdman_game_runtime::{
     ApplicationGlyphMetrics, ApplicationObservation, ApplicationPlatformObservation,
@@ -29,9 +28,14 @@ pub struct ApplicationRuntimeBridge {
 #[wasm_bindgen]
 impl ApplicationRuntimeBridge {
     /// Copies one immutable output buffer into an owned JavaScript Uint8Array.
-    pub fn asset_bytes(&self, buffer_id: u32) -> Result<Vec<u8>, JsValue> {
+    pub fn asset_bytes(
+        &self,
+        lease_id: u32,
+        buffer_id: u32,
+        revision: u32,
+    ) -> Result<Vec<u8>, JsValue> {
         self.runtime
-            .asset_bytes(buffer_id)
+            .asset_bytes(lease_id, buffer_id, revision)
             .ok_or_else(|| crate::error("The drawing asset is no longer retained"))
     }
     /// Adopts observed browser capabilities and the actual renderer resource.
@@ -39,7 +43,7 @@ impl ApplicationRuntimeBridge {
     pub fn new(platform_json: &str) -> Result<ApplicationRuntimeBridge, JsValue> {
         let platform: ApplicationPlatformObservation =
             serde_json::from_str(platform_json).map_err(crate::error)?;
-        let runtime = ApplicationRuntime::new(ApplicationSession::default(), platform)
+        let runtime = ApplicationRuntime::discover(platform)
             .map_err(|cause| crate::error(birdman_game_app::technical_error_text(&cause)))?;
         Ok(Self { runtime })
     }

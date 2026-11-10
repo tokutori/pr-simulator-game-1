@@ -12,7 +12,8 @@ describe("shared application contract generation", () => {
     const files = await generateApplicationFiles({
       schema: { type: "object", properties: { output: { $ref: "#/definitions/ApplicationOutput" } }, required: ["output"], additionalProperties: false,
         definitions: { ApplicationOutput: { type: "object", properties: { raw: { description: "Unmodified JSON value" }, extent_px: { type: "array", items: [{ type: "number" }, { type: "number" }], minItems: 2, maxItems: 2 } }, required: ["raw", "extent_px"], additionalProperties: false } } },
-      startup: { loading_html: "<p>起動中</p>", failure_html: "<button>再読み込み</button>" }
+      startup: { loading_html: "<p>起動中</p>", failure_html: "<button>再読み込み</button>" },
+      contract_sha256: "12".repeat(32)
     });
     const source = files[0]?.content ?? "";
     expect(source).toContain("export interface ApplicationOutput");
@@ -20,5 +21,6 @@ describe("shared application contract generation", () => {
     expect(source).toContain("readonly raw: unknown");
     expect(typeReferenceSchema({ type: "object", additionalProperties: false })).toEqual({ type: "object", additionalProperties: false });
     expect(files[1]?.content).toContain("APPLICATION_FAILURE_HTML");
+    expect(files[2]?.content).toContain(`APPLICATION_CONTRACT_SHA256: &str =\n    "${"12".repeat(32)}"`);
   });
 });
