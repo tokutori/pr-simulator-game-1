@@ -56,6 +56,9 @@ impl TailFlightTickError {
                     _ => SessionEndReason::FatalSimulationError,
                 }
             }
+            Self::Telemetry(crate::FlightTelemetryError::Wind(WindError::OutsideGrid)) => {
+                SessionEndReason::OutOfValidEnvelope
+            }
             _ => SessionEndReason::FatalSimulationError,
         }
     }

@@ -490,6 +490,18 @@ fn envelope_classification_preserves_numerical_failure_distinction() {
     ] {
         assert_eq!(TailFlightTickError::Contact(cause).end_reason(), reason);
     }
+    for (cause, reason) in [
+        (
+            FlightTelemetryError::Wind(WindError::OutsideGrid),
+            SessionEndReason::OutOfValidEnvelope,
+        ),
+        (
+            FlightTelemetryError::Wind(WindError::NonFinite),
+            SessionEndReason::FatalSimulationError,
+        ),
+    ] {
+        assert_eq!(TailFlightTickError::Telemetry(cause).end_reason(), reason);
+    }
 }
 
 #[test]
@@ -919,6 +931,7 @@ fn failed_physical_observation_finalizes_the_exact_accepted_boundary() {
         Err(GameSessionError::TailTick(cause))
     );
     let result = session.snapshot().result().unwrap();
+    assert_eq!(result.reason, SessionEndReason::OutOfValidEnvelope);
     assert_eq!(result.state, SessionTerminalState::TailTick(previous));
     assert_eq!(result.failure, Some(cause));
     let record = session.flight_record().unwrap();
