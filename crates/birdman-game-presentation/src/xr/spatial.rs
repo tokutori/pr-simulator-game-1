@@ -1,17 +1,6 @@
 use super::{CameraError, Pose, compose_pose, inverse_pose};
 use serde::{Deserialize, Serialize};
 
-/// Maps a tracking-space change into the mounted presentation reference space.
-pub fn xr_reference_change(
-    reference_from_tracking: Pose,
-    new_tracking_from_previous: Pose,
-) -> Result<Pose, CameraError> {
-    compose_pose(
-        compose_pose(reference_from_tracking, new_tracking_from_previous)?,
-        inverse_pose(reference_from_tracking)?,
-    )
-}
-
 /// Camera mounting policy, separate from the runtime's head and eye tracking.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

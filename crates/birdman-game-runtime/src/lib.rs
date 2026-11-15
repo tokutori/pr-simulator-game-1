@@ -1501,9 +1501,6 @@ impl LocalRuntime {
                     command: GameUiPlatformCommand::RecenterPhoneTracking {},
                 } => unreachable!("local presentation effect was consumed by endpoint"),
                 GameUiEffect::Platform {
-                    command: GameUiPlatformCommand::RecenterMenu {},
-                } => unreachable!("local presentation effect was consumed by endpoint"),
-                GameUiEffect::Platform {
                     command: GameUiPlatformCommand::OpenStoredRecord { id },
                 } => {
                     let request_id = self.endpoint.allocate_request()?;

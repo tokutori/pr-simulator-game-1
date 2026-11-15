@@ -57,7 +57,13 @@ impl ApplicationGamepadObservation {
     }
 
     pub(super) fn menu(&self) -> Option<XrGamepadObservation> {
-        self.standard().then(|| XrGamepadObservation {
+        if !self.standard() {
+            return None;
+        }
+        self.axis(0)?;
+        self.axis(1)?;
+        self.buttons.first()?;
+        Some(XrGamepadObservation {
             index: self.identity.slot_low,
             generation: self.identity.generation,
             axes: std::array::from_fn(|index| {

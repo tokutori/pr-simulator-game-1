@@ -1,7 +1,8 @@
+use super::XrReferenceBasis;
 use super::geometry::PreparedViews;
 use super::{
-    CameraError, Pose, XrEyeGeometry, XrFitReason, XrMenuViewFit, XrReferenceBasis,
-    XrReferenceFrame, XrViewerFrame, compose_pose, fit_xr_menu_view,
+    CameraError, Pose, XrEyeGeometry, XrFitReason, XrMenuViewFit, XrReferenceFrame, XrViewerFrame,
+    compose_pose, fit_xr_menu_view,
 };
 use crate::game_ui::GameUiAnchor;
 use serde::Serialize;
@@ -103,7 +104,7 @@ pub struct XrAnchorFrames {
     pub world: Pose,
     /// Aircraft/cockpit anchor in the same reference.
     pub cockpit: Pose,
-    /// Retained recenterable menu anchor.
+    /// Menu anchor in the selected head-relative or retained spatial frame.
     pub menu: Pose,
     /// Observed mounted head pose.
     pub head: Pose,
@@ -184,24 +185,46 @@ pub enum XrPanelPlacement {
     },
 }
 
+/// Menu placement selected from the currently usable independent input paths.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum XrMenuTracking {
+    /// Retains the opening pose so head motion can aim the gaze cursor.
+    #[default]
+    Spatial,
+    /// Follows the head while another tracked ray or cursor can select controls.
+    HeadLocked,
+}
+
 struct MenuOpening {
     basis: XrReferenceBasis,
+    reference_from_menu: Pose,
     geometry: XrPanelGeometry,
     eyes: [XrEyeGeometry; 2],
     head_from_menu: Pose,
-    reference_from_menu: Pose,
 }
 
-/// Owns a retained menu in its camera-reference basis.
+/// Owns one fitted menu opening and its shared input-dependent placement.
 #[derive(Default)]
 pub struct XrSpatialSession {
     menu: Option<MenuOpening>,
+    menu_tracking: XrMenuTracking,
 }
 
 impl XrSpatialSession {
     /// Creates a fresh session with no retained menu.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Changes placement and invalidates the retained opening when the input path changes.
+    /// Returns whether a newly placed menu must be submitted before selection resumes.
+    pub fn set_menu_tracking(&mut self, tracking: XrMenuTracking) -> bool {
+        if self.menu_tracking == tracking {
+            return false;
+        }
+        self.menu_tracking = tracking;
+        self.menu = None;
+        true
     }
 
     /// Places the current panel, retaining a menu only within its unchanged opening.
@@ -226,10 +249,9 @@ impl XrSpatialSession {
             self.menu = None;
         }
         let unavailable = |reason| XrPanelPlacement::Unavailable { reason };
-        let views = match PreparedViews::new(viewer) {
-            Ok(views) => views,
-            Err(reason) => return unavailable(reason),
-        };
+        if let Err(reason) = PreparedViews::new(viewer) {
+            return unavailable(reason);
+        }
         let Some(reference) = reference else {
             return unavailable(XrFitReason::InvalidViewGeometry);
         };
@@ -262,41 +284,47 @@ impl XrSpatialSession {
             if let Some(opening) = &self.menu
                 && opening.basis == reference.basis
                 && same_opening(opening, &geometry, eyes)
-                && compose_pose(opening.head_from_menu, geometry.local_pose).is_ok_and(|pose| {
-                    views.plane_fits(pose, geometry.size_m[0], geometry.size_m[1], 0.0)
-                })
             {
-                return match compose_pose(opening.reference_from_menu, geometry.local_pose) {
-                    Ok(reference_from_panel) => XrPanelPlacement::Ready {
-                        reference_from_panel,
-                    },
-                    Err(_) => unavailable(XrFitReason::InvalidViewGeometry),
-                };
-            }
-            let fit =
-                match fit_xr_menu_view(viewer, geometry.size_m, geometry.local_pose, 2.4, 0.035) {
+                match self.menu_tracking {
+                    XrMenuTracking::Spatial => opening.reference_from_menu,
+                    XrMenuTracking::HeadLocked => {
+                        match compose_pose(head, opening.head_from_menu) {
+                            Ok(pose) => pose,
+                            Err(_) => return unavailable(XrFitReason::InvalidViewGeometry),
+                        }
+                    }
+                }
+            } else {
+                let fit = match fit_xr_menu_view(
+                    viewer,
+                    geometry.size_m,
+                    geometry.local_pose,
+                    2.4,
+                    0.035,
+                ) {
                     Ok(fit) => fit,
                     Err(_) => return unavailable(XrFitReason::InvalidViewGeometry),
                 };
-            let head_from_menu = match fit {
-                XrMenuViewFit::Ready { head_from_menu, .. } => head_from_menu,
-                XrMenuViewFit::Unavailable { reason } => return unavailable(reason),
-            };
-            let reference_from_menu = match compose_pose(head, head_from_menu) {
-                Ok(pose) => pose,
-                Err(_) => return unavailable(XrFitReason::InvalidViewGeometry),
-            };
-            if compose_pose(reference_from_menu, geometry.local_pose).is_err() {
-                return unavailable(XrFitReason::InvalidViewGeometry);
+                let head_from_menu = match fit {
+                    XrMenuViewFit::Ready { head_from_menu, .. } => head_from_menu,
+                    XrMenuViewFit::Unavailable { reason } => return unavailable(reason),
+                };
+                let reference_from_menu = match compose_pose(head, head_from_menu) {
+                    Ok(pose) => pose,
+                    Err(_) => return unavailable(XrFitReason::InvalidViewGeometry),
+                };
+                if compose_pose(reference_from_menu, geometry.local_pose).is_err() {
+                    return unavailable(XrFitReason::InvalidViewGeometry);
+                }
+                self.menu = Some(MenuOpening {
+                    basis: reference.basis,
+                    reference_from_menu,
+                    geometry: geometry.clone(),
+                    eyes: eyes.clone(),
+                    head_from_menu,
+                });
+                reference_from_menu
             }
-            self.menu = Some(MenuOpening {
-                basis: reference.basis,
-                geometry: geometry.clone(),
-                eyes: eyes.clone(),
-                head_from_menu,
-                reference_from_menu,
-            });
-            reference_from_menu
         } else {
             Pose::IDENTITY
         };
@@ -315,28 +343,6 @@ impl XrSpatialSession {
             },
             Err(_) => unavailable(XrFitReason::InvalidViewGeometry),
         }
-    }
-
-    /// Moves an existing menu to the observed head while preserving its fitted distance.
-    pub fn recenter_menu(&mut self, reference_from_head: Pose) -> Result<(), CameraError> {
-        if let Some(menu) = &mut self.menu {
-            menu.reference_from_menu = compose_pose(reference_from_head, menu.head_from_menu)?;
-        }
-        Ok(())
-    }
-
-    /// Transports the retained menu after an explicit user tracking recenter.
-    pub fn recenter_tracking(
-        &mut self,
-        new_reference_from_previous: Pose,
-    ) -> Result<(), CameraError> {
-        let change = new_reference_from_previous
-            .normalized()
-            .ok_or(CameraError::InvalidPose)?;
-        if let Some(opening) = &mut self.menu {
-            opening.reference_from_menu = compose_pose(change, opening.reference_from_menu)?;
-        }
-        Ok(())
     }
 
     /// Closes a retained menu.

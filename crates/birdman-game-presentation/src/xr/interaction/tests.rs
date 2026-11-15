@@ -166,6 +166,10 @@ fn controller_handover_resets_dwell_and_disconnect_restores_a_fresh_gaze_interva
     assert_eq!(observe(&mut owner, 2200.0, vec![gaze]).progress, 0.0);
     assert!(observe(&mut owner, 3200.0, vec![gaze]).activation.is_some());
     assert!(observe(&mut owner, 4300.0, vec![gaze]).activation.is_none());
+    owner.rebaseline_inputs();
+    assert_eq!(observe(&mut owner, 5000.0, vec![gaze]).progress, 0.0);
+    assert!(observe(&mut owner, 5900.0, vec![gaze]).activation.is_none());
+    assert!(observe(&mut owner, 6000.0, vec![gaze]).activation.is_some());
 }
 
 #[test]

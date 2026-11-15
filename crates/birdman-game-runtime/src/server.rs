@@ -1896,7 +1896,6 @@ impl ApplicationServer {
                         Some(GameUiAction::Platform {
                             command: GameUiPlatformCommand::SetPresentation { .. }
                                 | GameUiPlatformCommand::RecenterPhoneTracking {}
-                                | GameUiPlatformCommand::RecenterMenu {}
                                 | GameUiPlatformCommand::SetScreenRenderScale { .. }
                                 | GameUiPlatformCommand::SetShadowMap { .. }
                                 | GameUiPlatformCommand::SetScreenRenderAuto { .. }
