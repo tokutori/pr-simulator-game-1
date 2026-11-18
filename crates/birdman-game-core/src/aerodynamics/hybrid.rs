@@ -129,6 +129,61 @@ impl<'a> HybridModel<'a> {
     }
 }
 
+/// Decomposition of the whole-aircraft drag into induced and profile parts.
+///
+/// Drag is the component of the total body force opposing the datum
+/// air-relative velocity. The induced part is the static table's induced-drag
+/// column scaled by the continuation gate, plus the change of the tail
+/// strips' local induced drag between the actual and reference flows under
+/// the same gate weighting. The profile part is the residual of the total
+/// drag after the induced part is removed, so it also contains the table's
+/// profile-drag column, the tail strips' zero-lift drag increments, and the
+/// projection differences of side force and increments onto the datum flow
+/// direction; it may be negative in continuation states. Both parts are zero
+/// at zero airspeed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
+pub struct DragBreakdown {
+    induced_newtons: f64,
+    profile_newtons: f64,
+}
+
+impl DragBreakdown {
+    /// Validates finite components in newtons.
+    pub fn try_new(induced_newtons: f64, profile_newtons: f64) -> Result<Self, AeroError> {
+        if !induced_newtons.is_finite() || !profile_newtons.is_finite() {
+            return Err(AeroError::NonFinite);
+        }
+        Ok(Self {
+            induced_newtons,
+            profile_newtons,
+        })
+    }
+
+    /// Returns the zero decomposition used at zero airspeed.
+    pub const fn zero() -> Self {
+        Self {
+            induced_newtons: 0.0,
+            profile_newtons: 0.0,
+        }
+    }
+
+    /// Returns the induced drag in newtons.
+    pub const fn induced_newtons(self) -> f64 {
+        self.induced_newtons
+    }
+
+    /// Returns the profile (non-induced) drag in newtons.
+    pub const fn profile_newtons(self) -> f64 {
+        self.profile_newtons
+    }
+
+    /// Returns the total drag in newtons.
+    pub fn total_newtons(self) -> f64 {
+        self.induced_newtons + self.profile_newtons
+    }
+}
+
 /// Static, incremental, and total body wrenches, all about datum O.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HybridEvaluation {
@@ -136,6 +191,7 @@ pub struct HybridEvaluation {
     increment: Wrench,
     total: Wrench,
     tail_wrenches: [Option<Wrench>; 2],
+    drag: DragBreakdown,
 }
 
 impl HybridEvaluation {
@@ -154,6 +210,10 @@ impl HybridEvaluation {
     /// Returns actual horizontal and vertical tail loads about datum O.
     pub const fn tail_wrenches(self) -> [Option<Wrench>; 2] {
         self.tail_wrenches
+    }
+    /// Returns the decomposition of the total drag at the evaluated flow.
+    pub const fn drag_breakdown(self) -> DragBreakdown {
+        self.drag
     }
 }
 
@@ -234,18 +294,20 @@ impl<'a> HybridAerodynamicLoad<'a> {
             .polar
             .ground_effect_at(state)
             .map_err(|cause| HybridError::new(HybridSite::Datum, cause))?;
-        let (static_wrench, reference_velocity, reference_speed) = global_flow(
-            self.model.polar,
-            datum_velocity,
-            speed,
-            alpha_speed,
-            self.density_kg_m3,
-            ground_effect,
-        )?;
+        let (static_wrench, reference_velocity, reference_speed, static_induced_drag) =
+            global_flow(
+                self.model.polar,
+                datum_velocity,
+                speed,
+                alpha_speed,
+                self.density_kg_m3,
+                ground_effect,
+            )?;
         let reference_pressure = dynamic_pressure(reference_speed, self.density_kg_m3)
             .map_err(|cause| HybridError::new(HybridSite::Datum, cause))?;
         let mut force = BodyVector::zero();
         let mut moment = BodyVector::zero();
+        let mut induced_drag_increment = 0.0;
         let mut tail_wrenches = [None; 2];
         for surface in self.model.surfaces {
             let geometry = surface.geometry();
@@ -265,7 +327,7 @@ impl<'a> HybridAerodynamicLoad<'a> {
                     geometry.projected_span_m(),
                 )
                 .map_err(|cause| HybridError::new(site, cause))?;
-                let (increment, tail_actual) = proxy_increment(
+                let (increment, tail_actual, induced_increment) = proxy_increment(
                     *proxy,
                     actual,
                     ProxyReference {
@@ -296,6 +358,7 @@ impl<'a> HybridAerodynamicLoad<'a> {
                 moment = moment
                     .plus(increment.moment_about_datum_newton_meters())
                     .map_err(|cause| HybridError::new(site, map_math_error(cause)))?;
+                induced_drag_increment += induced_increment;
             }
             let axis = match geometry.role() {
                 HybridSurfaceRole::MainWing => None,
@@ -322,11 +385,21 @@ impl<'a> HybridAerodynamicLoad<'a> {
             .map_err(|cause| HybridError::new(HybridSite::Aggregate, map_math_error(cause)))?;
         let total = Wrench::try_new(total_force, total_moment)
             .map_err(|_| HybridError::new(HybridSite::Aggregate, AeroError::NonFinite))?;
+        let drag = if speed == 0.0 {
+            DragBreakdown::zero()
+        } else {
+            let [force_x, force_y, force_z] = total.force_body_newtons().components();
+            let total_drag = -(force_x * forward + force_y * side + force_z * down) / speed;
+            let induced = static_induced_drag + induced_drag_increment;
+            DragBreakdown::try_new(induced, total_drag - induced)
+                .map_err(|cause| HybridError::new(HybridSite::Aggregate, cause))?
+        };
         Ok(HybridEvaluation {
             static_wrench,
             increment,
             total,
             tail_wrenches,
+            drag,
         })
     }
 
@@ -399,7 +472,7 @@ fn linear_proxy_increment(
     delta: f64,
     tail: Option<(TailAerodynamics, f64)>,
     ground_effect: GroundEffect,
-) -> Result<(Wrench, Option<Wrench>), HybridError> {
+) -> Result<(Wrench, Option<Wrench>, f64), HybridError> {
     let site = HybridSite::Surface(proxy.role());
     let actual_speed = actual
         .norm()
@@ -407,7 +480,7 @@ fn linear_proxy_increment(
     let actual_alpha = local_alpha(proxy, actual)?;
     let reference_alpha = local_alpha(proxy, reference.velocity)?;
     if let Some(tail_parameters) = tail {
-        let actual_wrench = tail_proxy_wrench(
+        let (actual_wrench, actual_induced) = tail_proxy_wrench(
             proxy,
             actual,
             actual_speed,
@@ -417,7 +490,7 @@ fn linear_proxy_increment(
             tail_parameters,
             ground_effect,
         )?;
-        let reference_wrench = tail_proxy_wrench(
+        let (reference_wrench, reference_induced) = tail_proxy_wrench(
             proxy,
             reference.velocity,
             reference.speed,
@@ -437,7 +510,11 @@ fn linear_proxy_increment(
             .map_err(|error| HybridError::new(site, map_math_error(error)))?;
         let increment = Wrench::try_new(force, moment)
             .map_err(|_| HybridError::new(site, AeroError::NonFinite))?;
-        return Ok((increment, Some(actual_wrench)));
+        return Ok((
+            increment,
+            Some(actual_wrench),
+            actual_induced - reference_induced,
+        ));
     }
     let evaluate = || {
         let anchor = proxy.anchor();
@@ -460,7 +537,7 @@ fn linear_proxy_increment(
         Wrench::try_new(force, moment).map_err(|_| AeroError::NonFinite)
     };
     evaluate()
-        .map(|wrench| (wrench, None))
+        .map(|wrench| (wrench, None, 0.0))
         .map_err(|cause| HybridError::new(site, cause))
 }
 
@@ -474,19 +551,20 @@ fn tail_proxy_wrench(
     slope: f64,
     (coefficients, aspect_ratio): (TailAerodynamics, f64),
     ground_effect: GroundEffect,
-) -> Result<Wrench, HybridError> {
+) -> Result<(Wrench, f64), HybridError> {
     let site = HybridSite::Surface(proxy.role());
     let evaluate = || {
         let [u, v, w] = proxy.orientation().body_to_local_vector(velocity)?;
         let in_plane = hypot2(u, w);
         let lift_coefficient = proxy.anchor().lift_coefficient()
             + slope * (alpha - proxy.anchor().geometric_alpha_rad());
-        let drag_coefficient = coefficients.zero_lift_drag_coefficient()
-            + ground_effect.factor() * lift_coefficient * lift_coefficient
-                / (core::f64::consts::PI * aspect_ratio * coefficients.span_efficiency());
+        let induced_drag_coefficient = ground_effect.factor() * lift_coefficient * lift_coefficient
+            / (core::f64::consts::PI * aspect_ratio * coefficients.span_efficiency());
+        let drag_coefficient = coefficients.zero_lift_drag_coefficient() + induced_drag_coefficient;
         let pressure_area = dynamic_pressure(speed, density)? * proxy.projected_area_m2();
         let lift = pressure_area * lift_coefficient;
         let drag = pressure_area * drag_coefficient;
+        let induced_drag = pressure_area * induced_drag_coefficient;
         let force = proxy.orientation().local_to_body_vector([
             lift * (w / in_plane) - drag * (u / speed),
             -drag * (v / speed),
@@ -505,7 +583,8 @@ fn tail_proxy_wrench(
             .cross(force)
             .and_then(|value| value.plus(pitching))
             .map_err(map_math_error)?;
-        Wrench::try_new(force, moment).map_err(|_| AeroError::NonFinite)
+        let wrench = Wrench::try_new(force, moment).map_err(|_| AeroError::NonFinite)?;
+        Ok((wrench, induced_drag))
     };
     evaluate().map_err(|cause| HybridError::new(site, cause))
 }

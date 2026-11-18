@@ -35,11 +35,12 @@ mod tail_simulation;
 mod wind_field;
 
 pub use aerodynamics::{
-    AerodynamicLoadProvider, ElementOrientation, ElementReference, ElementalFlow, FlowAngles,
-    GroundEffect, HybridAerodynamicLoad, HybridAnchor, HybridEvaluation, HybridModel, HybridProxy,
-    HybridSection, HybridSurface, HybridSurfaceGeometry, PlanformSymmetry, PolarAnalysisMethod,
-    PolarMomentAxes, StaticPolar, StaticPolarCoefficients, StaticPolarEvaluation, StaticPolarLoad,
-    StaticPolarMetadata, StaticPolarRow, TailAerodynamics, TailIncidence, UniformAir,
+    AerodynamicLoadProvider, DragBreakdown, ElementOrientation, ElementReference, ElementalFlow,
+    FlowAngles, GroundEffect, HybridAerodynamicLoad, HybridAnchor, HybridEvaluation, HybridModel,
+    HybridProxy, HybridSection, HybridSurface, HybridSurfaceGeometry, PlanformSymmetry,
+    PolarAnalysisMethod, PolarMomentAxes, StaticPolar, StaticPolarCoefficients,
+    StaticPolarEvaluation, StaticPolarLoad, StaticPolarMetadata, StaticPolarRow, TailAerodynamics,
+    TailIncidence, UniformAir,
 };
 pub use aerodynamics_contract::{
     AeroError, AerodynamicEvaluationError, AerodynamicStage, HybridError, HybridFlowKind,
@@ -50,10 +51,11 @@ pub use contact::{
 };
 pub use flight_control::{ActuatorConfig, ActuatorError, ControlMode, FbwAuthority};
 pub use flight_record::{
-    FlightRecord, FlightRecordBoundaryEvent, FlightRecordControlCapture, FlightRecordControlError,
-    FlightRecordControls, FlightRecordDisposition, FlightRecordError, FlightRecordFinalization,
-    FlightRecordHeader, FlightRecordPlaybackSample, FlightRecordQueryError, FlightRecordSample,
-    FlightRecordSummary, FlightRecordTailInput, MAX_FLIGHT_RECORD_SAMPLES, MAX_FLIGHT_RECORD_TICKS,
+    FlightRecord, FlightRecordAcceleration, FlightRecordBoundaryEvent, FlightRecordControlCapture,
+    FlightRecordControlError, FlightRecordControls, FlightRecordDisposition, FlightRecordError,
+    FlightRecordFinalization, FlightRecordHeader, FlightRecordPlaybackSample,
+    FlightRecordQueryError, FlightRecordSample, FlightRecordSummary, FlightRecordTailInput,
+    MAX_FLIGHT_RECORD_SAMPLES, MAX_FLIGHT_RECORD_TICKS,
 };
 pub use game_session::{
     BriefingFailure, CountdownProgress, GameSession, GameSessionConfiguration, GameSessionError,
@@ -93,9 +95,9 @@ pub use tail_simulation::{
 pub use wind_field::{WindError, WindField};
 
 pub use dynamics::{
-    AircraftModel, ConstantLoad, DynamicsError, ExternalLoadProvider, FlightState, Gravity,
-    LoadError, Momentum, PilotAcceleration, PilotPositionTarget, STANDARD_GRAVITY, Wrench, advance,
-    pilot_target_acceleration, total_momentum,
+    AircraftModel, ConstantLoad, DynamicsError, ExternalLoadProvider, FlightEnergy, FlightState,
+    Gravity, LoadError, Momentum, PilotAcceleration, PilotPositionTarget, STANDARD_GRAVITY, Wrench,
+    advance, flight_energy, pilot_target_acceleration, total_momentum,
 };
 pub use math::{
     BodyFrame, BodyPoint, BodyVector, Frame, InertiaTensor, MathError, NedFrame, NedPoint,

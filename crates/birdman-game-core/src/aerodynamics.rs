@@ -4,8 +4,9 @@ use crate::math::{BodyVector, MathError, NedVector};
 mod hybrid;
 mod polar;
 pub use hybrid::{
-    HybridAerodynamicLoad, HybridAnchor, HybridEvaluation, HybridModel, HybridProxy, HybridSection,
-    HybridSurface, HybridSurfaceGeometry, PlanformSymmetry, TailAerodynamics, TailIncidence,
+    DragBreakdown, HybridAerodynamicLoad, HybridAnchor, HybridEvaluation, HybridModel, HybridProxy,
+    HybridSection, HybridSurface, HybridSurfaceGeometry, PlanformSymmetry, TailAerodynamics,
+    TailIncidence,
 };
 pub use polar::{
     AerodynamicLoadProvider, PolarAnalysisMethod, PolarMomentAxes, StaticPolar,

@@ -2896,6 +2896,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
     for sample in &mut legacy.samples {
         sample.wing_bending_factor = None;
         sample.tail_wrenches = None;
+        sample.drag_breakdown = None;
     }
     let mut application = ApplicationSession::default();
     application

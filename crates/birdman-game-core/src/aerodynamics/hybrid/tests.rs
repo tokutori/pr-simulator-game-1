@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 #[test]
 fn reverse_plate_load_uses_midchord_once_and_opposes_normal_motion() {
     let fixture = Fixture::new(2);
-    let (increment, _) = proxy_increment(
+    let (increment, _, _) = proxy_increment(
         fixture.proxies[0][0],
         vector([-3.0, 0.0, 4.0]),
         ProxyReference {
@@ -36,7 +36,7 @@ fn reverse_plate_load_uses_midchord_once_and_opposes_normal_motion() {
         increment.moment_about_datum_newton_meters().components(),
         [48.0, -12.0, 0.0]
     );
-    let (rotated, _) = proxy_increment(
+    let (rotated, _, _) = proxy_increment(
         fixture.proxies[1][0],
         vector([3.0, 0.0, 0.0]),
         ProxyReference {
@@ -83,7 +83,7 @@ fn plate_pressure_uses_representable_dynamic_area_across_opposite_scales() {
         )
         .unwrap();
         let velocity = vector([0.0, 3.0 * component, component]);
-        let (wrench, _, _) = continuation::global_flow(
+        let (wrench, _, _, _) = continuation::global_flow(
             polar,
             velocity,
             velocity.norm().unwrap(),
@@ -95,7 +95,7 @@ fn plate_pressure_uses_representable_dynamic_area_across_opposite_scales() {
         // rho*A*H*w=1, evaluated independently of the overflowing/underflowing rho*A.
         near(wrench.force_body_newtons().components()[2], -1.0, 1e-13);
     }
-    let (local, _) = proxy_increment(
+    let (local, _, _) = proxy_increment(
         fixture.proxies[0][0],
         vector([0.0, 0.0, 1e-154]),
         ProxyReference {
@@ -731,6 +731,7 @@ fn tail_drag_survives_opposite_lift_and_uniform_strip_splitting() {
             GroundEffect::FREE_AIR,
         )
         .unwrap()
+        .0
     };
     let positive = evaluate(one, zero_lift + 0.03);
     let negative = evaluate(one, zero_lift - 0.03);
@@ -1337,6 +1338,82 @@ fn zero_datum_requires_all_actual_proxy_velocities_and_wind_samples_to_succeed()
 fn test_tail(geometry: HybridSurfaceGeometry<'_>) -> Option<TailAerodynamics> {
     (geometry.role() != HybridSurfaceRole::MainWing)
         .then(|| TailAerodynamics::try_new(0.00385, 0.7, 0.0).unwrap())
+}
+
+#[test]
+fn drag_breakdown_matches_the_static_table_at_uniform_flow() {
+    let fixture = Fixture::new(2);
+    let surfaces = fixture.surfaces();
+    let loads = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(fixture.polar(), &surfaces).unwrap(),
+        1.2,
+        WindField::uniform(NedVector::zero()),
+    )
+    .unwrap();
+    let velocity = [10.0, 0.0, 1.0];
+    let flight_state = state(velocity, [0.0; 3]);
+    let evaluation = loads
+        .evaluate_hybrid(&flight_state, TailIncidence::neutral())
+        .unwrap();
+    let polar = fixture
+        .polar()
+        .evaluate_body_velocity(
+            vector(velocity),
+            1.2,
+            fixture.polar().ground_effect_at(&flight_state).unwrap(),
+        )
+        .unwrap();
+    let pressure_area =
+        polar.flow().dynamic_pressure_pascal() * fixture.polar().reference().area_square_meters;
+    let drag = evaluation.drag_breakdown();
+    near(
+        drag.induced_newtons(),
+        pressure_area * polar.coefficients().induced_drag(),
+        1e-9,
+    );
+    near(
+        drag.profile_newtons(),
+        pressure_area * polar.coefficients().profile_drag(),
+        1e-9,
+    );
+    near(
+        drag.total_newtons(),
+        pressure_area * polar.coefficients().drag().unwrap(),
+        1e-9,
+    );
+    let zero = loads
+        .evaluate_hybrid(&state([0.0; 3], [0.0; 3]), TailIncidence::neutral())
+        .unwrap();
+    assert_eq!(zero.drag_breakdown(), DragBreakdown::zero());
+}
+
+#[test]
+fn drag_breakdown_counts_tail_incidence_as_induced_drag_change() {
+    let fixture = Fixture::new(2);
+    let surfaces = fixture.surfaces();
+    let loads = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(fixture.polar(), &surfaces).unwrap(),
+        1.2,
+        WindField::uniform(NedVector::zero()),
+    )
+    .unwrap();
+    let velocity = [10.0, 0.0, 1.0];
+    // The comparison state sits at altitude so the tail induced term is
+    // not suppressed by the surface effect at the datum.
+    let flight_state = state_at(
+        NedPoint::try_new(0.0, 0.0, -25.0).unwrap(),
+        velocity,
+        [0.0; 3],
+    );
+    let neutral = loads
+        .evaluate_hybrid(&flight_state, TailIncidence::neutral())
+        .unwrap()
+        .drag_breakdown();
+    let deflected = loads
+        .evaluate_hybrid(&flight_state, TailIncidence::try_new(0.1, 0.0).unwrap())
+        .unwrap()
+        .drag_breakdown();
+    assert!(deflected.induced_newtons() > neutral.induced_newtons());
 }
 
 #[test]

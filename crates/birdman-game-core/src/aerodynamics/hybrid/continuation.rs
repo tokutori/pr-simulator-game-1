@@ -59,10 +59,10 @@ pub(super) fn global_flow(
     in_plane: f64,
     density: f64,
     ground_effect: GroundEffect,
-) -> Result<(Wrench, BodyVector, f64), HybridError> {
+) -> Result<(Wrench, BodyVector, f64, f64), HybridError> {
     let evaluate = || {
         if speed == 0.0 {
-            return Ok((Wrench::zero(), BodyVector::zero(), 0.0));
+            return Ok((Wrench::zero(), BodyVector::zero(), 0.0, 0.0));
         }
         let [u, v, w] = velocity.components();
         let k = if in_plane == 0.0 {
@@ -88,16 +88,17 @@ pub(super) fn global_flow(
         } else {
             reference.norm().map_err(map_math_error)?
         };
-        if k == 1.0 {
-            return Ok((
-                polar
-                    .evaluate_body_velocity(velocity, density, ground_effect)?
-                    .wrench(),
-                reference,
-                reference_speed,
-            ));
-        }
         let area = polar.reference().area_square_meters;
+        if k == 1.0 {
+            let evaluation = polar.evaluate_body_velocity(velocity, density, ground_effect)?;
+            let induced = evaluation.flow().dynamic_pressure_pascal()
+                * area
+                * evaluation.coefficients().induced_drag();
+            if !induced.is_finite() {
+                return Err(AeroError::NonFinite);
+            }
+            return Ok((evaluation.wrench(), reference, reference_speed, induced));
+        }
         let floor = polar
             .rows()
             .iter()
@@ -119,18 +120,20 @@ pub(super) fn global_flow(
         let radius = BodyVector::try_new(x, y, z).map_err(map_math_error)?;
         let plate = Wrench::try_new(force, radius.cross(force).map_err(map_math_error)?)
             .map_err(|_| AeroError::NonFinite)?;
-        let total = if k == 0.0 {
-            plate
+        let (total, induced) = if k == 0.0 {
+            (plate, 0.0)
         } else {
-            blend_wrench(
-                polar
-                    .evaluate_body_velocity(velocity, density, ground_effect)?
-                    .wrench(),
-                plate,
-                k,
-            )?
+            let evaluation = polar.evaluate_body_velocity(velocity, density, ground_effect)?;
+            let induced = k
+                * evaluation.flow().dynamic_pressure_pascal()
+                * area
+                * evaluation.coefficients().induced_drag();
+            if !induced.is_finite() {
+                return Err(AeroError::NonFinite);
+            }
+            (blend_wrench(evaluation.wrench(), plate, k)?, induced)
         };
-        Ok((total, reference, reference_speed))
+        Ok((total, reference, reference_speed, induced))
     };
     evaluate().map_err(|cause| HybridError::new(HybridSite::Datum, cause))
 }
@@ -229,7 +232,7 @@ pub(super) fn proxy_increment(
     delta: f64,
     tail: Option<(TailAerodynamics, f64)>,
     ground_effect: GroundEffect,
-) -> Result<(Wrench, Option<Wrench>), HybridError> {
+) -> Result<(Wrench, Option<Wrench>, f64), HybridError> {
     let site = HybridSite::Surface(proxy.role());
     let weight = regular_gate(proxy, actual, reference, delta)
         .map_err(|cause| HybridError::new(site, cause))?;
@@ -258,9 +261,9 @@ pub(super) fn proxy_increment(
         )
         .map_err(|_| AeroError::NonFinite)?;
         if weight == 0.0 {
-            return Ok((increment, tail.map(|_| a)));
+            return Ok((increment, tail.map(|_| a), 0.0));
         }
-        let (linear, actual_linear) = linear_proxy_increment(
+        let (linear, actual_linear, induced_increment) = linear_proxy_increment(
             proxy,
             actual,
             reference,
@@ -277,6 +280,7 @@ pub(super) fn proxy_increment(
                 Some(value) => Some(blend_wrench(value, a, weight)?),
                 None => None,
             },
+            weight * induced_increment,
         ))
     };
     evaluate().map_err(|cause| HybridError::new(site, cause))
