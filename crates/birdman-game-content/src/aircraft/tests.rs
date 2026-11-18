@@ -272,8 +272,14 @@ fn registered_trim_balances_the_complete_hybrid_load_at_the_actual_dynamics_boun
     .unwrap();
     let trim = definition.trim().unwrap();
     for heading in [0.0, 1.1] {
+        // The registered trim is a free-air property of the polar table, so the
+        // balance is checked far above the surface, where the ground-effect
+        // factor is 1 to within the assertion tolerance.
         let initial = trim
-            .initial_state_for_ground_launch(NedPoint::origin(), heading)
+            .initial_state_for_ground_launch(
+                NedPoint::try_new(0.0, 0.0, -100_000.0).unwrap(),
+                heading,
+            )
             .unwrap();
         let next = advance(
             &definition.aircraft(),

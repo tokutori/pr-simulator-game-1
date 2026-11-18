@@ -3,7 +3,8 @@ mod envelope;
 mod tail_tick;
 use crate::{
     BodyPoint, ElementOrientation, ElementReference, NedPoint, PolarAnalysisMethod,
-    PolarMomentAxes, StaticPolarCoefficients, StaticPolarMetadata, StaticPolarRow, UnitQuaternion,
+    PolarMomentAxes, StaticPolarCoefficients, StaticPolarMetadata, StaticPolarRow, UniformAir,
+    UnitQuaternion,
 };
 use alloc::vec;
 use alloc::vec::Vec;
@@ -23,6 +24,7 @@ fn reverse_plate_load_uses_midchord_once_and_opposes_normal_motion() {
         4.0,
         0.0,
         None,
+        GroundEffect::FREE_AIR,
     )
     .unwrap();
     // A=2, H=5, w=4 => Fn=-48 N. Midchord=(-0.25,-1,0) m.
@@ -46,6 +48,7 @@ fn reverse_plate_load_uses_midchord_once_and_opposes_normal_motion() {
         4.0,
         core::f64::consts::FRAC_PI_2,
         None,
+        GroundEffect::FREE_AIR,
     )
     .unwrap();
     // Tail A=0.5, quarter=(-3,-0.5,0), rotated midpoint=(-3,-0.5,0.125).
@@ -86,6 +89,7 @@ fn plate_pressure_uses_representable_dynamic_area_across_opposite_scales() {
             velocity.norm().unwrap(),
             component,
             density,
+            GroundEffect::FREE_AIR,
         )
         .unwrap();
         // rho*A*H*w=1, evaluated independently of the overflowing/underflowing rho*A.
@@ -103,6 +107,7 @@ fn plate_pressure_uses_representable_dynamic_area_across_opposite_scales() {
         4.0,
         0.0,
         None,
+        GroundEffect::FREE_AIR,
     )
     .unwrap();
     near(local.force_body_newtons().components()[2], -2.0, 1e-13);
@@ -201,8 +206,12 @@ fn fin_frame() -> ElementOrientation {
 }
 
 fn state(velocity: [f64; 3], rate: [f64; 3]) -> FlightState {
+    state_at(NedPoint::origin(), velocity, rate)
+}
+
+fn state_at(position: NedPoint, velocity: [f64; 3], rate: [f64; 3]) -> FlightState {
     FlightState::try_new(
-        NedPoint::origin(),
+        position,
         ned(velocity),
         UnitQuaternion::IDENTITY,
         vector(rate),
@@ -533,7 +542,11 @@ fn neutral_increments_match_static_at_current_knots_interiors_and_tiny_speeds() 
                 .unwrap();
             let expected = fixture
                 .polar()
-                .evaluate_body_velocity(vector(state.datum_velocity_ned().components()), 1.2)
+                .evaluate_body_velocity(
+                    vector(state.datum_velocity_ned().components()),
+                    1.2,
+                    fixture.polar().ground_effect_at(&state).unwrap(),
+                )
                 .unwrap()
                 .wrench();
             let scale = 0.6 * speed * speed * 4.0;
@@ -611,7 +624,10 @@ fn isolated_increment(
     let model = HybridModel::try_new(fixture.polar(), &surfaces[index..=index]).unwrap();
     HybridAerodynamicLoad::try_new(model, 1.2, WindField::uniform(NedVector::zero()))
         .unwrap()
-        .evaluate_hybrid(&state(velocity, rate), incidence)
+        .evaluate_hybrid(
+            &state_at(NedPoint::try_new(0.0, 0.0, -0.5).unwrap(), velocity, rate),
+            incidence,
+        )
         .unwrap()
         .increment()
 }
@@ -627,15 +643,35 @@ fn tail_actual_loads_at_uniform_reference_are_distinct_from_zero_increment() {
     )
     .unwrap();
     let evaluation = loads
-        .evaluate_hybrid(&state([10.0, 0.0, 0.0], [0.0; 3]), TailIncidence::neutral())
+        .evaluate_hybrid(
+            &state_at(
+                NedPoint::try_new(0.0, 0.0, -0.5).unwrap(),
+                [10.0, 0.0, 0.0],
+                [0.0; 3],
+            ),
+            TailIncidence::neutral(),
+        )
         .unwrap();
     assert_eq!(evaluation.increment(), Wrench::zero());
     let [horizontal, vertical] = evaluation.tail_wrenches().map(Option::unwrap);
+    // Datum height 0.5 m: horizontal strips sit 0.5 m over span 2 m; the fin
+    // strips sit 0.75 m and 0.25 m over span 1 m and average.
+    let horizontal_ground = GroundEffect::from_height_above_surface(0.5, 2.0)
+        .unwrap()
+        .factor();
+    let vertical_ground = 0.5
+        * (GroundEffect::from_height_above_surface(0.75, 1.0)
+            .unwrap()
+            .factor()
+            + GroundEffect::from_height_above_surface(0.25, 1.0)
+                .unwrap()
+                .factor());
     let horizontal_cl = 0.4 - (4.0 * core::f64::consts::PI / 3.0) * 0.02;
-    let horizontal_cd =
-        0.00385 + horizontal_cl * horizontal_cl / (core::f64::consts::PI * 4.0 * 0.7);
+    let horizontal_cd = 0.00385
+        + horizontal_ground * horizontal_cl * horizontal_cl / (core::f64::consts::PI * 4.0 * 0.7);
     let vertical_cl = 0.4 - core::f64::consts::PI * 0.02;
-    let vertical_cd = 0.00385 + vertical_cl * vertical_cl / (core::f64::consts::PI * 2.0 * 0.7);
+    let vertical_cd =
+        0.00385 + vertical_ground * vertical_cl * vertical_cl / (core::f64::consts::PI * 2.0 * 0.7);
     near(
         horizontal.force_body_newtons().components()[0],
         -60.0 * horizontal_cd,
@@ -692,6 +728,7 @@ fn tail_drag_survives_opposite_lift_and_uniform_strip_splitting() {
             1.2,
             slope,
             (coefficients, geometry.aspect_ratio()),
+            GroundEffect::FREE_AIR,
         )
         .unwrap()
     };
@@ -734,7 +771,11 @@ fn tail_drag_survives_opposite_lift_and_uniform_strip_splitting() {
     .unwrap();
     let actual = load
         .evaluate_hybrid(
-            &state([10.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+            &state_at(
+                NedPoint::try_new(0.0, 0.0, -0.125).unwrap(),
+                [10.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ),
             TailIncidence::neutral(),
         )
         .unwrap()
@@ -745,7 +786,11 @@ fn tail_drag_survives_opposite_lift_and_uniform_strip_splitting() {
     let speed = libm::sqrt(100.25);
     let angle = libm::atan2(0.5, 10.0);
     let cl = slope * angle;
-    let induced = cl * cl / (core::f64::consts::PI * geometry.aspect_ratio() * 0.7);
+    // Both strips sit 0.125 m above the surface over span 2 m: factor 1/2.
+    let ground = GroundEffect::from_height_above_surface(0.125, 2.0).unwrap();
+    assert_eq!(ground.factor(), 0.5);
+    let induced =
+        ground.factor() * cl * cl / (core::f64::consts::PI * geometry.aspect_ratio() * 0.7);
     let pressure_area = 0.5 * 1.2 * speed * speed * geometry.projected_area_m2();
     let without_induced = pressure_area * (cl * libm::sin(angle) - 0.00385 * libm::cos(angle));
     let expected = without_induced - pressure_area * induced * libm::cos(angle);
@@ -909,9 +954,41 @@ fn tail_pitch_and_fin_yaw_damping_converge_to_independent_small_disturbance_orac
     let fixture = Fixture::new(4);
     let tail_slope = 4.0 * core::f64::consts::PI / 3.0;
     let fin_slope = core::f64::consts::PI;
-    for (surface, component, slope, aspect_ratio, lever, area, rate_scale, normalization) in [
-        (1, 1, tail_slope, 4.0, 3.0, 1.0, 20.0, 60.0 * 4.0),
-        (2, 2, fin_slope, 2.0, 2.5, 0.5, 5.0, 60.0 * 4.0 * 4.0),
+    // Datum height 0.5 m (isolated_increment): tail strips share one factor;
+    // fin strips sit 0.75 m and 0.25 m over span 1 m and average.
+    let tail_ground = GroundEffect::from_height_above_surface(0.5, 2.0)
+        .unwrap()
+        .factor();
+    let fin_ground = 0.5
+        * (GroundEffect::from_height_above_surface(0.75, 1.0)
+            .unwrap()
+            .factor()
+            + GroundEffect::from_height_above_surface(0.25, 1.0)
+                .unwrap()
+                .factor());
+    for (surface, component, slope, aspect_ratio, lever, area, rate_scale, normalization, ground) in [
+        (
+            1,
+            1,
+            tail_slope,
+            4.0,
+            3.0,
+            1.0,
+            20.0,
+            60.0 * 4.0,
+            tail_ground,
+        ),
+        (
+            2,
+            2,
+            fin_slope,
+            2.0,
+            2.5,
+            0.5,
+            5.0,
+            60.0 * 4.0 * 4.0,
+            fin_ground,
+        ),
     ] {
         for width in [0.002, 0.001, 0.0005] {
             let mut positive_rate = [0.0; 3];
@@ -941,7 +1018,7 @@ fn tail_pitch_and_fin_yaw_damping_converge_to_independent_small_disturbance_orac
             let ratio = lever * rate_scale * width / 10.0;
             let angle = libm::atan(ratio);
             let cl0 = 0.4 - slope * 0.02;
-            let induced = 1.0 / (core::f64::consts::PI * aspect_ratio * 0.7);
+            let induced = ground / (core::f64::consts::PI * aspect_ratio * 0.7);
             let cd0 = 0.00385 + induced * cl0 * cl0;
             let force_term = slope * angle * libm::cos(angle)
                 + (cd0 + induced * slope * slope * angle * angle) * libm::sin(angle);
@@ -974,7 +1051,14 @@ fn fin_beta_restoration_and_physical_tail_incidence_have_independent_signs() {
         let yaw = positive.moment_about_datum_newton_meters().components()[2];
         assert!(side < 0.0 && yaw > 0.0);
         let slope = core::f64::consts::PI;
-        let induced = 1.0 / (core::f64::consts::PI * 2.0 * 0.7);
+        let fin_ground = 0.5
+            * (GroundEffect::from_height_above_surface(0.75, 1.0)
+                .unwrap()
+                .factor()
+                + GroundEffect::from_height_above_surface(0.25, 1.0)
+                    .unwrap()
+                    .factor());
+        let induced = fin_ground / (core::f64::consts::PI * 2.0 * 0.7);
         let cl0 = 0.4 - slope * 0.02;
         let mean_drag = 0.00385 + induced * (cl0 * cl0 + slope * slope * width * width);
         let expected_side =
@@ -1253,4 +1337,62 @@ fn zero_datum_requires_all_actual_proxy_velocities_and_wind_samples_to_succeed()
 fn test_tail(geometry: HybridSurfaceGeometry<'_>) -> Option<TailAerodynamics> {
     (geometry.role() != HybridSurfaceRole::MainWing)
         .then(|| TailAerodynamics::try_new(0.00385, 0.7, 0.0).unwrap())
+}
+
+#[test]
+fn surface_effect_reduces_static_and_tail_drag_with_height() {
+    let fixture = Fixture::new(4);
+    let surfaces = fixture.surfaces();
+    let loads = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(fixture.polar(), &surfaces).unwrap(),
+        1.2,
+        WindField::uniform(NedVector::zero()),
+    )
+    .unwrap();
+    let low_state = state_at(
+        NedPoint::try_new(0.0, 0.0, -0.25).unwrap(),
+        [10.0, 0.0, 0.0],
+        [0.0; 3],
+    );
+    let low = loads
+        .evaluate_hybrid(&low_state, TailIncidence::neutral())
+        .unwrap();
+    let high = loads
+        .evaluate_hybrid(
+            &state_at(
+                NedPoint::try_new(0.0, 0.0, -25.0).unwrap(),
+                [10.0, 0.0, 0.0],
+                [0.0; 3],
+            ),
+            TailIncidence::neutral(),
+        )
+        .unwrap();
+    // The hybrid static part equals the polar path at the same state,
+    // including the surface-effect factor derived from that state.
+    let polar_low = fixture
+        .polar()
+        .evaluate(
+            &low_state,
+            UniformAir::try_new(NedVector::zero(), 1.2).unwrap(),
+        )
+        .unwrap()
+        .wrench();
+    assert_eq!(low.static_wrench(), polar_low);
+    // Near the surface the whole-aircraft drag and the tail drag both shrink.
+    assert!(
+        low.total_wrench().force_body_newtons().components()[0]
+            > high.total_wrench().force_body_newtons().components()[0]
+    );
+    let [low_tail, _] = low.tail_wrenches().map(Option::unwrap);
+    let [high_tail, _] = high.tail_wrenches().map(Option::unwrap);
+    assert!(
+        low_tail.force_body_newtons().components()[0]
+            > high_tail.force_body_newtons().components()[0]
+    );
+    // Lift-driven tail force is unchanged by the factor.
+    near(
+        low_tail.force_body_newtons().components()[2],
+        high_tail.force_body_newtons().components()[2],
+        1.0e-12,
+    );
 }

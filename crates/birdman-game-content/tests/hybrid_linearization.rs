@@ -183,8 +183,11 @@ fn with_map(mode: ControlMode, verify: impl FnOnce(&TickMap<'_>)) {
     let definition = birdman_game_content::playable_aircraft().unwrap();
     let aircraft = definition.aircraft();
     let trim = definition.trim().unwrap();
+    // The trim is a free-air property, so the linearization reference sits far
+    // above the surface, where the ground-effect factor is 1 to within every
+    // tolerance asserted below.
     let initial_flight = trim
-        .initial_state_for_ground_launch(NedPoint::try_new(0.0, 0.0, -100.0).unwrap(), 0.0)
+        .initial_state_for_ground_launch(NedPoint::try_new(0.0, 0.0, -100_000.0).unwrap(), 0.0)
         .unwrap();
     let surfaces = definition.surfaces().unwrap();
     let load = HybridAerodynamicLoad::try_new(
@@ -407,7 +410,10 @@ fn local_chart_and_zero_wind_translation_symmetry_preserve_the_public_map() {
             }
             let state = map.initial.flight_state();
             let position = state.datum_position_ned().components();
-            let offset = [4.0, -3.0, -2.0];
+            // Horizontal translation only: induced drag depends on height
+            // above the surface (ground effect), so a vertical shift is not
+            // a symmetry of the map.
+            let offset = [4.0, -3.0, 0.0];
             let translated = TailFlightTickState::try_new(
                 &map.aircraft,
                 0,

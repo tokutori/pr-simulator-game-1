@@ -172,7 +172,7 @@ fn constructors_reject_invalid_values_order_and_reference_geometry() {
         );
         assert!(
             table
-                .evaluate_body_velocity(vector([10.0, 0.0, 0.0]), density)
+                .evaluate_body_velocity(vector([10.0, 0.0, 0.0]), density, GroundEffect::FREE_AIR)
                 .is_err()
         );
     }
@@ -251,7 +251,7 @@ fn analytic_force_and_moments_dimensionalize_before_beta_zero_rotation() {
     let rows = [row(0.0, values), row(1.0, values)];
     let table = polar(&rows, BodyPoint::origin(), PolarMomentAxes::WindAtBetaZero);
     let result = table
-        .evaluate_body_velocity(vector([4.0, 12.0, 3.0]), 1.0)
+        .evaluate_body_velocity(vector([4.0, 12.0, 3.0]), 1.0, GroundEffect::FREE_AIR)
         .unwrap();
     near(result.flow().speed_mps(), 13.0, 1e-14);
     near(result.flow().dynamic_pressure_pascal(), 84.5, 4e-13);
@@ -273,7 +273,7 @@ fn analytic_force_and_moments_dimensionalize_before_beta_zero_rotation() {
         2e-12,
     );
     let body = polar(&rows, BodyPoint::origin(), PolarMomentAxes::BodyFrd)
-        .evaluate_body_velocity(vector([4.0, 12.0, 3.0]), 1.0)
+        .evaluate_body_velocity(vector([4.0, 12.0, 3.0]), 1.0, GroundEffect::FREE_AIR)
         .unwrap();
     vector_near(
         body.wrench().moment_about_datum_newton_meters(),
@@ -282,7 +282,7 @@ fn analytic_force_and_moments_dimensionalize_before_beta_zero_rotation() {
     );
     // Same alpha and V, beta=0: moments must not rotate with current beta.
     let neutral_beta = table
-        .evaluate_body_velocity(vector([10.4, 0.0, 7.8]), 1.0)
+        .evaluate_body_velocity(vector([10.4, 0.0, 7.8]), 1.0, GroundEffect::FREE_AIR)
         .unwrap();
     vector_near(
         neutral_beta.wrench().moment_about_datum_newton_meters(),
@@ -301,7 +301,7 @@ fn negative_lift_is_downward_and_reference_translation_is_applied_once() {
         BodyPoint::try_new(-2.0, 0.3, 0.4).unwrap(),
         PolarMomentAxes::BodyFrd,
     )
-    .evaluate_body_velocity(vector([10.0, 0.0, 0.0]), 1.0)
+    .evaluate_body_velocity(vector([10.0, 0.0, 0.0]), 1.0, GroundEffect::FREE_AIR)
     .unwrap();
     vector_near(
         result.wrench().force_body_newtons(),
@@ -318,16 +318,17 @@ fn negative_lift_is_downward_and_reference_translation_is_applied_once() {
 
 #[test]
 fn equivalent_fixed_reference_points_produce_the_same_wrench_and_coupled_response() {
-    // At alpha=0, F/(qS)=[-.05,.1,.5]. Moving P by [-2,.3,.4]
-    // requires M_P/(qS)=[.69,-1.13,1.785] to preserve M_O/(qS)=[.8,-.15,1.6].
+    // At alpha=0 and datum height 0.25 m over span 4 m, the surface-effect
+    // factor is 1/2 and F/(qS)=[-.04,.1,.5]. Moving P by [-2,.3,.4]
+    // requires M_P/(qS)=[.69,-1.134,1.788] to preserve M_O/(qS)=[.8,-.15,1.6].
     // Shifted Cm uses c=.5 whereas Cl/Cn use b=4.
     let rows_o = [
         row(-1.0, [-0.5, 0.02, 0.03, 0.1, 0.2, -0.3, 0.4]),
         row(1.0, [-0.5, 0.02, 0.03, 0.1, 0.2, -0.3, 0.4]),
     ];
     let rows_p = [
-        row(-1.0, [-0.5, 0.02, 0.03, 0.1, 0.1725, -2.26, 0.44625]),
-        row(1.0, [-0.5, 0.02, 0.03, 0.1, 0.1725, -2.26, 0.44625]),
+        row(-1.0, [-0.5, 0.02, 0.03, 0.1, 0.1725, -2.268, 0.447]),
+        row(1.0, [-0.5, 0.02, 0.03, 0.1, 0.1725, -2.268, 0.447]),
     ];
     let table_o = polar(&rows_o, BodyPoint::origin(), PolarMomentAxes::BodyFrd);
     let table_p = polar(
@@ -336,7 +337,7 @@ fn equivalent_fixed_reference_points_produce_the_same_wrench_and_coupled_respons
         PolarMomentAxes::BodyFrd,
     );
     let initial = state(
-        NedPoint::origin(),
+        NedPoint::try_new(0.0, 0.0, -0.25).unwrap(),
         ned([10.0, 0.0, 0.0]),
         UnitQuaternion::IDENTITY,
         BodyVector::zero(),
@@ -381,7 +382,9 @@ fn shifted_static_providers_preserve_a_complete_rk_trajectory() {
     // Pure axial drag plus roll torque keeps alpha=beta=0 while the pilot moves.
     // This permits two fixed PWL tables to represent exactly the same wrench at every stage.
     let at_o = [0.0, 0.02, 0.03, 0.0, 0.2, 0.0, 0.0];
-    let at_p = [0.0, 0.02, 0.03, 0.0, 0.2, 0.04, -0.00375];
+    // Datum height 0.25 m over span 4 m gives surface-effect factor 1/2 and
+    // CD = 0.04; the shifted Cm/Cn compensate r x F at that drag.
+    let at_p = [0.0, 0.02, 0.03, 0.0, 0.2, 0.032, -0.003];
     let rows_o = [row(-1.0, at_o), row(1.0, at_o)];
     let rows_p = [row(-1.0, at_p), row(1.0, at_p)];
     let load_o = StaticPolarLoad::try_new(
@@ -414,7 +417,7 @@ fn shifted_static_providers_preserve_a_complete_rk_trajectory() {
     )
     .unwrap();
     let initial = state(
-        NedPoint::origin(),
+        NedPoint::try_new(0.0, 0.0, -0.25).unwrap(),
         ned([10.0, 0.0, 0.0]),
         UnitQuaternion::IDENTITY,
         BodyVector::zero(),
@@ -482,13 +485,13 @@ fn datum_flow_does_not_use_point_p_rate_or_local_wind() {
         PolarMomentAxes::BodyFrd,
     );
     let wind = WindField::linear_gradient(
-        NedPoint::origin(),
+        NedPoint::try_new(0.0, 0.0, -0.25).unwrap(),
         NedVector::zero(),
         [[0.0; 3], [0.0; 3], [2.0, 0.0, 0.0]],
     )
     .unwrap();
     let initial = state(
-        NedPoint::origin(),
+        NedPoint::try_new(0.0, 0.0, -0.25).unwrap(),
         ned([10.0, 0.0, 0.0]),
         UnitQuaternion::IDENTITY,
         vector([0.1, 0.2, 0.3]),
@@ -506,9 +509,11 @@ fn datum_flow_does_not_use_point_p_rate_or_local_wind() {
         result_o.wrench().force_body_newtons(),
         result_p.wrench().force_body_newtons()
     );
+    // Datum height 0.25 m over span 4 m gives surface-effect factor 1/2,
+    // so CD = 0.04 and the pitch moment is -104.
     vector_near(
         result_p.wrench().moment_about_datum_newton_meters(),
-        [0.0, -105.0, 0.0],
+        [0.0, -104.0, 0.0],
         1e-14,
     );
 }
@@ -523,13 +528,17 @@ fn ned_transform_and_uniform_velocity_shift_preserve_air_relative_load() {
     let half_sqrt = libm::sqrt(0.5);
     let attitude = UnitQuaternion::try_new(half_sqrt, 0.0, 0.0, half_sqrt).unwrap();
     let initial = state(
-        NedPoint::origin(),
+        NedPoint::try_new(0.0, 0.0, -2.0).unwrap(),
         ned([-12.0, 4.0, 3.0]),
         attitude,
         BodyVector::zero(),
     );
     let expected = table
-        .evaluate_body_velocity(vector([4.0, 12.0, 3.0]), 1.0)
+        .evaluate_body_velocity(
+            vector([4.0, 12.0, 3.0]),
+            1.0,
+            GroundEffect::from_height_above_surface(2.0, 4.0).unwrap(),
+        )
         .unwrap()
         .wrench();
     let stationary = table
@@ -541,7 +550,7 @@ fn ned_transform_and_uniform_velocity_shift_preserve_air_relative_load() {
         .wrench();
     wrench_near(stationary, expected, 3e-13);
     let shifted = state(
-        NedPoint::origin(),
+        NedPoint::try_new(0.0, 0.0, -2.0).unwrap(),
         ned([-10.0, 1.0, 4.0]),
         attitude,
         BodyVector::zero(),
@@ -565,13 +574,13 @@ fn undefined_flow_tiny_positive_speed_and_computed_overflow_are_distinct() {
     let table = polar(&rows, BodyPoint::origin(), PolarMomentAxes::BodyFrd);
     for velocity in [[0.0; 3], [0.0, 10.0, 0.0]] {
         assert_eq!(
-            table.evaluate_body_velocity(vector(velocity), 1.0),
+            table.evaluate_body_velocity(vector(velocity), 1.0, GroundEffect::FREE_AIR),
             Err(AeroError::UndefinedFlowAngle)
         );
     }
     for speed in [1e-200, f64::from_bits(1)] {
         let result = table
-            .evaluate_body_velocity(vector([speed, 0.0, 0.0]), 1.0)
+            .evaluate_body_velocity(vector([speed, 0.0, 0.0]), 1.0, GroundEffect::FREE_AIR)
             .unwrap();
         assert_eq!(
             result.flow().angles(),
@@ -582,7 +591,11 @@ fn undefined_flow_tiny_positive_speed_and_computed_overflow_are_distinct() {
         );
         assert_eq!(result.wrench(), Wrench::zero());
         let non_axial = table
-            .evaluate_body_velocity(vector([3.0 * speed, 12.0 * speed, 4.0 * speed]), 1.0)
+            .evaluate_body_velocity(
+                vector([3.0 * speed, 12.0 * speed, 4.0 * speed]),
+                1.0,
+                GroundEffect::FREE_AIR,
+            )
             .unwrap();
         near(
             non_axial.flow().speed_mps() / speed,
@@ -601,7 +614,7 @@ fn undefined_flow_tiny_positive_speed_and_computed_overflow_are_distinct() {
         assert_eq!(non_axial.wrench(), Wrench::zero());
     }
     assert_eq!(
-        table.evaluate_body_velocity(vector([f64::MAX, 0.0, 0.0]), 1.0),
+        table.evaluate_body_velocity(vector([f64::MAX, 0.0, 0.0]), 1.0, GroundEffect::FREE_AIR),
         Err(AeroError::NonFinite)
     );
     let overflow = coefficients([0.0, f64::MAX, f64::MAX, 0.0, 0.0, 0.0, 0.0]);
@@ -737,4 +750,46 @@ fn exclusive_provider_delegates_one_model_and_rejects_unmodeled_controls() {
         selected.evaluate(&aircraft(), &initial),
         load.evaluate(&aircraft(), &initial)
     );
+}
+
+#[test]
+fn surface_effect_scales_only_the_induced_drag_column() {
+    let rows = [
+        row(-1.0, [0.5, 0.02, 0.03, 0.1, 0.2, -0.3, 0.4]),
+        row(1.0, [0.5, 0.02, 0.03, 0.1, 0.2, -0.3, 0.4]),
+    ];
+    let table = polar(&rows, BodyPoint::origin(), PolarMomentAxes::BodyFrd);
+    let air = UniformAir::try_new(NedVector::zero(), 1.0).unwrap();
+    let at = |down: f64| {
+        table
+            .evaluate(
+                &state(
+                    NedPoint::try_new(0.0, 0.0, down).unwrap(),
+                    ned([10.0, 0.0, 0.0]),
+                    UnitQuaternion::IDENTITY,
+                    BodyVector::zero(),
+                ),
+                air,
+            )
+            .unwrap()
+    };
+    // Datum height 0.25 m over the reference span 4 m gives factor 1/2.
+    let low = at(-0.25);
+    assert_eq!(low.coefficients().induced_drag(), 0.01);
+    assert_eq!(low.coefficients().profile_drag(), 0.03);
+    assert_eq!(low.coefficients().lift(), 0.5);
+    assert_eq!(low.coefficients().pitch_moment(), -0.3);
+    // The table itself is free-air data and stays unchanged.
+    assert_eq!(table.coefficients_at(0.0).unwrap().induced_drag(), 0.02);
+    // At 10 km the state evaluation agrees with the free-air evaluation.
+    let high = at(-10_000.0);
+    let free = table
+        .evaluate_body_velocity(vector([10.0, 0.0, 0.0]), 1.0, GroundEffect::FREE_AIR)
+        .unwrap();
+    wrench_near(high.wrench(), free.wrench(), 1.0e-6);
+    // The drag force shrinks toward the surface while lift is unchanged.
+    let low_force = low.wrench().force_body_newtons().components();
+    let high_force = high.wrench().force_body_newtons().components();
+    assert!(low_force[0] > high_force[0]);
+    assert_eq!(low_force[2], high_force[2]);
 }

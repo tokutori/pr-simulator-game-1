@@ -1,6 +1,8 @@
 //! Borrowed full-aircraft static polars and exclusive aerodynamic providers.
 
-use super::{ElementReference, ElementalFlow, FlowAngles, UniformAir, map_math_error};
+use super::{
+    ElementReference, ElementalFlow, FlowAngles, GroundEffect, UniformAir, map_math_error,
+};
 use crate::aerodynamics_contract::{AeroError, AerodynamicEvaluationError};
 use crate::dynamics::{AircraftModel, ExternalLoadProvider, FlightState, LoadError, Wrench};
 use crate::math::{BodyPoint, BodyVector, NedVector, atan2, hypot2};
@@ -327,16 +329,32 @@ impl<'a> StaticPolar<'a> {
             .interpolate(second.coefficients, fraction)
     }
 
+    /// Computes the whole-aircraft surface-effect factor for a flight state.
+    ///
+    /// The height is the vertical distance from datum O to the water plane
+    /// `D = 0`, and the span is this table's reference span. The datum is a
+    /// fixed airframe point, so equivalent tables of one aircraft share the
+    /// factor; both load paths derive it here so their static loads agree.
+    pub fn ground_effect_at(self, state: &FlightState) -> Result<GroundEffect, AeroError> {
+        GroundEffect::from_height_above_surface(
+            -state.datum_position_ned().components()[2],
+            self.reference.span_meters,
+        )
+    }
+
     /// Evaluates static loads using datum O's air-relative body velocity only.
     ///
     /// Current beta changes the force basis as a kinematic continuation of beta-zero data.
     /// Wind-axis moments use the beta-zero rotation after dimensionalization. Zero or
     /// purely lateral flow has no alpha and is rejected; the hybrid all-points-zero
     /// exception belongs to its complete local-flow evaluator, not this component.
+    /// The supplied surface-effect factor scales the interpolated induced-drag
+    /// column; the returned coefficients carry the scaled value actually used.
     pub fn evaluate_body_velocity(
         self,
         velocity_body_mps: BodyVector,
         density_kg_m3: f64,
+        ground_effect: GroundEffect,
     ) -> Result<StaticPolarEvaluation, AeroError> {
         UniformAir::try_new(NedVector::zero(), density_kg_m3)?;
         let [u, v, w] = velocity_body_mps.components();
@@ -350,7 +368,16 @@ impl<'a> StaticPolar<'a> {
         }
         let alpha_rad = atan2(w, u);
         let beta_rad = atan2(v, h);
-        let coefficients = self.coefficients_at(alpha_rad)?;
+        let table_coefficients = self.coefficients_at(alpha_rad)?;
+        let coefficients = StaticPolarCoefficients::try_new(
+            table_coefficients.lift,
+            table_coefficients.induced_drag * ground_effect.factor(),
+            table_coefficients.profile_drag,
+            table_coefficients.side_force,
+            table_coefficients.roll_moment,
+            table_coefficients.pitch_moment,
+            table_coefficients.yaw_moment,
+        )?;
         let dynamic_pressure_pascal = 0.5 * density_kg_m3 * speed * speed;
         let dynamic_area = dynamic_pressure_pascal * self.reference.area_square_meters;
         if !dynamic_area.is_finite() {
@@ -427,7 +454,8 @@ impl<'a> StaticPolar<'a> {
             .attitude_body_to_ned()
             .ned_to_body(relative_ned)
             .map_err(map_math_error)?;
-        self.evaluate_body_velocity(velocity_body, air.density_kg_m3)
+        let ground_effect = self.ground_effect_at(state)?;
+        self.evaluate_body_velocity(velocity_body, air.density_kg_m3, ground_effect)
     }
 }
 

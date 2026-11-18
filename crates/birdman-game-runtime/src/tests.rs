@@ -4060,6 +4060,20 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         .scene;
     assert_ne!(moved.camera.as_ref().unwrap().world_from_head, camera);
     let previous_geometry = moved.geometry.unwrap();
+    let bending_factor =
+        |runtime: &LocalRuntime| match birdman_game_presentation::render_pose::live_render_pose(
+            runtime.application(),
+        )
+        .unwrap()
+        .unwrap()
+        .wing_deformation
+        {
+            birdman_game_presentation::render_pose::RenderWingDeformation::Accepted { factor } => {
+                factor
+            }
+            _ => panic!("the flight pose must carry an accepted bending factor"),
+        };
+    let previous_factor = bending_factor(&runtime);
     let fractional = runtime
         .observe_test(ApplicationInput::Frame {
             display_resource_id: None,
@@ -4070,11 +4084,21 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         })
         .unwrap();
     let fractional_geometry = fractional.drawing.unwrap().scene.geometry.unwrap();
-    assert_eq!(fractional_geometry.revision, previous_geometry.revision);
-    assert_eq!(
-        serde_json::to_value(&fractional_geometry.updates).unwrap(),
-        serde_json::to_value(&previous_geometry.updates).unwrap()
-    );
+    // Geometry republishes exactly when the accepted bending factor changes.
+    // The interpolated pose holds the ending sample's factor over its tick
+    // interval, so a fractional frame republishes only when the bracketing
+    // samples carry different factors. In ground effect the trimmed aircraft
+    // accelerates slightly, so the two factors differ here.
+    if bending_factor(&runtime) == previous_factor {
+        assert_eq!(fractional_geometry.revision, previous_geometry.revision);
+        assert_eq!(
+            serde_json::to_value(&fractional_geometry.updates).unwrap(),
+            serde_json::to_value(&previous_geometry.updates).unwrap()
+        );
+    } else {
+        assert_eq!(fractional_geometry.revision, previous_geometry.revision + 1);
+        assert!(!fractional_geometry.updates.is_empty());
+    }
     let fraction = runtime.application().flight_interpolation_fraction();
     assert!(runtime.application().flight_interpolation_ready() && fraction > 0.0);
     let record = runtime

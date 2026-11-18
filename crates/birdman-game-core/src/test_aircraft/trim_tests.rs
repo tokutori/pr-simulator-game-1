@@ -58,8 +58,10 @@ fn assert_steady_glide_balance() {
     let definition = TestAircraft::try_new().unwrap();
     let aircraft = definition.aircraft();
     let trim = definition.trim().unwrap();
+    // The trim solve is a free-air property of the table; at 10 km the
+    // surface-effect factor is within test tolerance of one.
     let state = trim
-        .initial_state_for_ground_launch(NedPoint::try_new(0.0, 0.0, -10.5).unwrap(), 0.0)
+        .initial_state_for_ground_launch(NedPoint::try_new(0.0, 0.0, -10_000.0).unwrap(), 0.0)
         .unwrap();
     let surfaces = definition.surfaces().unwrap();
     let hybrid = HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap();

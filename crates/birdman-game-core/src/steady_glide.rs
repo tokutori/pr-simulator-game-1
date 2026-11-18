@@ -1,6 +1,6 @@
 use crate::{
     AeroError, AircraftModel, BodyVector, CompositeCgLaunchConditions, DynamicsError, FlightState,
-    Gravity, MathError, NedPoint, NedVector, StaticPolar, StaticPolarCoefficients,
+    Gravity, GroundEffect, MathError, NedPoint, NedVector, StaticPolar, StaticPolarCoefficients,
     TailPilotPositionMapping, UnitQuaternion, flight_state_from_composite_cg_launch,
 };
 
@@ -205,8 +205,14 @@ impl SteadyGlideTrim {
             conditions.airspeed_mps * libm::sin(alpha_rad),
         )
         .map_err(SteadyGlideError::Math)?;
+        // The solve is a property of the free-air table; flight evaluation
+        // applies the surface effect by height, so the factor is free air here.
         let wrench = polar
-            .evaluate_body_velocity(body_velocity, conditions.air_density_kg_m3)
+            .evaluate_body_velocity(
+                body_velocity,
+                conditions.air_density_kg_m3,
+                GroundEffect::FREE_AIR,
+            )
             .map_err(SteadyGlideError::Aerodynamics)?
             .wrench();
         let [force_forward, force_right, force_down] = wrench.force_body_newtons().components();

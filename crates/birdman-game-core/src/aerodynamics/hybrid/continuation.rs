@@ -58,6 +58,7 @@ pub(super) fn global_flow(
     speed: f64,
     in_plane: f64,
     density: f64,
+    ground_effect: GroundEffect,
 ) -> Result<(Wrench, BodyVector, f64), HybridError> {
     let evaluate = || {
         if speed == 0.0 {
@@ -89,7 +90,9 @@ pub(super) fn global_flow(
         };
         if k == 1.0 {
             return Ok((
-                polar.evaluate_body_velocity(velocity, density)?.wrench(),
+                polar
+                    .evaluate_body_velocity(velocity, density, ground_effect)?
+                    .wrench(),
                 reference,
                 reference_speed,
             ));
@@ -120,7 +123,9 @@ pub(super) fn global_flow(
             plate
         } else {
             blend_wrench(
-                polar.evaluate_body_velocity(velocity, density)?.wrench(),
+                polar
+                    .evaluate_body_velocity(velocity, density, ground_effect)?
+                    .wrench(),
                 plate,
                 k,
             )?
@@ -214,6 +219,7 @@ fn plate_wrench(
         .map_err(|_| AeroError::NonFinite)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn proxy_increment(
     proxy: HybridProxy,
     actual: BodyVector,
@@ -222,12 +228,22 @@ pub(super) fn proxy_increment(
     slope: f64,
     delta: f64,
     tail: Option<(TailAerodynamics, f64)>,
+    ground_effect: GroundEffect,
 ) -> Result<(Wrench, Option<Wrench>), HybridError> {
     let site = HybridSite::Surface(proxy.role());
     let weight = regular_gate(proxy, actual, reference, delta)
         .map_err(|cause| HybridError::new(site, cause))?;
     if weight == 1.0 {
-        return linear_proxy_increment(proxy, actual, reference, density, slope, delta, tail);
+        return linear_proxy_increment(
+            proxy,
+            actual,
+            reference,
+            density,
+            slope,
+            delta,
+            tail,
+            ground_effect,
+        );
     }
     let evaluate = || {
         let a = plate_wrench(proxy, actual, density, delta, tail)?;
@@ -244,9 +260,17 @@ pub(super) fn proxy_increment(
         if weight == 0.0 {
             return Ok((increment, tail.map(|_| a)));
         }
-        let (linear, actual_linear) =
-            linear_proxy_increment(proxy, actual, reference, density, slope, delta, tail)
-                .map_err(|error| error.cause())?;
+        let (linear, actual_linear) = linear_proxy_increment(
+            proxy,
+            actual,
+            reference,
+            density,
+            slope,
+            delta,
+            tail,
+            ground_effect,
+        )
+        .map_err(|error| error.cause())?;
         Ok((
             blend_wrench(linear, increment, weight)?,
             match actual_linear {

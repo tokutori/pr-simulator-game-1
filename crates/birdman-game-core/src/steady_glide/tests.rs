@@ -64,8 +64,13 @@ fn nonzero_pilot_height_and_polar_reference_balance_the_actual_dynamics() {
         let aircraft = aircraft(pilot_offset);
         let trim = SteadyGlideTrim::try_new(aircraft, polar, conditions).unwrap();
         for heading in [0.0, 0.63] {
+            // The solve is a free-air property of the table; at 10 km the
+            // surface-effect factor is within test tolerance of one.
             let state = trim
-                .initial_state_for_ground_launch(NedPoint::origin(), heading)
+                .initial_state_for_ground_launch(
+                    NedPoint::try_new(0.0, 0.0, -10_000.0).unwrap(),
+                    heading,
+                )
                 .unwrap();
             let load = StaticPolarLoad::try_new(
                 polar,

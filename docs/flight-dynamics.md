@@ -177,6 +177,7 @@ W=W(x,y,z),\qquad V_{air}=V_{ground}-W
 | `yaw_moment` | $C_n$ |
 
 - 全機のprofile dragをこの表へ集約し、総抗力 $C_D=C_{Di}+C_{Dv}$ は計算値とする。
+- 表の $C_{Di}$ は自由空間の値である。状態による評価は水面効果係数 $\phi$ を乗じた値を用い、評価結果の係数は乗算後の値を返す。`coefficients_at` は表の値をそのまま返す。
 - 2行以上、全値有限、迎角の厳密単調増加、$C_{Di},C_{Dv}\ge0$、共通面積 $S$・span $b$・MAC $c$ の正値・有限性を構築時に検証する。
 - 負の揚力・モーメントは有効である。
 - 内部値を非公開とし、検証済みconstructorから構築する。
@@ -244,6 +245,24 @@ M_{O,static}^B=M_P^B+r_{OP}^B\times F_{static}^B
 - `StaticPolarLoad`は静的荷重だけを返す。
 - `AerodynamicLoadProvider`はStaticPolarとHybridを排他的に選び、全機荷重を重複生成しない。
 - 静的空力表単独では迎角未定義のゼロ流・純横方向流を`UndefinedFlowAngle`として拒否する。
+
+## 水面効果（地面効果）
+
+水面近傍では翼端渦と吹き下ろしが水面に抑制され、誘導抗力が減少する。本モデルはWieselsbergerの鏡像渦モデルによる低減係数を誘導抗力へ乗じる。
+
+```math
+\phi(h,b)=\frac{(16h/b)^2}{1+(16h/b)^2},\qquad C_{Di,\mathrm{eff}}=\phi\, C_{Di}
+```
+
+- 出典: Wieselsberger (1921, NACA TM 77)。Anderson『Introduction to Flight』の概算式と同一である。
+- 全機表: $h$ はdatum $O$ の水面上の高さ、$b$ は表の参照spanとする。datumは機体固定点であり、等価な表の間で係数は一致する。両荷重経路は同じ係数を用い、静的荷重は一致する。
+- 尾翼: $h$ は各proxy点の水面上の高さ、$b$ は面のprojected spanとする。実荷重とreference荷重へ同じ係数を適用する。
+- 水面は静水面 $D=0$ の平面とする。波高は考慮しない。
+- 高さが負の場合は水面へclampし、$\phi=0$ とする。水面への接触で飛行は終了するため、定常な飛行状態では現れない。
+- 適用範囲は誘導抗力のみとする。揚力勾配・ピッチングモーメント・尾翼への吹き下ろしの高度依存は導入しない。全機表は高度の軸を持たず、$C_L$・$C_m$ の高度依存は表のデータから導出できないためである。
+- 主翼proxyの差分は誘導効果を再適用しない既存方針を維持し、係数を適用しない。
+- 定常滑空の解とtrim探索は自由空間の表を対象とする。飛行中の評価が高度に応じて係数を適用する。
+- 物理モデルの変更に伴い `PHYSICS_MODEL_VERSION` を10へ更新した。personal bestの適格は現行versionとの完全一致を要するため、version 9以前の記録は適格とならない。
 
 ## 現在の流れを基準とするハイブリッド空力
 
@@ -320,12 +339,12 @@ q_i=\frac12\rho\lVert v_i^B\rVert^2,\qquad q_{ref}=\frac12\rho V^2
 
 ```math
 L_i=q_i S_{projected,i} C_{L,i},\qquad
-D_i=q_i S_{projected,i}\left(C_{D0}+\frac{C_{L,i}^2}{\pi AR_s e}\right)
+D_i=q_i S_{projected,i}\left(C_{D0}+\phi_i\frac{C_{L,i}^2}{\pi AR_s e}\right)
 ```
 
 - 主翼の差分は固定normalに沿う。尾翼は局所流に直交する揚力、流れと逆向きの抗力、quarter-chordの固有モーメントから実荷重とreference荷重を求める。
 - 全機静的荷重へ主翼の差分と尾翼の実荷重・reference荷重の差を一度加える。面別の実荷重は全機polarの内訳ではなく合成モデルの値を表す。
-- 尾翼stripの誘導抗力には面全体のARを使う局所二乗近似を使用する。非一様流でのstrip間相互誘導は近似の範囲外である。
+- 尾翼stripの誘導抗力には面全体のARを使う局所二乗近似を使用する。非一様流でのstrip間相互誘導は近似の範囲外である。水面効果係数 $\phi_i$ はproxy点の水面上の高さと面のprojected spanから求める。
 - 両尾翼の $e=0.7$、$C_m=0$、水平 $C_{D0}=0.0038517428696657075$、垂直 $C_{D0}=0.003907975667072787$ は固定の合成値である。$C_{D0}$ は速度9.7 m/s、動粘性係数 $1.5\times10^{-5}$ m²/sの両面全層流平板として[NASAの式](https://ntrs.nasa.gov/api/citations/20100031107/downloads/20100031107.pdf)から求める。
 - 翼の線型揚力近似はanchorから約±0.2 radを物理的な目安とする。この通常域から下記のplate荷重へ連続に移る。
 
