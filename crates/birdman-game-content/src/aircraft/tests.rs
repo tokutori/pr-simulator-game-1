@@ -75,7 +75,7 @@ fn registered_aircraft_integrates_post_stall_reverse_and_low_speed_flow() {
 #[test]
 fn bundled_aircraft_prepares_its_nonrectangular_broken_dihedral_surfaces() {
     let definition = playable_aircraft().unwrap();
-    assert_eq!(definition.document().model_version, 7);
+    assert_eq!(definition.document().model_version, 8);
     let surfaces = definition.surfaces().unwrap();
     let wing = surfaces[0].geometry();
     assert_eq!(wing.sections().len(), 69);

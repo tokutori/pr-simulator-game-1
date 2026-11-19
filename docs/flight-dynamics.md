@@ -366,8 +366,10 @@ D_i=q_i S_{projected,i}\left(C_{D0}+\phi_i\frac{C_{L,i}^2}{\pi AR_s e}\right)
 
 ## 公開Playableモデル
 
-- 公開既定は`bpg041-playable-hybrid-mock`のmodel 7、catalog 10 / scenario 11、`bpg040-tail-rate-feedback`のcontroller 4である。
+- 公開既定は`bpg041-playable-hybrid-mock`のmodel 8、catalog 10 / scenario 11、`bpg040-tail-rate-feedback`のcontroller 4である。
 - `assets/aircraft/playable-glider-v7.json`が質量・慣性・section・strip・anchor・全機polar・構造材寸法・視点mountを定義する。contentの`AircraftDefinition`が検証済みdocumentと借用viewのstorageを所有する。
+- 機体慣性はdatumまわりでdiag(644, 81, 695) kg·m²とする。根拠はTORICA QX-18の公開実測（総質量93.875 kg、重心まわりdiag(876.5, 76.0, 946.5) kg·m²）から求めた回転半径（ロール3.056 m、ピッチ0.900 m、ヨー3.175 m）であり、ロールとヨーは翼幅比20.863/25.133で換算し、ピッチは同規模機として回転半径を維持し、全機質量100 kgへ適用した。パイロットはdatum上の点質量として合成するため、中立位置では機体値が全機値と一致する。
+- 内蔵コントローラのgainは慣性変更に伴い変更しない。trimにおける実測のモーメント微係数は舵効き$M_{\delta e}=-2268.7$ N·m/rad、ピッチ減衰$M_q=-835.1$ N·m/(rad/s)であり、rate loopのkpは角速度誤差から舵角への換算として必要な舵角が空力で決まるため、慣性に依存しない。閉ループのrate目標応答は、新慣性と現行gainの組合せで峰値・収束とも現行慣性以上であり、振動は生じない。gainを慣性比で縮小するとloopが事実上無効化することを確認した。
 - 定常滑空は汎用の`SteadyGlideTrim`が、質量モデル・全機polar・`SteadyGlideConditions`から求める。指定した迎角区間で力の釣合を解き、合成重心まわりのモーメントを満たすパイロット位置を求める。
 - 発進CGの水平投影は台前縁中央とし、既trim姿勢・実対気速度の曲げ・中立舵角による全接触外形を台の支持平面より上へ置く高さを共有appで導出する。登録形状では有限台に対する保守的な高さの余裕は4.406 mm以下。初速は確定位置の風をtrim対気速度へ一度加算する。
 - 現行catalog・scenario・controllerの組合せを登録する。保存snapshotは記録時のデータから閲覧する。

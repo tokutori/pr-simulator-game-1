@@ -1,24 +1,24 @@
 {
   "schema_version": 5,
   "configuration_id": "bpg041-playable-hybrid-mock",
-  "model_version": 7,
+  "model_version": 8,
   "mass": {
     "airframe_kg": 40,
     "inertia_about_datum_kg_m2": [
       [
-        900,
+        644,
         0,
         0
       ],
       [
         0,
-        1000,
+        81,
         0
       ],
       [
         0,
         0,
-        980
+        695
       ]
     ],
     "airframe_center_of_mass_frd_m": [
