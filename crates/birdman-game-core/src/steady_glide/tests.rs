@@ -52,7 +52,14 @@ fn polar(rows: &[StaticPolarRow]) -> StaticPolar<'_> {
 }
 
 fn conditions(bounds: [f64; 2]) -> SteadyGlideConditions {
-    SteadyGlideConditions::try_new(10.0, 1.2, Gravity::try_new(9.80665).unwrap(), bounds).unwrap()
+    SteadyGlideConditions::try_new(
+        10.0,
+        1.2,
+        Gravity::try_new(9.80665).unwrap(),
+        bounds,
+        GroundEffect::FREE_AIR,
+    )
+    .unwrap()
 }
 
 #[test]
@@ -64,8 +71,9 @@ fn nonzero_pilot_height_and_polar_reference_balance_the_actual_dynamics() {
         let aircraft = aircraft(pilot_offset);
         let trim = SteadyGlideTrim::try_new(aircraft, polar, conditions).unwrap();
         for heading in [0.0, 0.63] {
-            // The solve is a free-air property of the table; at 10 km the
-            // surface-effect factor is within test tolerance of one.
+            // The conditions specify free air explicitly; at 10 km the
+            // flight evaluation's surface-effect factor is within test
+            // tolerance of one, so the solve and the dynamics agree.
             let state = trim
                 .initial_state_for_ground_launch(
                     NedPoint::try_new(0.0, 0.0, -10_000.0).unwrap(),
@@ -116,12 +124,41 @@ fn nonzero_pilot_height_and_polar_reference_balance_the_actual_dynamics() {
 }
 
 #[test]
+fn surface_effect_conditions_scale_the_solved_trim() {
+    let rows = rows(0.0, 0.0, 0.0);
+    let polar = polar(&rows);
+    // The test table's reference span is 2 m, so a 0.25 m height gives 0.8.
+    let factor = GroundEffect::from_height_above_surface(0.25, 2.0).unwrap();
+    assert!((factor.factor() - 0.8).abs() < 1.0e-15);
+    let ge_conditions = SteadyGlideConditions::try_new(
+        10.0,
+        1.2,
+        Gravity::try_new(9.80665).unwrap(),
+        [0.0, 0.1],
+        factor,
+    )
+    .unwrap();
+    let free = SteadyGlideTrim::try_new(aircraft(0.0), polar, conditions([0.0, 0.1])).unwrap();
+    let trimmed = SteadyGlideTrim::try_new(aircraft(0.0), polar, ge_conditions).unwrap();
+    assert_eq!(trimmed.conditions().ground_effect(), factor);
+    // The stored coefficients carry the scaled induced drag actually used:
+    // the table's induced column is a constant 0.02 at every knot.
+    assert!((trimmed.coefficients().induced_drag() - 0.02 * factor.factor()).abs() < 1.0e-15);
+    // Less induced drag at the same speed gives a shallower glide and a
+    // different solved angle of attack.
+    assert!(trimmed.gamma_rad() > free.gamma_rad());
+    assert!(trimmed.alpha_rad() != free.alpha_rad());
+}
+
+#[test]
 fn bracket_admits_closed_endpoints_and_either_residual_direction() {
     let rows = rows(0.0, 0.0, 0.0);
     let polar = polar(&rows);
     let lower_norm = libm::hypot(0.4, 0.05);
     let gravity = Gravity::try_new(120.0 * lower_norm / 10.0).unwrap();
-    let conditions = SteadyGlideConditions::try_new(10.0, 1.2, gravity, [0.0, 0.1]).unwrap();
+    let conditions =
+        SteadyGlideConditions::try_new(10.0, 1.2, gravity, [0.0, 0.1], GroundEffect::FREE_AIR)
+            .unwrap();
     let trim = SteadyGlideTrim::try_new(aircraft(0.0), polar, conditions).unwrap();
     assert!(trim.alpha_rad().abs() < 1.0e-14);
     let descending = rows
@@ -168,6 +205,7 @@ fn a_wings_level_solution_rejects_unbalanced_lateral_loads() {
         1.2e-12,
         Gravity::try_new(9.80665).unwrap(),
         [0.0, 0.1],
+        GroundEffect::FREE_AIR,
     )
     .unwrap();
     assert_eq!(
@@ -180,20 +218,44 @@ fn a_wings_level_solution_rejects_unbalanced_lateral_loads() {
 fn operating_conditions_reject_nonfinite_zero_and_reversed_domains() {
     for value in [f64::NAN, f64::INFINITY, 0.0, -1.0] {
         assert!(
-            SteadyGlideConditions::try_new(value, 1.2, Gravity::try_new(9.8).unwrap(), [0.0, 0.1])
-                .is_err()
+            SteadyGlideConditions::try_new(
+                value,
+                1.2,
+                Gravity::try_new(9.8).unwrap(),
+                [0.0, 0.1],
+                GroundEffect::FREE_AIR
+            )
+            .is_err()
         );
         assert!(
-            SteadyGlideConditions::try_new(10.0, value, Gravity::try_new(9.8).unwrap(), [0.0, 0.1])
-                .is_err()
+            SteadyGlideConditions::try_new(
+                10.0,
+                value,
+                Gravity::try_new(9.8).unwrap(),
+                [0.0, 0.1],
+                GroundEffect::FREE_AIR
+            )
+            .is_err()
         );
     }
     assert!(
-        SteadyGlideConditions::try_new(10.0, 1.2, Gravity::try_new(0.0).unwrap(), [0.0, 0.1])
-            .is_err()
+        SteadyGlideConditions::try_new(
+            10.0,
+            1.2,
+            Gravity::try_new(0.0).unwrap(),
+            [0.0, 0.1],
+            GroundEffect::FREE_AIR
+        )
+        .is_err()
     );
     assert!(
-        SteadyGlideConditions::try_new(10.0, 1.2, Gravity::try_new(9.8).unwrap(), [0.1, 0.0])
-            .is_err()
+        SteadyGlideConditions::try_new(
+            10.0,
+            1.2,
+            Gravity::try_new(9.8).unwrap(),
+            [0.1, 0.0],
+            GroundEffect::FREE_AIR
+        )
+        .is_err()
     );
 }

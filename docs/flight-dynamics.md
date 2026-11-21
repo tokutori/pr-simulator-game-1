@@ -255,14 +255,14 @@ M_{O,static}^B=M_P^B+r_{OP}^B\times F_{static}^B
 ```
 
 - 出典: Wieselsberger (1921, NACA TM 77)。Anderson『Introduction to Flight』の概算式と同一である。
-- 全機表: $h$ はdatum $O$ の水面上の高さ、$b$ は表の参照spanとする。datumは機体固定点であり、等価な表の間で係数は一致する。両荷重経路は同じ係数を用い、静的荷重は一致する。
+- 全機表: $h$ は主翼の代表点の水面上の高さ、$b$ は表の参照spanとする。代表点は主翼のquarter-chord線の投影面積加重重心であり、幾何が一度だけ導出する。両荷重経路は代表点と状態から係数を導出する単一の導出を用いる。幾何を持たない表単独の評価はdatum $O$ で評価する。
 - 尾翼: $h$ は各proxy点の水面上の高さ、$b$ は面のprojected spanとする。実荷重とreference荷重へ同じ係数を適用する。
 - 水面は静水面 $D=0$ の平面とする。波高は考慮しない。
 - 高さが負の場合は水面へclampし、$\phi=0$ とする。水面への接触で飛行は終了するため、定常な飛行状態では現れない。
 - 適用範囲は誘導抗力のみとする。揚力勾配・ピッチングモーメント・尾翼への吹き下ろしの高度依存は導入しない。全機表は高度の軸を持たず、$C_L$・$C_m$ の高度依存は表のデータから導出できないためである。
 - 主翼proxyの差分は誘導効果を再適用しない既存方針を維持し、係数を適用しない。
-- 定常滑空の解とtrim探索は自由空間の表を対象とする。飛行中の評価が高度に応じて係数を適用する。
-- 物理モデルの変更に伴い `PHYSICS_MODEL_VERSION` を10へ更新した。personal bestの適格は現行versionとの完全一致を要するため、version 9以前の記録は適格とならない。
+- 定常滑空の解とtrim探索は係数を条件として受け取る。釣り合いの残差とwrenchの双方が条件の係数を誘導抗力へ適用する。呼出側は飛行評価と同じ導出で得た係数を渡し、自由空間の作動点は `FREE_AIR` を明示して渡す。機体文書のtrim節は高さを指定しないため、その作動点は自由空間である。
+- 物理モデルの変更に伴い `PHYSICS_MODEL_VERSION` を11へ更新した。personal bestの適格は現行versionとの完全一致を要するため、version 10以前の記録は適格とならない。
 
 ## 現在の流れを基準とするハイブリッド空力
 
@@ -289,6 +289,12 @@ S_{surface}=\sum_j\Delta s_j\frac{c_j+c_{j+1}}2
 \int_j c(u)^2du=\frac{\Delta u_j}3(c_j^2+c_jc_{j+1}+c_{j+1}^2),\qquad
 MAC_{projected}=\frac{\int c(u)^2du}{S_{projected}},\qquad AR_s=\frac{b_s^2}{S_{projected,s}}
 ```
+
+```math
+\bar r=\frac{1}{S_{projected}}\sum_j\Delta u_j\frac{c_j+c_{j+1}}2\cdot\frac{r_j+r_{j+1}}2
+```
+
+- $\bar r$ はquarter-chord線の投影面積加重重心であり、面の代表点である。水面効果など面を1点の高さで評価する効果は代表点を用いる。
 
 - surface MACは同じ積分の $\Delta u$ を $\Delta s$ へ置き換える。
 - slopeには面全体の投影ARを使い、strip幅のARを使わない。

@@ -1,6 +1,6 @@
 use crate::aerodynamics_contract::{AerodynamicEvaluationError, AerodynamicStage};
 use crate::math::{
-    BodyVector, InertiaTensor, MathError, NedPoint, NedVector, UnitQuaternion, cross3,
+    BodyPoint, BodyVector, InertiaTensor, MathError, NedPoint, NedVector, UnitQuaternion, cross3,
 };
 #[cfg(verus_only)]
 use vstd::prelude::*;
@@ -250,6 +250,17 @@ impl FlightState {
     /// Returns the datum position in NED coordinates in m.
     pub const fn datum_position_ned(self) -> NedPoint {
         self.datum_position_ned
+    }
+
+    /// Returns the NED position of an aircraft-fixed point given in body coordinates.
+    ///
+    /// This is the single derivation from a body-frame point to its world
+    /// position; every height or wind sample at an airframe point uses it.
+    pub fn point_position_ned(self, point: BodyPoint) -> Result<NedPoint, MathError> {
+        let [forward, right, down] = point.components();
+        let radius = BodyVector::try_new(forward, right, down)?;
+        let offset = self.attitude_body_to_ned.body_to_ned(radius)?;
+        self.datum_position_ned.translated(offset)
     }
 
     /// Returns the datum ground velocity in NED coordinates in m/s.

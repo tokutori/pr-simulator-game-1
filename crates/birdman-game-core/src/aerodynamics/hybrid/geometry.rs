@@ -107,6 +107,7 @@ pub struct HybridSurfaceGeometry<'a> {
     surface_area_m2: f64,
     projected_mac_m: f64,
     surface_mac_m: f64,
+    quarter_chord_centroid: BodyPoint,
     aspect_ratio: f64,
 }
 
@@ -125,6 +126,7 @@ impl<'a> HybridSurfaceGeometry<'a> {
             let mut surface_area = 0.0;
             let mut projected_chord_squared = 0.0;
             let mut surface_chord_squared = 0.0;
+            let mut centroid_weighted = [0.0_f64; 3];
             let chord_scale = sections
                 .iter()
                 .map(|section| section.chord_m)
@@ -150,11 +152,26 @@ impl<'a> HybridSurfaceGeometry<'a> {
                     + first_chord * second_chord
                     + second_chord * second_chord)
                     / 3.0;
-                projected_area += projected_span * mean_chord;
+                let strip_projected_area = projected_span * mean_chord;
+                projected_area += strip_projected_area;
                 surface_area += surface_span * mean_chord;
+                for axis in 0..3 {
+                    centroid_weighted[axis] +=
+                        strip_projected_area * 0.5 * (first[axis] + second[axis]);
+                }
                 projected_chord_squared += projected_span * squared_chord_integral;
                 surface_chord_squared += surface_span * squared_chord_integral;
             }
+            let centroid = [
+                centroid_weighted[0] / projected_area,
+                centroid_weighted[1] / projected_area,
+                centroid_weighted[2] / projected_area,
+            ];
+            if centroid.iter().any(|value| !value.is_finite()) {
+                return Err(AeroError::NonFinite);
+            }
+            let quarter_chord_centroid = BodyPoint::try_new(centroid[0], centroid[1], centroid[2])
+                .map_err(map_math_error)?;
             let span = sections[sections.len() - 1].span(role) - sections[0].span(role);
             let projected_mac =
                 chord_scale * (projected_chord_squared / projected_area) * chord_scale;
@@ -209,6 +226,7 @@ impl<'a> HybridSurfaceGeometry<'a> {
                 surface_area_m2: surface_area,
                 projected_mac_m: projected_mac,
                 surface_mac_m: surface_mac,
+                quarter_chord_centroid,
                 aspect_ratio,
             })
         };
@@ -238,6 +256,13 @@ impl<'a> HybridSurfaceGeometry<'a> {
     /// Returns the exact linear-chord MAC using actual surface area.
     pub const fn surface_mac_m(self) -> f64 {
         self.surface_mac_m
+    }
+    /// Returns the projected-area-weighted centroid of the quarter-chord line.
+    ///
+    /// This is the surface's representative point for whole-surface effects
+    /// evaluated at one height, such as the surface-effect factor.
+    pub const fn quarter_chord_centroid(self) -> BodyPoint {
+        self.quarter_chord_centroid
     }
     /// Returns the complete projected span, not one strip width.
     pub fn projected_span_m(self) -> f64 {

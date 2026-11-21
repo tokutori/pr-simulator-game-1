@@ -331,13 +331,21 @@ impl<'a> StaticPolar<'a> {
 
     /// Computes the whole-aircraft surface-effect factor for a flight state.
     ///
-    /// The height is the vertical distance from datum O to the water plane
-    /// `D = 0`, and the span is this table's reference span. The datum is a
-    /// fixed airframe point, so equivalent tables of one aircraft share the
-    /// factor; both load paths derive it here so their static loads agree.
-    pub fn ground_effect_at(self, state: &FlightState) -> Result<GroundEffect, AeroError> {
+    /// The height is the vertical distance from the lifting surface's
+    /// representative point to the water plane `D = 0`, and the span is this
+    /// table's reference span. The geometry that owns the surface supplies
+    /// the representative point; every load path evaluating this table at
+    /// that point derives the factor through this one derivation.
+    pub fn ground_effect_at(
+        self,
+        state: &FlightState,
+        reference_point: BodyPoint,
+    ) -> Result<GroundEffect, AeroError> {
+        let position = state
+            .point_position_ned(reference_point)
+            .map_err(map_math_error)?;
         GroundEffect::from_height_above_surface(
-            -state.datum_position_ned().components()[2],
+            -position.components()[2],
             self.reference.span_meters,
         )
     }
@@ -441,6 +449,9 @@ impl<'a> StaticPolar<'a> {
     }
 
     /// Evaluates the datum's flow in homogeneous air, using R_NB transpose for NED to body.
+    ///
+    /// A bare table carries no surface geometry, so its surface-effect
+    /// factor is evaluated at datum O.
     pub fn evaluate(
         self,
         state: &FlightState,
@@ -454,7 +465,7 @@ impl<'a> StaticPolar<'a> {
             .attitude_body_to_ned()
             .ned_to_body(relative_ned)
             .map_err(map_math_error)?;
-        let ground_effect = self.ground_effect_at(state)?;
+        let ground_effect = self.ground_effect_at(state, BodyPoint::origin())?;
         self.evaluate_body_velocity(velocity_body, air.density_kg_m3, ground_effect)
     }
 }

@@ -1,9 +1,10 @@
 use crate::{
     AeroError, AircraftModel, BodyPoint, BodyVector, DynamicsError, ElementOrientation,
-    ElementReference, Gravity, HybridAnchor, HybridError, HybridModel, HybridProxy, HybridSection,
-    HybridSurface, HybridSurfaceGeometry, HybridSurfaceRole, InertiaTensor, MathError,
-    PlanformSymmetry, PolarAnalysisMethod, PolarMomentAxes, StaticPolar, StaticPolarCoefficients,
-    StaticPolarMetadata, StaticPolarRow, SteadyGlideConditions, SteadyGlideError, SteadyGlideTrim,
+    ElementReference, Gravity, GroundEffect, HybridAnchor, HybridError, HybridModel, HybridProxy,
+    HybridSection, HybridSurface, HybridSurfaceGeometry, HybridSurfaceRole, InertiaTensor,
+    MathError, PlanformSymmetry, PolarAnalysisMethod, PolarMomentAxes, StaticPolar,
+    StaticPolarCoefficients, StaticPolarMetadata, StaticPolarRow, SteadyGlideConditions,
+    SteadyGlideError, SteadyGlideTrim,
 };
 
 const REFERENCE_POLAR_KNOTS: [(f64, f64); 9] = [
@@ -76,12 +77,15 @@ impl TestAircraft {
     pub const TRIM_GRAVITY_MPS2: f64 = 9.80665;
 
     /// Resolves the reference operating point with the generic core equilibrium solver.
+    ///
+    /// The reference operating point is specified in free air.
     pub fn trim(&self) -> Result<SteadyGlideTrim, TestAircraftError> {
         let conditions = SteadyGlideConditions::try_new(
             Self::TRIM_AIRSPEED_MPS,
             Self::TRIM_AIR_DENSITY_KG_M3,
             Gravity::try_new(Self::TRIM_GRAVITY_MPS2).map_err(TestAircraftError::Dynamics)?,
             [0.0, 0.06],
+            GroundEffect::FREE_AIR,
         )
         .map_err(TestAircraftError::Trim)?;
         SteadyGlideTrim::try_new(self.aircraft, self.polar()?, conditions)

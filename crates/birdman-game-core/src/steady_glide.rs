@@ -11,6 +11,7 @@ pub struct SteadyGlideConditions {
     air_density_kg_m3: f64,
     gravity: Gravity,
     alpha_bounds_rad: [f64; 2],
+    ground_effect: GroundEffect,
 }
 
 /// Classified failures of the steady-glide equilibrium and launch conversion.
@@ -62,11 +63,17 @@ impl core::error::Error for SteadyGlideError {
 
 impl SteadyGlideConditions {
     /// Validates positive speed, density and gravity and an increasing upright alpha interval.
+    ///
+    /// The surface-effect factor is part of the operating point: the caller
+    /// derives it from the glide height through the same derivation as the
+    /// flight evaluation, or passes `GroundEffect::FREE_AIR` explicitly for
+    /// a free-air operating point.
     pub fn try_new(
         airspeed_mps: f64,
         air_density_kg_m3: f64,
         gravity: Gravity,
         alpha_bounds_rad: [f64; 2],
+        ground_effect: GroundEffect,
     ) -> Result<Self, SteadyGlideError> {
         if ![
             airspeed_mps,
@@ -87,6 +94,7 @@ impl SteadyGlideConditions {
             air_density_kg_m3,
             gravity,
             alpha_bounds_rad,
+            ground_effect,
         })
     }
 
@@ -108,6 +116,11 @@ impl SteadyGlideConditions {
     /// Returns the closed angle-of-attack search interval in radians.
     pub const fn alpha_bounds_rad(self) -> [f64; 2] {
         self.alpha_bounds_rad
+    }
+
+    /// Returns the surface-effect factor of the operating point.
+    pub const fn ground_effect(self) -> GroundEffect {
+        self.ground_effect
     }
 }
 
@@ -146,10 +159,24 @@ impl SteadyGlideTrim {
             return Err(SteadyGlideError::InvalidConditions);
         }
         let required_norm = weight / dynamic_area;
+        let scaled = |coefficients: StaticPolarCoefficients| {
+            StaticPolarCoefficients::try_new(
+                coefficients.lift(),
+                coefficients.induced_drag() * conditions.ground_effect.factor(),
+                coefficients.profile_drag(),
+                coefficients.side_force(),
+                coefficients.roll_moment(),
+                coefficients.pitch_moment(),
+                coefficients.yaw_moment(),
+            )
+            .map_err(SteadyGlideError::Aerodynamics)
+        };
         let residual = |alpha: f64| {
-            let coefficients = polar
-                .coefficients_at(alpha)
-                .map_err(SteadyGlideError::Aerodynamics)?;
+            let coefficients = scaled(
+                polar
+                    .coefficients_at(alpha)
+                    .map_err(SteadyGlideError::Aerodynamics)?,
+            )?;
             let drag = coefficients
                 .drag()
                 .map_err(SteadyGlideError::Aerodynamics)?;
@@ -191,9 +218,11 @@ impl SteadyGlideTrim {
             }
         }
         let alpha_rad = 0.5 * lower + 0.5 * upper;
-        let coefficients = polar
-            .coefficients_at(alpha_rad)
-            .map_err(SteadyGlideError::Aerodynamics)?;
+        let coefficients = scaled(
+            polar
+                .coefficients_at(alpha_rad)
+                .map_err(SteadyGlideError::Aerodynamics)?,
+        )?;
         let drag = coefficients
             .drag()
             .map_err(SteadyGlideError::Aerodynamics)?;
@@ -205,13 +234,13 @@ impl SteadyGlideTrim {
             conditions.airspeed_mps * libm::sin(alpha_rad),
         )
         .map_err(SteadyGlideError::Math)?;
-        // The solve is a property of the free-air table; flight evaluation
-        // applies the surface effect by height, so the factor is free air here.
+        // The balance residual above and this wrench apply the same
+        // surface-effect factor, taken from the conditions.
         let wrench = polar
             .evaluate_body_velocity(
                 body_velocity,
                 conditions.air_density_kg_m3,
-                GroundEffect::FREE_AIR,
+                conditions.ground_effect,
             )
             .map_err(SteadyGlideError::Aerodynamics)?
             .wrench();
@@ -293,7 +322,8 @@ impl SteadyGlideTrim {
         self.pilot_position_m
     }
 
-    /// Returns the seven interpolated trim coefficients.
+    /// Returns the seven trim coefficients at the solved angle of attack,
+    /// with the induced drag scaled by the conditions' surface-effect factor.
     pub const fn coefficients(self) -> StaticPolarCoefficients {
         self.coefficients
     }

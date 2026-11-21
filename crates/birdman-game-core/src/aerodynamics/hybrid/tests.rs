@@ -380,6 +380,45 @@ fn linear_chord_squared_integral_and_area_centroid_are_exact() {
 }
 
 #[test]
+fn quarter_chord_centroid_is_the_projected_area_weighted_mean() {
+    // Strip areas are 3 and 2 (span 2 each, mean chords 1.5 and 1.0), with
+    // quarter-chord midpoints [0.5, -1, 0.25] and [1, 1, 0.5].
+    let sections = [
+        section([0.0, -2.0, 0.0], 2.0),
+        section([1.0, 0.0, 0.5], 1.0),
+        section([1.0, 2.0, 0.5], 1.0),
+    ];
+    let geometry = HybridSurfaceGeometry::try_new(
+        HybridSurfaceRole::MainWing,
+        &sections,
+        PlanformSymmetry::Unrestricted,
+    )
+    .unwrap();
+    let centroid = geometry.quarter_chord_centroid().components();
+    near(centroid[0], 0.7, 1.0e-14);
+    near(centroid[1], -0.2, 1.0e-14);
+    near(centroid[2], 0.35, 1.0e-14);
+
+    // A symmetric dihedral wing keeps its centroid on the centreline, above
+    // the datum by the strips' mean quarter-chord rise.
+    let sections = [
+        section([0.0, -2.0, -0.5], 0.5),
+        section([0.0, 0.0, 0.0], 1.5),
+        section([0.0, 2.0, -0.5], 0.5),
+    ];
+    let geometry = HybridSurfaceGeometry::try_new(
+        HybridSurfaceRole::MainWing,
+        &sections,
+        PlanformSymmetry::MirrorSpan,
+    )
+    .unwrap();
+    let centroid = geometry.quarter_chord_centroid().components();
+    near(centroid[0], 0.0, 1.0e-14);
+    near(centroid[1], 0.0, 1.0e-14);
+    near(centroid[2], -0.25, 1.0e-14);
+}
+
+#[test]
 fn dihedral_uses_surface_weights_and_projected_whole_surface_ar_once() {
     let sections = [
         section([0.0, -2.0, -0.5], 0.5),
@@ -545,7 +584,10 @@ fn neutral_increments_match_static_at_current_knots_interiors_and_tiny_speeds() 
                 .evaluate_body_velocity(
                     vector(state.datum_velocity_ned().components()),
                     1.2,
-                    fixture.polar().ground_effect_at(&state).unwrap(),
+                    fixture
+                        .polar()
+                        .ground_effect_at(&state, surfaces[0].geometry().quarter_chord_centroid())
+                        .unwrap(),
                 )
                 .unwrap()
                 .wrench();
@@ -1360,7 +1402,13 @@ fn drag_breakdown_matches_the_static_table_at_uniform_flow() {
         .evaluate_body_velocity(
             vector(velocity),
             1.2,
-            fixture.polar().ground_effect_at(&flight_state).unwrap(),
+            fixture
+                .polar()
+                .ground_effect_at(
+                    &flight_state,
+                    surfaces[0].geometry().quarter_chord_centroid(),
+                )
+                .unwrap(),
         )
         .unwrap();
     let pressure_area =

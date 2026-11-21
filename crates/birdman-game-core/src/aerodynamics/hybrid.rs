@@ -11,7 +11,7 @@ use crate::aerodynamics_contract::{
     AeroError, AerodynamicEvaluationError, HybridError, HybridLimit, HybridSite, HybridSurfaceRole,
 };
 use crate::dynamics::{AircraftModel, ExternalLoadProvider, FlightState, LoadError, Wrench};
-use crate::math::{BodyVector, NedPoint, NedVector, atan2, hypot2};
+use crate::math::{BodyPoint, BodyVector, NedPoint, NedVector, atan2, hypot2};
 use crate::wind_field::WindField;
 
 /// Physical effective incidence of the horizontal and vertical tails.
@@ -289,10 +289,18 @@ impl<'a> HybridAerodynamicLoad<'a> {
         if !speed.is_finite() {
             return Err(HybridError::new(HybridSite::Datum, AeroError::NonFinite));
         }
+        let reference_point = self
+            .model
+            .surfaces
+            .iter()
+            .map(|surface| surface.geometry())
+            .find(|geometry| geometry.role() == HybridSurfaceRole::MainWing)
+            .map(|geometry| geometry.quarter_chord_centroid());
+        let reference_point = reference_point.unwrap_or_else(BodyPoint::origin);
         let ground_effect = self
             .model
             .polar
-            .ground_effect_at(state)
+            .ground_effect_at(state, reference_point)
             .map_err(|cause| HybridError::new(HybridSite::Datum, cause))?;
         let (static_wrench, reference_velocity, reference_speed, static_induced_drag) =
             global_flow(
@@ -416,13 +424,8 @@ impl<'a> HybridAerodynamicLoad<'a> {
         let evaluate = || {
             let [point_x, point_y, point_z] = proxy.point().components();
             let radius = BodyVector::try_new(point_x, point_y, point_z).map_err(map_math_error)?;
-            let world_offset = state
-                .attitude_body_to_ned()
-                .body_to_ned(radius)
-                .map_err(map_math_error)?;
             let position = state
-                .datum_position_ned()
-                .translated(world_offset)
+                .point_position_ned(proxy.point())
                 .map_err(map_math_error)?;
             let height = -position.components()[2];
             let wind = self

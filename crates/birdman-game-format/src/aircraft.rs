@@ -2,8 +2,8 @@
 
 use alloc::{string::String, vec::Vec};
 use birdman_game_core::{
-    AeroError, AircraftModel, BodyPoint, DynamicsError, ElementReference, Gravity, HybridError,
-    HybridSection, HybridSurfaceGeometry, HybridSurfaceRole, InertiaTensor, MathError,
+    AeroError, AircraftModel, BodyPoint, DynamicsError, ElementReference, Gravity, GroundEffect,
+    HybridError, HybridSection, HybridSurfaceGeometry, HybridSurfaceRole, InertiaTensor, MathError,
     PlanformSymmetry, PolarAnalysisMethod, PolarMomentAxes, StaticPolar, StaticPolarCoefficients,
     StaticPolarMetadata, StaticPolarRow, SteadyGlideConditions,
 };
@@ -664,12 +664,16 @@ impl AircraftPolarDocument {
 
 impl AircraftTrimDocument {
     /// Validates and constructs the core's explicit steady-glide operating conditions.
+    ///
+    /// The document's trim section specifies no height, so its operating
+    /// point is defined in free air and the factor is passed explicitly.
     pub fn core_conditions(&self) -> Result<SteadyGlideConditions, AircraftFormatError> {
         SteadyGlideConditions::try_new(
             self.airspeed_mps,
             self.air_density_kg_m3,
             Gravity::try_new(self.gravity_mps2).map_err(|_| AircraftFormatError::InvalidTrim)?,
             self.alpha_bounds_rad,
+            GroundEffect::FREE_AIR,
         )
         .map_err(|_| AircraftFormatError::InvalidTrim)
     }

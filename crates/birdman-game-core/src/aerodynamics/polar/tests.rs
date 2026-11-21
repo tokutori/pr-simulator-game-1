@@ -519,6 +519,45 @@ fn datum_flow_does_not_use_point_p_rate_or_local_wind() {
 }
 
 #[test]
+fn ground_effect_height_comes_from_the_reference_point() {
+    let rows = [
+        row(0.0, [0.5, 0.02, 0.01, 0.0, 0.0, 0.0, 0.0]),
+        row(0.1, [0.6, 0.02, 0.01, 0.0, 0.0, 0.0, 0.0]),
+    ];
+    let table = polar(&rows, BodyPoint::origin(), PolarMomentAxes::BodyFrd);
+    let level = state(
+        NedPoint::try_new(0.0, 0.0, -2.0).unwrap(),
+        ned([10.0, 0.0, 0.0]),
+        UnitQuaternion::IDENTITY,
+        vector([0.0, 0.0, 0.0]),
+    );
+    // The datum point reproduces the datum height over the span-4 table.
+    assert_eq!(
+        table.ground_effect_at(&level, BodyPoint::origin()).unwrap(),
+        GroundEffect::from_height_above_surface(2.0, 4.0).unwrap()
+    );
+    // A point 0.5 m below the datum is 1.5 m above the water plane.
+    let below = BodyPoint::try_new(0.0, 0.0, 0.5).unwrap();
+    assert_eq!(
+        table.ground_effect_at(&level, below).unwrap(),
+        GroundEffect::from_height_above_surface(1.5, 4.0).unwrap()
+    );
+    // Rolled 90 degrees, a point 1 m to the right sits 1 m lower.
+    let half_sqrt = libm::sqrt(0.5);
+    let rolled = state(
+        NedPoint::try_new(0.0, 0.0, -2.0).unwrap(),
+        ned([10.0, 0.0, 0.0]),
+        UnitQuaternion::try_new(half_sqrt, half_sqrt, 0.0, 0.0).unwrap(),
+        vector([0.0, 0.0, 0.0]),
+    );
+    let right = BodyPoint::try_new(0.0, 1.0, 0.0).unwrap();
+    assert_eq!(
+        table.ground_effect_at(&rolled, right).unwrap(),
+        GroundEffect::from_height_above_surface(1.0, 4.0).unwrap()
+    );
+}
+
+#[test]
 fn ned_transform_and_uniform_velocity_shift_preserve_air_relative_load() {
     let rows = [
         row(-1.0, [0.5, 0.02, 0.03, 0.1, 0.2, -0.3, 0.4]),
