@@ -534,3 +534,23 @@ fn member_schema_requires_declared_fields_and_rejects_unknown_nested_fields() {
         assert!(AircraftDocument::decode_json(&serde_json::to_vec(&unknown).unwrap()).is_err());
     }
 }
+#[test]
+fn core_height_level_rows_convert_every_level() {
+    let mut document = valid_document();
+    document.polar.height_levels = vec![AircraftPolarHeightLevelDocument {
+        height_ratio: 0.1,
+        rows: document.polar.rows.clone(),
+    }];
+    let levels = document.polar.core_height_level_rows().unwrap();
+    assert_eq!(levels.len(), 1);
+    assert_eq!(levels[0].len(), document.polar.rows.len());
+    assert_eq!(levels[0][0].alpha_rad(), document.polar.rows[0].alpha_rad);
+    // Without levels, the conversion is empty.
+    assert!(
+        valid_document()
+            .polar
+            .core_height_level_rows()
+            .unwrap()
+            .is_empty()
+    );
+}

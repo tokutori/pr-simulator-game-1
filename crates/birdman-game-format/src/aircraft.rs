@@ -678,6 +678,37 @@ impl AircraftPolarDocument {
             })
             .collect()
     }
+    /// Constructs the physical rows of every height level, in level order.
+    pub fn core_height_level_rows(&self) -> Result<Vec<Vec<StaticPolarRow>>, AircraftFormatError> {
+        self.height_levels
+            .iter()
+            .map(|level| {
+                if !(2..=MAX_AIRCRAFT_POLAR_ROWS).contains(&level.rows.len()) {
+                    return Err(AircraftFormatError::InvalidCount);
+                }
+                level
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        StaticPolarRow::try_new(
+                            row.alpha_rad,
+                            StaticPolarCoefficients::try_new(
+                                row.lift,
+                                row.induced_drag,
+                                row.profile_drag,
+                                row.side_force,
+                                row.roll_moment,
+                                row.pitch_moment,
+                                row.yaw_moment,
+                            )
+                            .map_err(AircraftFormatError::Aerodynamics)?,
+                        )
+                        .map_err(AircraftFormatError::Aerodynamics)
+                    })
+                    .collect()
+            })
+            .collect()
+    }
 }
 
 impl AircraftTrimDocument {

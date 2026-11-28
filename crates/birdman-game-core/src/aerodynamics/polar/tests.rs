@@ -875,3 +875,38 @@ fn coefficients_at_height_blends_levels_toward_free_air() {
         1.0e-12,
     );
 }
+#[test]
+fn evaluate_body_velocity_applies_ground_factor_only_without_levels() {
+    let base_rows = [
+        row(-0.1, [0.0, 0.02, 0.03, 0.0, 0.0, 0.0, 0.0]),
+        row(0.1, [1.0, 0.02, 0.03, 0.0, 0.0, 0.0, 0.0]),
+    ];
+    let level_rows = [
+        row(-0.1, [1.0, 0.04, 0.03, 0.0, 0.0, 0.0, 0.0]),
+        row(0.1, [2.0, 0.04, 0.03, 0.0, 0.0, 0.0, 0.0]),
+    ];
+    // h / b = 0.4 / 4.0 = 0.1, exactly the level; alpha = 0 at [10, 0, 0].
+    let ground = GroundEffect::from_height_above_surface(0.4, 4.0).unwrap();
+    // With levels, every column comes from the slice: lift 1.5, and the
+    // induced drag is the slice value 0.04 with no factor applied.
+    let levels = [StaticPolarHeightLevel::try_new(0.1, &level_rows).unwrap()];
+    let table = polar(&base_rows, BodyPoint::origin(), PolarMomentAxes::BodyFrd)
+        .with_height_levels(&levels)
+        .unwrap();
+    let evaluation = table
+        .evaluate_body_velocity(vector([10.0, 0.0, 0.0]), 1.0, ground)
+        .unwrap();
+    near(evaluation.coefficients().lift(), 1.5, 1.0e-12);
+    near(evaluation.coefficients().induced_drag(), 0.04, 1.0e-12);
+    // Without levels, the factor scales the free-air induced drag as before.
+    let plain = polar(&base_rows, BodyPoint::origin(), PolarMomentAxes::BodyFrd);
+    let evaluation = plain
+        .evaluate_body_velocity(vector([10.0, 0.0, 0.0]), 1.0, ground)
+        .unwrap();
+    near(evaluation.coefficients().lift(), 0.5, 1.0e-12);
+    near(
+        evaluation.coefficients().induced_drag(),
+        0.02 * ground.factor(),
+        1.0e-12,
+    );
+}

@@ -233,10 +233,13 @@ impl HybridSessionPreparation {
             course_axis,
         )
         .map_err(HybridSessionPreparationError::Scenario)?;
+        let height_levels = definition
+            .height_levels()
+            .map_err(HybridSessionPreparationError::Aircraft)?;
         let load = HybridAerodynamicLoad::try_new(
             HybridModel::try_new(
                 definition
-                    .polar()
+                    .polar_with_levels(&height_levels)
                     .map_err(HybridSessionPreparationError::Aircraft)?,
                 &surfaces,
             )

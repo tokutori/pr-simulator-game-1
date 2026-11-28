@@ -406,7 +406,7 @@ impl<'a> StaticPolar<'a> {
         alpha_rad: f64,
         height_ratio: f64,
     ) -> Result<StaticPolarCoefficients, AeroError> {
-        if !height_ratio.is_finite() {
+        if height_ratio.is_nan() {
             return Err(AeroError::NonFinite);
         }
         if self.height_levels.is_empty() || height_ratio >= 1.0 {
@@ -493,10 +493,19 @@ impl<'a> StaticPolar<'a> {
         }
         let alpha_rad = atan2(w, u);
         let beta_rad = atan2(v, h);
-        let table_coefficients = self.coefficients_at(alpha_rad)?;
+        let table_coefficients =
+            self.coefficients_at_height(alpha_rad, ground_effect.height_ratio())?;
+        // With height levels, the slices carry the surface effect in every
+        // column, so no factor is applied. Without levels, the factor keeps
+        // scaling the free-air induced drag as before.
+        let induced_drag = if self.height_levels.is_empty() {
+            table_coefficients.induced_drag * ground_effect.factor()
+        } else {
+            table_coefficients.induced_drag
+        };
         let coefficients = StaticPolarCoefficients::try_new(
             table_coefficients.lift,
-            table_coefficients.induced_drag * ground_effect.factor(),
+            induced_drag,
             table_coefficients.profile_drag,
             table_coefficients.side_force,
             table_coefficients.roll_moment,

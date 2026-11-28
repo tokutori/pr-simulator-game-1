@@ -3,8 +3,8 @@ use birdman_game_core::{
     AeroError, AircraftModel, BodyPoint, BodyVector, ElementOrientation, ElementReference,
     HybridAnchor, HybridError, HybridModel, HybridProxy, HybridSection, HybridSurface,
     HybridSurfaceGeometry, HybridSurfaceRole, MathError, PlanformSymmetry, PolarAnalysisMethod,
-    PolarMomentAxes, StaticPolar, StaticPolarMetadata, StaticPolarRow, SteadyGlideError,
-    SteadyGlideTrim, TailAerodynamics, TailIncidence, WingBendingFactor,
+    PolarMomentAxes, StaticPolar, StaticPolarHeightLevel, StaticPolarMetadata, StaticPolarRow,
+    SteadyGlideError, SteadyGlideTrim, TailAerodynamics, TailIncidence, WingBendingFactor,
 };
 use birdman_game_format::aircraft::{
     AircraftDocument, AircraftFormatError, AircraftPolarAxes, AircraftPolarMethod,
@@ -85,6 +85,7 @@ pub struct AircraftDefinition {
     aircraft: AircraftModel,
     surfaces: Vec<SurfaceStorage>,
     rows: Vec<StaticPolarRow>,
+    height_level_rows: Vec<Vec<StaticPolarRow>>,
     reference: ElementReference,
     contact: crate::shape::ContactSamples,
     structure: crate::StructuralGeometry,
@@ -127,6 +128,10 @@ impl AircraftDefinition {
             .polar
             .core_rows()
             .map_err(AircraftDefinitionError::Format)?;
+        let height_level_rows = document
+            .polar
+            .core_height_level_rows()
+            .map_err(AircraftDefinitionError::Format)?;
         let wing = surfaces
             .iter()
             .find(|surface| surface.role == HybridSurfaceRole::MainWing)
@@ -150,6 +155,7 @@ impl AircraftDefinition {
             aircraft,
             surfaces,
             rows,
+            height_level_rows,
             reference,
             contact,
             structure,
@@ -164,8 +170,12 @@ impl AircraftDefinition {
                 .wing_displacement(tip, f64::MAX)
                 .map_err(AircraftDefinitionError::Shape)?;
         }
-        HybridModel::try_new(definition.polar()?, &definition.surfaces()?)
-            .map_err(AircraftDefinitionError::Hybrid)?;
+        let height_levels = definition.height_levels()?;
+        HybridModel::try_new(
+            definition.polar_with_levels(&height_levels)?,
+            &definition.surfaces()?,
+        )
+        .map_err(AircraftDefinitionError::Hybrid)?;
         definition.trim()?;
         Ok(definition)
     }
@@ -263,6 +273,31 @@ impl AircraftDefinition {
         )
         .map_err(AircraftDefinitionError::Aerodynamics)
     }
+    /// Builds the height-level handles borrowing the prepared level rows.
+    pub fn height_levels(
+        &self,
+    ) -> Result<Vec<StaticPolarHeightLevel<'_>>, AircraftDefinitionError> {
+        self.document
+            .polar
+            .height_levels
+            .iter()
+            .zip(&self.height_level_rows)
+            .map(|(level, rows)| {
+                StaticPolarHeightLevel::try_new(level.height_ratio, rows)
+                    .map_err(AircraftDefinitionError::Aerodynamics)
+            })
+            .collect()
+    }
+
+    /// Borrows the static table with the given height levels attached.
+    pub fn polar_with_levels<'a>(
+        &'a self,
+        height_levels: &'a [StaticPolarHeightLevel<'a>],
+    ) -> Result<StaticPolar<'a>, AircraftDefinitionError> {
+        self.polar()?
+            .with_height_levels(height_levels)
+            .map_err(AircraftDefinitionError::Aerodynamics)
+    }
 
     /// Borrows the prepared wing, horizontal tail and fin in canonical order.
     pub fn surfaces(&self) -> Result<[HybridSurface<'_>; 3], AircraftDefinitionError> {
@@ -288,9 +323,10 @@ impl AircraftDefinition {
 
     /// Solves the document's explicit still-air operating point through the generic core.
     pub fn trim(&self) -> Result<SteadyGlideTrim, AircraftDefinitionError> {
+        let height_levels = self.height_levels()?;
         SteadyGlideTrim::try_new(
             self.aircraft,
-            self.polar()?,
+            self.polar_with_levels(&height_levels)?,
             self.document
                 .trim
                 .core_conditions()

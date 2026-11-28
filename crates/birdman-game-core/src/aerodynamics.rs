@@ -197,6 +197,16 @@ impl GroundEffect {
     pub const fn factor(self) -> f64 {
         self.factor
     }
+
+    /// Returns the height ratio (h / b) implied by the factor, recovered by
+    /// inverting the Wieselsberger relation; infinite in free air.
+    pub fn height_ratio(self) -> f64 {
+        if self.factor >= 1.0 {
+            f64::INFINITY
+        } else {
+            libm::sqrt(self.factor / (1.0 - self.factor)) / 16.0
+        }
+    }
 }
 
 /// A uniform ambient wind vector and positive air density.
